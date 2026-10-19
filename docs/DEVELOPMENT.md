@@ -64,6 +64,8 @@ $R "$M" --corpus eval/corpus.jsonl --only sw-email --think 150          # 150 ms
 $R "$M" scripts/fixtures/chat-reply.txt --prime 0 --screen scripts/fixtures/chat-screen.txt  # screen context
 $R - scripts/fixtures/email.txt --backend llama-server --url http://127.0.0.1:18431             # server backend
 $R "$M" --corpus eval/corpus.jsonl --only sw- --cpu                     # no Metal (CI)
+$R "$M" --corpus eval/corpus.jsonl --check-cache --docs 4 --chars 200   # cache reuse == fresh context?
+$R "$M" --corpus eval/corpus.jsonl --check-cache --docs 3 --long        # same, prompts past 512 tokens
 ```
 
 Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`,
@@ -138,9 +140,11 @@ screen: 412 chars from Microsoft Teams in 210 ms
 Add a policy test in `core/src/policy.rs` if the behaviour is new.
 
 **Add a model.** Add an entry to `models/catalog.json` with the exact `bytes` and `sha256`
-(compute with `shasum -a 256`), `tier`, `min_ram_gb` and `license`. Only dense,
-full-attention models work until KV snapshots exist. Run the corpus replay and record the
-results in `docs/MEASUREMENTS.md`.
+(compute with `shasum -a 256`), `tier`, `min_ram_gb` and `license`. Dense,
+sliding-window and recurrent/hybrid architectures all work (the engine picks the rollback
+path at load). Run `ft-replay --check-cache` to confirm cache reuse gives the same
+suggestions as a fresh context, then the corpus replay, and record both in
+`docs/MEASUREMENTS.md`.
 
 **Change the C ABI.** Update `core/src/ffi.rs`, `core/include/foretype_core.h` and
 `mac/Sources/Foretype/Engine.swift` together; document JSON shape changes in

@@ -13,11 +13,19 @@
 //!   ft-replay MODEL --corpus CORPUS.jsonl --personal-loo [--only sw-] [--strength 0|1|2] [--no-examples]
 //!       leave-one-out personalization: each document is replayed with the other selected
 //!       documents as the user's writing history, with and without personalization.
+//!   ft-replay MODEL --corpus CORPUS.jsonl --check-cache [--docs N] [--chars N] [--long]
+//!       cache-reuse check: types each document (with a burst of backspaces every 9
+//!       keystrokes) through an engine that reuses its cache and through one reset before
+//!       every request, and counts the suggestions that differ. --long puts 1,400
+//!       characters of other documents before the text and as screen context, so prompts
+//!       pass 512 tokens (Gemma 4's sliding window).
 
 use std::collections::BTreeMap;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use foretype_core::context::{self, ContextInput};
+use foretype_core::engine::{Engine, EngineConfig, GenError, GenOptions};
 use foretype_core::session::AcceptMode;
 use foretype_core::{words, Core, CoreConfig, Event, Settings, Snapshot};
 
@@ -182,6 +190,117 @@ impl Replayer {
     }
 }
 
+/// Types each document through two engines, one reusing its cache (prefix reuse, rollback,
+/// snapshots) and one reset before every request, and compares their suggestions. Greedy
+/// decoding makes them equal unless a rollback is wrong; batched and single-token decodes
+/// can still differ in the last bits of a logit, so a dense model's mismatch rate is the
+/// baseline to compare against.
+fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, long: bool) {
+    // Earlier writing and screen text for --long: the last documents of the corpus.
+    let lead: String = if long {
+        let all: Vec<&str> = docs.iter().rev().map(|d| d.text.as_str()).collect();
+        let joined = all.join("\n\n");
+        joined.chars().take(1400).collect::<String>() + "\n\n"
+    } else {
+        String::new()
+    };
+    // The keystroke sequence: (document index, text before the caret).
+    let mut requests: Vec<(usize, String)> = Vec::new();
+    for (di, d) in docs.iter().enumerate().take(max_docs) {
+        let chars: Vec<char> = d.text.chars().take(max_chars).collect();
+        let mut typed = lead.clone();
+        let (mut i, mut step) = (0, 0);
+        while i < chars.len() {
+            step += 1;
+            // Every 9th keystroke deletes up to 3 characters first (exercises rewinding).
+            if step % 9 == 0 && typed.chars().count() > lead.chars().count() + 3 {
+                for _ in 0..3 {
+                    typed.pop();
+                }
+                i -= 3;
+            } else {
+                typed.push(chars[i]);
+                i += 1;
+            }
+            if typed.trim().chars().count() >= 2 {
+                requests.push((di, typed.clone()));
+            }
+        }
+    }
+    let prompts: Vec<_> = requests
+        .iter()
+        .map(|(di, typed)| {
+            let app = app_of(&docs[*di].header);
+            context::build(
+                &ContextInput {
+                    app_name: &app,
+                    window_title: "",
+                    url: "",
+                    instructions: "",
+                    screen_context: &lead,
+                    examples: &[],
+                    text_before: typed,
+                },
+                1600,
+            )
+        })
+        .collect();
+    // llama.cpp's backend can be initialised once at a time, so the two passes run in turn.
+    let cfg = EngineConfig { model_path: model.to_string(), ..EngineConfig::default() };
+    let opts = GenOptions::default();
+    let never = || false;
+    let run = |reset: bool| {
+        let mut e = Engine::load(&cfg).expect("load model");
+        if !reset {
+            eprintln!("rollback: {:?}", e.rollback());
+        }
+        let out = prompts
+            .iter()
+            .map(|p| {
+                if reset {
+                    e.reset();
+                }
+                match e.complete(p, &opts, &never) {
+                    Ok(c) => c,
+                    Err(GenError::Failed(err)) => panic!("complete: {err}"),
+                    Err(GenError::Cancelled) => unreachable!(),
+                }
+            })
+            .collect::<Vec<_>>();
+        if !reset {
+            eprintln!("snapshots held: {:.1} MB", e.snapshot_bytes() as f64 / 1e6);
+        }
+        out
+    };
+    let reuse = run(false);
+    let fresh = run(true);
+    let mut same = 0;
+    for (k, (a, b)) in reuse.iter().zip(&fresh).enumerate() {
+        if a.text == b.text {
+            same += 1;
+        } else if std::env::args().any(|x| x == "-v") {
+            let t = &requests[k].1;
+            let tail: String = t.chars().rev().take(30).collect::<Vec<_>>().into_iter().rev().collect();
+            eprintln!("  {}: ...{tail:?} | reuse {:?} | fresh {:?}", docs[requests[k].0].id, a.text, b.text);
+        }
+    }
+    let prefilled: Vec<f64> = reuse.iter().map(|c| c.prefilled_tokens as f64).collect();
+    let prompt_tokens: Vec<f64> = reuse.iter().map(|c| c.prompt_tokens as f64).collect();
+    eprintln!("prompt tokens p50 {:.0}, max {:.0}", pct(&prompt_tokens, 0.5), pct(&prompt_tokens, 1.0));
+    let ms_reuse: Vec<f64> = reuse.iter().map(|c| c.total_ms).collect();
+    let ms_fresh: Vec<f64> = fresh.iter().map(|c| c.total_ms).collect();
+    println!(
+        "check-cache: {} requests, identical {same} ({:.1}%), prefilled p50 {:.0} p90 {:.0} tokens, reuse p50 {:.0} p90 {:.0} ms, fresh p50 {:.0} ms",
+        reuse.len(),
+        100.0 * same as f64 / reuse.len().max(1) as f64,
+        pct(&prefilled, 0.5),
+        pct(&prefilled, 0.9),
+        pct(&ms_reuse, 0.5),
+        pct(&ms_reuse, 0.9),
+        pct(&ms_fresh, 0.5)
+    );
+}
+
 #[derive(serde::Deserialize, Clone)]
 struct Doc {
     id: String,
@@ -221,6 +340,11 @@ fn main() {
             .map(|l| serde_json::from_str(l).expect("corpus line"))
             .filter(|d: &Doc| d.id.starts_with(&only))
             .collect();
+        if has("--check-cache") {
+            let n_docs = flag("--docs").and_then(|s| s.parse().ok()).unwrap_or(6);
+            let n_chars = flag("--chars").and_then(|s| s.parse().ok()).unwrap_or(250);
+            return check_cache(&model, &docs, n_docs, n_chars, has("--long"));
+        }
         let mut r = Replayer::new(&model, settings.clone(), has("-v"));
         r.think = Duration::from_millis(flag("--think").and_then(|s| s.parse().ok()).unwrap_or(0));
         let snap_for = |i: usize, d: &Doc| Snapshot {

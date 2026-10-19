@@ -13,15 +13,20 @@
 //!   both for whole single-token words at a word start and for completing a word in
 //!   progress (typed or generated) into one of the user's words.
 //!
-//! The MVP supports dense, full-attention models only (e.g. Qwen3 base). Sliding-window and
-//! recurrent models cannot roll the cache back to an arbitrary position.
+//! Rolling the cache back depends on the architecture:
+//! - Dense full-attention models (Qwen3) and sliding-window models (Gemma 4, with a
+//!   full-size SWA cache so no cell is overwritten) drop the KV cells past the position.
+//! - Recurrent and hybrid models (Qwen3.5) keep a running state that can't be cut back, so
+//!   the engine snapshots the recurrent state just before the last prompt token of each
+//!   prompt, restores the nearest matching snapshot and drops the attention cells after it.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::mem::ManuallyDrop;
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
 
 use llama_cpp_2::context::params::LlamaContextParams;
+use llama_cpp_2::context::session::{LlamaStateSeqFlags, SeqState};
 use llama_cpp_2::context::LlamaContext;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
@@ -71,6 +76,26 @@ struct Vocabulary {
     whole: HashMap<i32, f32>,
 }
 
+/// How the engine takes the cache back to an earlier position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rollback {
+    /// Remove the KV cells after the position (dense and sliding-window attention).
+    Truncate,
+    /// Restore a recurrent-state snapshot, then remove the attention cells after it
+    /// (recurrent and hybrid models).
+    Snapshot,
+}
+
+/// Snapshots kept per engine. Each holds the recurrent state for one prompt (minus its last
+/// token); typing usually needs the newest one, a backspace across a word an older one.
+const MAX_SNAPSHOTS: usize = 4;
+
+/// Recurrent state after exactly `tokens` had been decoded.
+struct StateSnapshot {
+    tokens: Vec<LlamaToken>,
+    state: SeqState,
+}
+
 #[derive(Debug)]
 pub enum GenError {
     Cancelled,
@@ -104,6 +129,8 @@ pub struct Engine {
     n_batch: usize,
     n_ctx: usize,
     vocab_bias: Vocabulary,
+    rollback: Rollback,
+    snapshots: VecDeque<StateSnapshot>,
 }
 
 fn ms(since: Instant) -> f64 {
@@ -134,11 +161,7 @@ impl Engine {
                 return Err(format!("model load: {e}"));
             }
         };
-        if model.is_recurrent() || model.is_hybrid() {
-            drop(model);
-            free_backend();
-            return Err("recurrent/hybrid models are not supported yet (no cache rollback)".into());
-        }
+        let rollback = if model.is_recurrent() || model.is_hybrid() { Rollback::Snapshot } else { Rollback::Truncate };
         let model_ptr = Box::into_raw(Box::new(model));
         // SAFETY: freed only in Drop, after the context that borrows it.
         let model: &'static LlamaModel = unsafe { &*model_ptr };
@@ -147,6 +170,10 @@ impl Engine {
             .with_n_batch(cfg.n_batch)
             .with_n_ubatch(cfg.n_batch)
             .with_n_seq_max(1)
+            // Sliding-window layers normally overwrite cells that left the window, which
+            // makes rolling back impossible; at a 2,048-token context the full-size cache
+            // costs little.
+            .with_swa_full(true)
             .with_n_threads(cfg.n_threads)
             .with_n_threads_batch(cfg.n_threads);
         let ctx = match model.new_context(backend, cparams) {
@@ -181,12 +208,30 @@ impl Engine {
             n_batch: cfg.n_batch as usize,
             n_ctx: cfg.n_ctx as usize,
             vocab_bias: Vocabulary::default(),
+            rollback,
+            snapshots: VecDeque::new(),
         })
     }
 
     fn model(&self) -> &LlamaModel {
         // SAFETY: valid until Drop.
         unsafe { &*self.model }
+    }
+
+    pub fn rollback(&self) -> Rollback {
+        self.rollback
+    }
+
+    /// Bytes held by recurrent-state snapshots (0 for truncating models).
+    pub fn snapshot_bytes(&self) -> usize {
+        self.snapshots.iter().map(|s| s.state.byte_len()).sum()
+    }
+
+    /// Empties the cache and drops all snapshots (the next request prefills from scratch).
+    pub fn reset(&mut self) {
+        self.ctx.clear_kv_cache();
+        self.cached.clear();
+        self.snapshots.clear();
     }
 
     pub fn tokenize(&self, text: &str) -> Vec<LlamaToken> {
@@ -267,26 +312,38 @@ impl Engine {
         if tokens.len() + 64 > self.n_ctx {
             return Err(GenError::Failed(format!("prompt of {} tokens exceeds context", tokens.len())));
         }
-        let mut keep = self.cached.iter().zip(tokens).take_while(|(a, b)| a == b).count();
+        let common = self.cached.iter().zip(tokens).take_while(|(a, b)| a == b).count();
         // The last prompt token must be decoded again: its logits were overwritten by
         // whatever was generated after it last time.
-        keep = keep.min(tokens.len() - 1);
+        let keep = common.min(tokens.len() - 1);
         if keep < self.cached.len() {
-            self.ctx
-                .clear_kv_cache_seq(Some(0), Some(keep as u32), None)
-                .map_err(|e| GenError::Failed(format!("kv rollback: {e}")))?;
-            self.cached.truncate(keep);
+            self.rewind(&tokens[..keep])?;
         }
-        let tail = &tokens[keep..];
-        for (ci, chunk) in tail.chunks(self.n_batch).enumerate() {
+        let start = self.cached.len();
+        let last = tokens.len() - 1;
+        if self.rollback == Rollback::Snapshot {
+            // Snapshot the state before the last token: the next keystroke in the same word
+            // sends the same prompt, and generation is undone by returning here.
+            self.decode(tokens, start, last, cancel)?;
+            self.snapshot();
+            self.decode(tokens, last, tokens.len(), cancel)?;
+        } else {
+            self.decode(tokens, start, tokens.len(), cancel)?;
+        }
+        Ok(tokens.len() - start)
+    }
+
+    /// Decodes `tokens[from..to]` (already cached up to `from`), requesting logits only
+    /// for the prompt's final token.
+    fn decode(&mut self, tokens: &[LlamaToken], from: usize, to: usize, cancel: &dyn Fn() -> bool) -> Result<(), GenError> {
+        for (ci, chunk) in tokens[from..to].chunks(self.n_batch).enumerate() {
             if ci > 0 && cancel() {
                 return Err(GenError::Cancelled);
             }
             self.batch.clear();
-            let base = keep + ci * self.n_batch;
-            let last_chunk = base + chunk.len() == tokens.len();
+            let base = from + ci * self.n_batch;
             for (i, &t) in chunk.iter().enumerate() {
-                let is_last = last_chunk && i == chunk.len() - 1;
+                let is_last = base + i == tokens.len() - 1;
                 self.batch
                     .add(t, (base + i) as i32, &[0], is_last)
                     .map_err(|e| GenError::Failed(format!("batch: {e}")))?;
@@ -294,7 +351,68 @@ impl Engine {
             self.ctx.decode(&mut self.batch).map_err(|e| GenError::Failed(format!("decode: {e}")))?;
             self.cached.extend_from_slice(chunk);
         }
-        Ok(tail.len())
+        Ok(())
+    }
+
+    /// Takes the cache back so it holds a prefix of `target` (all of it when possible).
+    fn rewind(&mut self, target: &[LlamaToken]) -> Result<(), GenError> {
+        let n = target.len();
+        match self.rollback {
+            Rollback::Truncate => {
+                let ok = self
+                    .ctx
+                    .clear_kv_cache_seq(Some(0), Some(n as u32), None)
+                    .map_err(|e| GenError::Failed(format!("kv rollback: {e}")))?;
+                if ok {
+                    self.cached.truncate(n);
+                    return Ok(());
+                }
+            }
+            Rollback::Snapshot => {
+                let best = self
+                    .snapshots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| s.tokens.len() <= n && target.starts_with(&s.tokens))
+                    .max_by_key(|(_, s)| s.tokens.len())
+                    .map(|(i, _)| i);
+                if let Some(i) = best {
+                    let snap = self.snapshots.remove(i).expect("index from iter");
+                    let len = snap.tokens.len();
+                    // Restore the recurrent part first: removing cells from the recurrent
+                    // cache at an earlier position fails and would leave it untouched.
+                    let restored = self.ctx.state_seq_set(&snap.state, 0).is_ok()
+                        && self.ctx.clear_kv_cache_seq(Some(0), Some(len as u32), None).unwrap_or(false);
+                    self.snapshots.push_back(snap);
+                    if restored {
+                        self.cached.truncate(len);
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        // No way back to a shared prefix: start over.
+        self.ctx.clear_kv_cache();
+        self.cached.clear();
+        Ok(())
+    }
+
+    /// Records the recurrent state for the tokens now in the cache (once per prompt).
+    fn snapshot(&mut self) {
+        if let Some(i) = self.snapshots.iter().position(|s| s.tokens == self.cached) {
+            let s = self.snapshots.remove(i).expect("index from iter");
+            self.snapshots.push_back(s);
+            return;
+        }
+        match self.ctx.state_seq_get(0, LlamaStateSeqFlags::PARTIAL_ONLY) {
+            Ok(state) => {
+                if self.snapshots.len() >= MAX_SNAPSHOTS {
+                    self.snapshots.pop_front();
+                }
+                self.snapshots.push_back(StateSnapshot { tokens: self.cached.clone(), state });
+            }
+            Err(e) => eprintln!("[foretype] state snapshot failed: {e}"),
+        }
     }
 
     /// Zero-token request: prefills `prefix` so the next completion only pays for its tail.
@@ -430,9 +548,14 @@ impl Engine {
             idx = 0;
         };
 
-        // Roll the generated tokens back out of the cache so it mirrors the prompt again.
+        // Roll the generated tokens back out of the cache so it mirrors the prompt again
+        // (with snapshots: the prompt minus its last token, which the next request decodes).
         if pos > tokens.len() {
-            let _ = self.ctx.clear_kv_cache_seq(Some(0), Some(tokens.len() as u32), None);
+            let target = match self.rollback {
+                Rollback::Truncate => &tokens[..],
+                Rollback::Snapshot => &tokens[..tokens.len() - 1],
+            };
+            self.rewind(target)?;
         }
         result?;
 

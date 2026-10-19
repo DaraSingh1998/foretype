@@ -157,3 +157,15 @@ needed.
 The catalog (`models/catalog.json`, pinned SHA-256 and sizes) is compiled into the core so
 every shell shares it; downloading, resuming and verifying use platform networking
 (URLSession on macOS). A download is moved into place only after it verifies.
+
+## D21. Cache rollback per architecture: full SWA cache, recurrent snapshots (2026-10-19)
+
+**Decision.** Sliding-window models (Gemma 4) run with a full-size SWA cache so the normal
+truncate-to-prefix path works; recurrent and hybrid models (Qwen3.5) snapshot their
+recurrent state before each prompt's last token and restore it to roll back.
+**Why.** Both keep the one-sequence, prefix-reuse design (D7) and its 1-token prefill per
+keystroke. llama.cpp's own per-token recurrent rollback (`n_rs_seq`) is experimental,
+single-use and sized for speculative decoding; explicit snapshots cover backspaces and
+prefetch. The full SWA cache costs only the window's difference at a 2,048-token context.
+**Cost.** A snapshot copy (a few MB) once per new prompt prefix, i.e. per word, and up to
+4 snapshots in memory. Verified with `ft-replay --check-cache` (`docs/MEASUREMENTS.md`).

@@ -135,8 +135,20 @@ In order; the first rule that applies decides:
   while a word is in progress (typed or generated), boosts the next token of the user's
   words that extend it (up to 8 candidates). Boosts are non-negative and sparse, so the
   argmax is either the unboosted winner or one of the boosted tokens.
-- **Model constraints**: dense, full-attention models only. Recurrent or hybrid models are
-  rejected at load (their state can't be rolled back to an arbitrary position).
+- **Rollback by architecture** (`Rollback`, chosen at load):
+  - *Truncate*: dense full-attention models (Qwen3) and sliding-window models (Gemma 4).
+    The context is created with a full-size SWA cache (`swa_full`), so cells that left the
+    512-token window are kept and removing cells past a position is always valid; at a
+    2,048-token context this costs little memory.
+  - *Snapshot*: recurrent and hybrid models (Qwen3.5's Gated DeltaNet layers). Their
+    running state can't be cut back, so `sync` decodes the prompt up to its last token,
+    saves the recurrent state (`state_seq_get` with `PARTIAL_ONLY`, a few MB), then decodes
+    the last token. Rolling back restores the newest snapshot whose tokens are a prefix of
+    the target and removes the attention cells after it; generation is undone by returning
+    to the prompt's own snapshot. Up to 4 snapshots are kept (most recent first); with none
+    usable the cache is cleared and the prompt prefilled from scratch.
+  - `ft-replay --check-cache` types documents (with backspaces) through a reusing engine
+    and through one reset before every request and counts differing suggestions.
 - The backend, model and context live behind raw pointers and are freed in order in `Drop`
   (context, model, backend); Metal asserts at process exit if a context outlives its
   device.

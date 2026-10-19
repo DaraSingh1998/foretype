@@ -73,7 +73,6 @@ from Mac MVP to Linux"), adjusted as the work went.
 
 ## Known limitations
 
-- Dense full-attention models only.
 - Insertion overrides exist but every app still defaults to keystrokes.
 - Not yet verified by eye: the ghost overlay's on-screen placement, the setup window, menus,
   the Custom Instructions window, live screen capture (needs Screen Recording on the

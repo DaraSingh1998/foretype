@@ -225,14 +225,12 @@ personalization, custom instructions, model and setup.
 
 ## Known limitations (MVP)
 
-- Dense full-attention models only (Qwen3 base). Gemma 4 and Qwen3.5 need KV state
-  snapshots (sliding-window / recurrent layers can't roll back).
 - Per-app insertion overrides are in place but every app still defaults to keystrokes;
   entries need testing app by app.
 - Screen context has only been tested through the OCR self-test and replays; live window
   capture needs the Screen Recording grant on `Foretype.app`, which the dev test setup
   doesn't have.
-- No model download UI, autocorrect, emoji, phrase beam search or Gemma 4 support yet.
+- No autocorrect, emoji or phrase beam search yet.
 - The personalization menu and the Custom Instructions window have not been exercised in
   the automated tests; the recorder, history and bias are covered by unit tests and replays.
 - Notarization and the Sparkle feed are wired up but have not been exercised: they need a
