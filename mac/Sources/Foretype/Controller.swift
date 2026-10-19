@@ -9,9 +9,18 @@ final class Controller {
     let keys = KeyTap()
     let panel = GhostPanel()
     let screen = ScreenContextProvider()
+    let hotkeys = Hotkeys()
+    let power = PowerMonitor()
     var onStatus: ((String, String) -> Void)?
-    /// Bundle IDs whose compatibility rule turns suggestions off by default.
-    private var offByDefault: [String: Bool] = [:]
+    /// Compatibility rules by bundle ID (looked up once per app).
+    private var rules: [String: [String: Any]] = [:]
+    /// Field and line the user forced suggestions in (Ctrl + key above Tab). Force ends when
+    /// focus moves or the caret leaves that line (in a terminal the whole window is one
+    /// field, so it must not outlive the command being typed).
+    private var forcedField: UInt64 = 0
+    private var forcedLine = ""
+    /// Apps snoozed with Ctrl+Opt+Cmd + key above Tab, and until when.
+    private(set) var snoozed: [String: Date] = [:]
 
     private let lock = NSLock()
     private var latest = FieldSnapshot()
@@ -32,6 +41,11 @@ final class Controller {
         screen.onUpdate = { [weak self] fieldKey, text in self?.screenTextArrived(fieldKey, text) }
         keys.onKeyDown = { [weak self] in self?.tracker.keyDown() }
         keys.onAction = { [weak self] action in DispatchQueue.main.async { self?.perform(action) } }
+        hotkeys.onAction = { [weak self] action in self?.hotkey(action) }
+        hotkeys.register(keyAboveTab: UInt32(keys.acceptAllKey))
+        power.onChange = { [weak self] _ in self?.applySettings() }
+        power.start()
+        engine.configure(coreSettingsJSON())
         let ok = keys.start()
         tracker.start()
         return ok
@@ -42,13 +56,37 @@ final class Controller {
         return latest
     }
 
+    private func rule(_ bundleId: String) -> [String: Any] {
+        lock.lock()
+        if let r = rules[bundleId] { lock.unlock(); return r }
+        lock.unlock()
+        let r = engine.compatRule(bundleId)
+        lock.lock(); rules[bundleId] = r; lock.unlock()
+        return r
+    }
+
+    private func isSnoozed(_ bundleId: String) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard let until = snoozed[bundleId] else { return false }
+        if until > Date() { return true }
+        snoozed[bundleId] = nil
+        return false
+    }
+
     /// AX thread.
     private func arrived(_ snap: FieldSnapshot) {
         var s = snap
         s.screenContext = screen.text(for: s.fieldKey)
         lock.lock()
+        let line = s.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+        if forcedField != 0, forcedField != s.fieldKey || !line.hasPrefix(forcedLine) { forcedField = 0 }
+        s.force = forcedField != 0
         latest = s
         lock.unlock()
+        if isSnoozed(s.bundleId) {
+            DispatchQueue.main.async { [weak self] in self?.hide() }
+            return
+        }
         engine.submit(s)
         screen.note(.init(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame),
                     skip: !screenContextAllowed(s))
@@ -61,14 +99,8 @@ final class Controller {
         let only = settings.onlyApps
         if !only.isEmpty, !only.contains(s.bundleId) { return false }
         if settings.disabledApps.contains(s.bundleId) { return false }
-        lock.lock()
-        let cached = offByDefault[s.bundleId]
-        lock.unlock()
-        let off = cached ?? ((engine.compatRule(s.bundleId)["disabled"] as? Bool) ?? false)
-        if cached == nil {
-            lock.lock(); offByDefault[s.bundleId] = off; lock.unlock()
-        }
-        return !off || settings.enabledApps.contains(s.bundleId)
+        let off = (rule(s.bundleId)["disabled"] as? Bool) ?? false
+        return !off || s.force || settings.enabledApps.contains(s.bundleId)
     }
 
     /// Screen queue: fresh OCR for a field. Prefill the new header right away so the next
@@ -117,8 +149,9 @@ final class Controller {
                 Inserter.press(key: action == .acceptWord ? 48 : CGKeyCode(keys.acceptAllKey))
                 return
             }
-            Inserter.type(r.insert)
-            Log.debug("accept \(action == .acceptAll ? "all" : "word") \(r.insert.debugDescription)")
+            let strategy = insertionStrategy(for: latestSnapshot.bundleId)
+            Inserter.insert(r.insert, strategy: strategy)
+            Log.debug("accept \(action == .acceptAll ? "all" : "word") via \(strategy.rawValue) \(r.insert.debugDescription)")
             if r.remaining.isEmpty {
                 hide()
             } else {
@@ -135,9 +168,47 @@ final class Controller {
         }
     }
 
+    /// Per-app insertion from the compatibility database; FORETYPE_INSERTION overrides it
+    /// for testing.
+    private func insertionStrategy(for bundleId: String) -> InsertionStrategy {
+        if let env = ProcessInfo.processInfo.environment["FORETYPE_INSERTION"], let s = InsertionStrategy(rawValue: env) {
+            return s
+        }
+        return (rule(bundleId)["insertion"] as? String).flatMap(InsertionStrategy.init(rawValue:)) ?? .keystrokes
+    }
+
+    /// Main thread.
+    private func hotkey(_ action: Hotkeys.Action) {
+        let snap = latestSnapshot
+        switch action {
+        case .forceSuggest:
+            guard snap.fieldKey != 0 else { return }
+            let line = snap.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+            lock.lock(); forcedField = snap.fieldKey; forcedLine = line; snoozed[snap.bundleId] = nil; lock.unlock()
+            Log.debug("force suggestions in \(snap.appName)")
+            tracker.forceRead()
+        case .snoozeApp:
+            guard !snap.bundleId.isEmpty else { return }
+            lock.lock(); snoozed[snap.bundleId] = Date().addingTimeInterval(300); lock.unlock()
+            Log.debug("snoozed \(snap.appName) for 5 minutes")
+            hide()
+        }
+    }
+
+    func unsnooze(_ bundleId: String) {
+        lock.lock(); snoozed[bundleId] = nil; lock.unlock()
+    }
+
+    /// Settings plus runtime state (battery debounce) as the core's JSON.
+    private func coreSettingsJSON() -> String {
+        var d = settings.coreDict
+        d["debounce_ms"] = power.onBattery ? 80 : 0
+        return String(data: try! JSONSerialization.data(withJSONObject: d), encoding: .utf8)!
+    }
+
     func applySettings() {
         screen.enabled = settings.useScreenContext
-        engine.configure(settings.coreJSON())
+        engine.configure(coreSettingsJSON())
         hide()
     }
 

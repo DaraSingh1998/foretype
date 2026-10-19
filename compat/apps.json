@@ -1,43 +1,197 @@
 {
   "version": 1,
   "license": "CC0-1.0",
-  "comment": "Per-app compatibility rules shared by every shell. Keys are bundle identifiers; 'prefixes' match bundle-ID prefixes. Fields: disabled (no suggestions by default), insertion ('keystrokes' | 'paste'), prime ('chromium' | 'electron'), note.",
+  "comment": "Per-app compatibility rules shared by every shell. Keys are bundle identifiers; 'prefixes' match bundle-ID prefixes. Fields: disabled (no suggestions by default), agent_prompt_only (terminals: suggest only on an AI-agent prompt line), insertion ('keystrokes' | 'paste' | 'paste-long' | 'first-word-then-paste'), prime ('chromium' | 'electron'), note. 'agent_prompt' lists the line markers of CLI agent prompts (Claude Code, Codex, Gemini CLI, OpenCode): an optional border character, then a marker, then the prompt text.",
   "apps": {
-    "com.apple.Terminal": { "disabled": true, "note": "Terminal: off by default (shell prompts)." },
-    "com.googlecode.iterm2": { "disabled": true, "note": "Terminal." },
-    "dev.warp.Warp-Stable": { "disabled": true, "note": "Terminal; draws its own text." },
-    "com.mitchellh.ghostty": { "disabled": true, "note": "Terminal; draws its own text." },
-    "net.kovidgoyal.kitty": { "disabled": true, "note": "Terminal; draws its own text." },
-    "com.github.wez.wezterm": { "disabled": true, "note": "Terminal." },
-    "io.alacritty": { "disabled": true, "note": "Terminal." },
-    "com.microsoft.VSCode": { "disabled": true, "prime": "electron", "note": "Code editor; main buffer off by default." },
-    "com.todesktop.230313mzl4w4u92": { "disabled": true, "prime": "electron", "note": "Cursor; code editor." },
-    "com.exafunction.windsurf": { "disabled": true, "prime": "electron", "note": "Windsurf; code editor." },
-    "dev.zed.Zed": { "disabled": true, "note": "Draws its own text; no AX text." },
-    "com.sublimetext.4": { "disabled": true, "note": "Draws its own text." },
-    "com.apple.dt.Xcode": { "disabled": true, "note": "Code editor." },
-    "com.1password.1password": { "disabled": true, "note": "Password manager." },
-    "com.bitwarden.desktop": { "disabled": true, "prime": "electron", "note": "Password manager." },
-    "com.apple.Passwords": { "disabled": true, "note": "Password manager." },
-    "com.apple.keychainaccess": { "disabled": true, "note": "Password manager." },
-    "com.microsoft.rdc.macos": { "disabled": true, "note": "Remote desktop." },
-    "com.teamviewer.TeamViewer": { "disabled": true, "note": "Remote desktop." },
-    "com.anydesk.anydeskmacos": { "disabled": true, "note": "Remote desktop." },
-    "com.vmware.fusion": { "disabled": true, "note": "Virtual machine." },
-    "com.parallels.desktop.console": { "disabled": true, "note": "Virtual machine." },
-    "com.google.Chrome": { "prime": "chromium" },
-    "com.google.Chrome.canary": { "prime": "chromium" },
-    "com.brave.Browser": { "prime": "chromium" },
-    "com.microsoft.edgemac": { "prime": "chromium" },
-    "company.thebrowser.Browser": { "prime": "chromium", "note": "Arc: needs chrome://accessibility Text Metrics for inline caret." },
-    "com.tinyspeck.slackmacgap": { "prime": "electron" },
-    "notion.id": { "prime": "electron" },
-    "md.obsidian": { "prime": "electron" },
-    "com.hnc.Discord": { "prime": "electron" },
-    "com.microsoft.teams2": { "note": "Teams returns empty caret rects; expect mirror card." }
+    "com.apple.Terminal": {
+      "agent_prompt_only": true,
+      "note": "Terminal: suggestions only on AI-agent prompts (Claude Code, Codex, ...)."
+    },
+    "com.googlecode.iterm2": {
+      "agent_prompt_only": true,
+      "note": "Terminal: suggestions only on AI-agent prompts (Claude Code, Codex, ...)."
+    },
+    "dev.warp.Warp-Stable": {
+      "disabled": true,
+      "note": "Terminal; draws its own text."
+    },
+    "com.mitchellh.ghostty": {
+      "disabled": true,
+      "note": "Terminal; draws its own text."
+    },
+    "net.kovidgoyal.kitty": {
+      "disabled": true,
+      "note": "Terminal; draws its own text."
+    },
+    "com.github.wez.wezterm": {
+      "agent_prompt_only": true,
+      "note": "Terminal: suggestions only on AI-agent prompts (Claude Code, Codex, ...)."
+    },
+    "io.alacritty": {
+      "agent_prompt_only": true,
+      "note": "Terminal: suggestions only on AI-agent prompts (Claude Code, Codex, ...)."
+    },
+    "com.microsoft.VSCode": {
+      "disabled": true,
+      "prime": "electron",
+      "note": "Code editor; main buffer off by default."
+    },
+    "com.todesktop.230313mzl4w4u92": {
+      "disabled": true,
+      "prime": "electron",
+      "note": "Cursor; code editor."
+    },
+    "com.exafunction.windsurf": {
+      "disabled": true,
+      "prime": "electron",
+      "note": "Windsurf; code editor."
+    },
+    "dev.zed.Zed": {
+      "disabled": true,
+      "note": "Draws its own text; no AX text."
+    },
+    "com.sublimetext.4": {
+      "disabled": true,
+      "note": "Draws its own text."
+    },
+    "com.apple.dt.Xcode": {
+      "disabled": true,
+      "note": "Code editor."
+    },
+    "com.1password.1password": {
+      "disabled": true,
+      "note": "Password manager."
+    },
+    "com.bitwarden.desktop": {
+      "disabled": true,
+      "prime": "electron",
+      "note": "Password manager."
+    },
+    "com.apple.Passwords": {
+      "disabled": true,
+      "note": "Password manager."
+    },
+    "com.apple.keychainaccess": {
+      "disabled": true,
+      "note": "Password manager."
+    },
+    "com.microsoft.rdc.macos": {
+      "disabled": true,
+      "note": "Remote desktop."
+    },
+    "com.teamviewer.TeamViewer": {
+      "disabled": true,
+      "note": "Remote desktop."
+    },
+    "com.anydesk.anydeskmacos": {
+      "disabled": true,
+      "note": "Remote desktop."
+    },
+    "com.vmware.fusion": {
+      "disabled": true,
+      "note": "Virtual machine."
+    },
+    "com.parallels.desktop.console": {
+      "disabled": true,
+      "note": "Virtual machine."
+    },
+    "com.google.Chrome": {
+      "prime": "chromium"
+    },
+    "com.google.Chrome.canary": {
+      "prime": "chromium"
+    },
+    "com.brave.Browser": {
+      "prime": "chromium"
+    },
+    "com.microsoft.edgemac": {
+      "prime": "chromium"
+    },
+    "company.thebrowser.Browser": {
+      "prime": "chromium",
+      "note": "Arc: needs chrome://accessibility Text Metrics for inline caret."
+    },
+    "com.tinyspeck.slackmacgap": {
+      "prime": "electron"
+    },
+    "notion.id": {
+      "prime": "electron"
+    },
+    "md.obsidian": {
+      "prime": "electron"
+    },
+    "com.hnc.Discord": {
+      "prime": "electron"
+    },
+    "com.microsoft.teams2": {
+      "note": "Teams returns empty caret rects; expect mirror card."
+    },
+    "com.apple.TextEdit": {
+      "note": "TextKit: zero-length caret rect is one line high; marked range always present (zero length)."
+    },
+    "com.apple.Notes": {},
+    "com.apple.mail": {},
+    "com.apple.MobileSMS": {},
+    "com.apple.Safari": {
+      "note": "Address bar is an AXTextField; caret rect one line high."
+    },
+    "com.apple.iWork.Pages": {},
+    "com.microsoft.Word": {
+      "note": "Reports a fake font name; family wins."
+    },
+    "com.microsoft.Outlook": {},
+    "com.microsoft.Excel": {
+      "disabled": true,
+      "note": "Spreadsheet cells: Tab must move between cells."
+    },
+    "com.apple.iWork.Numbers": {
+      "disabled": true,
+      "note": "Spreadsheet cells."
+    },
+    "net.whatsapp.WhatsApp": {},
+    "ru.keepcoder.Telegram": {},
+    "org.whispersystems.signal-desktop": {
+      "prime": "electron"
+    },
+    "com.linear": {
+      "prime": "electron"
+    },
+    "com.figma.Desktop": {
+      "disabled": true,
+      "prime": "electron",
+      "note": "Canvas; no AX text."
+    },
+    "org.mozilla.firefox": {
+      "note": "No caret geometry; expect mirror card."
+    },
+    "app.zen-browser.zen": {
+      "note": "No caret geometry; expect mirror card."
+    },
+    "com.openai.chat": {},
+    "com.anthropic.claudefordesktop": {
+      "prime": "electron"
+    }
   },
   "prefixes": {
-    "com.jetbrains.": { "disabled": true, "note": "JetBrains IDEs." },
-    "com.google.android.studio": { "disabled": true, "note": "Android Studio." }
+    "com.jetbrains.": {
+      "disabled": true,
+      "note": "JetBrains IDEs."
+    },
+    "com.google.android.studio": {
+      "disabled": true,
+      "note": "Android Studio."
+    }
+  },
+  "agent_prompt": {
+    "borders": [
+      "│",
+      "┃",
+      "|"
+    ],
+    "markers": [
+      "> ",
+      "› ",
+      "▌ "
+    ]
   }
 }

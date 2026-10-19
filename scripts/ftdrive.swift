@@ -3,7 +3,8 @@
 // like real typing. Typing pauses while another app is frontmost and aborts if the app that
 // was frontmost at the start does not come back within 2 s.
 //
-// usage: ftdrive type TEXT [interval_ms] | ftdrive key tab|esc|opt-tab|accept-all|cmd-down|return
+// usage: ftdrive type TEXT [interval_ms]
+//        ftdrive key tab|esc|opt-tab|accept-all|cmd-down|return|force|snooze|ctrl-c
 //        ftdrive front   (prints the frontmost app's bundle ID)
 import AppKit
 import Carbon
@@ -57,6 +58,9 @@ case "key":
     case "accept-all": post(iso ? 10 : 50)
     case "cmd-down": post(125, flags: .maskCommand)
     case "return": post(36)
+    case "force": post(iso ? 10 : 50, flags: .maskControl)
+    case "snooze": post(iso ? 10 : 50, flags: [.maskControl, .maskAlternate, .maskCommand])
+    case "ctrl-c": post(8, flags: .maskControl)
     default: exit(2)
     }
 default:

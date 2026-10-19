@@ -25,6 +25,8 @@ struct FieldSnapshot {
     var font: NSFont?
     /// OCR of the focused window near the field, filled in by the controller.
     var screenContext = ""
+    /// The user asked for suggestions here with the force hotkey.
+    var force = false
 
     /// The JSON shape the core's `Snapshot` expects.
     func coreJSON() -> String {
@@ -34,7 +36,7 @@ struct FieldSnapshot {
             "role_description": roleDescription, "text_before": textBefore, "text_after": textAfter,
             "selection_len": selectionLength, "marked_len": markedLength, "secure_input": secureInput,
             "field_width": Double(frame?.width ?? 0), "field_height": Double(frame?.height ?? 0),
-            "screen_context": screenContext,
+            "screen_context": screenContext, "force": force,
         ]
         let data = try! JSONSerialization.data(withJSONObject: o)
         return String(data: data, encoding: .utf8)!
@@ -130,6 +132,14 @@ final class FocusTracker {
     func keyDown() {
         perform(afterMs: 8) { self.requestRead() }
         perform(afterMs: 45) { self.requestRead() }
+    }
+
+    /// Emits a fresh snapshot of the focused field even if nothing changed.
+    func forceRead() {
+        perform {
+            self.lastSignature = []
+            self.read(reason: "force")
+        }
     }
 
     /// Coalesces bursts of notifications (Safari sends ~6 per keystroke) into one read.

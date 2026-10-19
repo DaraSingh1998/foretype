@@ -3,6 +3,9 @@ import AppKit
 if CommandLine.arguments.contains("--ocr-selftest") {
     exit(ScreenContextProvider.selfTest() ? 0 : 1)
 }
+if CommandLine.arguments.contains("--font-selftest") {
+    exit(FontMatcher.selfTest() ? 0 : 1)
+}
 
 let app = NSApplication.shared
 let delegate = AppDelegate()

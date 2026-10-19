@@ -146,6 +146,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.state = on ? .on : .off
             item.representedObject = [bundle, offByDefault] as [Any]
             menu.addItem(item)
+            if let until = controller?.snoozed[bundle], until > Date() {
+                let f = DateFormatter()
+                f.timeStyle = .short
+                let s = NSMenuItem(title: "Snoozed until \(f.string(from: until)) \u{2014} Resume", action: #selector(unsnooze(_:)), keyEquivalent: "")
+                s.target = self
+                s.representedObject = bundle
+                menu.addItem(s)
+            }
         }
         menu.addItem(.separator())
         if !AXIsProcessTrusted() {
@@ -179,6 +187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings.disabledApps = list
         }
         controller?.applySettings()
+    }
+
+    @objc private func unsnooze(_ sender: NSMenuItem) {
+        if let bundle = sender.representedObject as? String { controller?.unsnooze(bundle) }
     }
 
     @objc private func toggleScreenContext() {

@@ -73,6 +73,11 @@ pub struct Settings {
     pub only_apps: Vec<String>,
     pub deadline_ms: u64,
     pub max_body_chars: usize,
+    /// Free the model after this many idle seconds (0 = never); it reloads on next use.
+    pub unload_after_s: u64,
+    /// Wait this long for more typing before generating mid-word (0 = never wait). Shells
+    /// raise it on battery power.
+    pub debounce_ms: u64,
 }
 
 impl Default for Settings {
@@ -87,6 +92,8 @@ impl Default for Settings {
             only_apps: Vec::new(),
             deadline_ms: 300,
             max_body_chars: 1600,
+            unload_after_s: 300,
+            debounce_ms: 0,
         }
     }
 }
@@ -224,7 +231,7 @@ impl Core {
 
     /// Handles a field change. Returns synchronously for policy decisions and reused
     /// suggestions; otherwise queues inference (latest wins) and emits a `pending` hide.
-    pub fn submit(&self, snap: Snapshot) {
+    pub fn submit(&self, mut snap: Snapshot) {
         let rev = snap.revision;
         self.shared.latest.store(rev, Ordering::SeqCst);
         let settings = self.settings();
@@ -240,9 +247,16 @@ impl Core {
             self.shared.session.lock().unwrap().clear();
             return self.emit_suggestion(rev, String::new(), "policy", Some(reason.into()));
         }
+        // In a terminal only the agent prompt's own text is the document; the scrollback
+        // above it reaches the model as screen context instead.
+        if self.shared.compat.rule(&snap.bundle_id).agent_prompt_only && !enabled.contains(&snap.bundle_id) {
+            if let Some(prompt) = self.shared.compat.agent_prompt_text(&snap.text_before) {
+                snap.text_before = prompt.to_string();
+            }
+        }
         {
             let mut session = self.shared.session.lock().unwrap();
-            if session.is_dismissed(snap.field_key, &snap.text_before) {
+            if !snap.force && session.is_dismissed(snap.field_key, &snap.text_before) {
                 return self.emit_suggestion(rev, String::new(), "dismissed", None);
             }
             if let Some(rest) = session.type_through(snap.field_key, &snap.text_before) {
@@ -330,19 +344,26 @@ fn build_prompt(snap: &Snapshot, settings: &Settings) -> Prompt {
 }
 
 fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
-    (shared.sink)(&Event::Status { state: "loading", detail: cfg.model_path.clone() });
-    let t = Instant::now();
-    let mut engine = match Engine::load(&cfg) {
-        Ok(e) => e,
-        Err(err) => {
-            (shared.sink)(&Event::Status { state: "error", detail: err });
-            return;
+    let load = |shared: &Shared| -> Option<Engine> {
+        (shared.sink)(&Event::Status { state: "loading", detail: cfg.model_path.clone() });
+        let t = Instant::now();
+        match Engine::load(&cfg) {
+            Ok(e) => {
+                (shared.sink)(&Event::Status {
+                    state: "ready",
+                    detail: format!("loaded in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0),
+                });
+                Some(e)
+            }
+            Err(err) => {
+                (shared.sink)(&Event::Status { state: "error", detail: err });
+                None
+            }
         }
     };
-    (shared.sink)(&Event::Status {
-        state: "ready",
-        detail: format!("loaded in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0),
-    });
+    let Some(first) = load(&shared) else { return };
+    let mut engine_slot = Some(first);
+    let mut last_used = Instant::now();
 
     loop {
         let job = {
@@ -354,9 +375,31 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                 if let Some(job) = pending.take() {
                     break job;
                 }
-                pending = shared.wake.wait(pending).unwrap();
+                // Idle: free the model's memory (Cotypist does the same) until needed again.
+                let unload_after = shared.settings.read().unwrap().unload_after_s;
+                if engine_slot.is_some() && unload_after > 0 && last_used.elapsed() >= Duration::from_secs(unload_after) {
+                    drop(pending);
+                    engine_slot = None;
+                    (shared.sink)(&Event::Status { state: "idle", detail: "model unloaded".into() });
+                    pending = shared.pending.lock().unwrap();
+                    continue;
+                }
+                let timeout = if engine_slot.is_some() && unload_after > 0 {
+                    Duration::from_secs(unload_after).saturating_sub(last_used.elapsed()).max(Duration::from_millis(50))
+                } else {
+                    Duration::from_secs(3600)
+                };
+                pending = shared.wake.wait_timeout(pending, timeout).unwrap().0;
             }
         };
+        last_used = Instant::now();
+        if engine_slot.is_none() {
+            engine_slot = load(&shared);
+            if engine_slot.is_none() {
+                return;
+            }
+        }
+        let engine = engine_slot.as_mut().unwrap();
         let rev = job.revision;
         let latest = &shared.latest;
         let cancel = || latest.load(Ordering::SeqCst) != rev;
@@ -372,6 +415,17 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                     continue;
                 }
                 let settings = shared.settings.read().unwrap().clone();
+                // On battery, wait briefly for the next keystroke mid-word; word boundaries
+                // (space, punctuation, newline) still fire at once.
+                if settings.debounce_ms > 0 && !job.prompt.fragment.trim().is_empty() {
+                    let until = Instant::now() + Duration::from_millis(settings.debounce_ms);
+                    while Instant::now() < until && !cancel() {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    if cancel() {
+                        continue;
+                    }
+                }
                 let opts = GenOptions {
                     max_words: settings.length_words.max(1),
                     deadline: Duration::from_millis(settings.deadline_ms),

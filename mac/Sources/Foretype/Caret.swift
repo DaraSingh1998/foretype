@@ -101,6 +101,50 @@ enum CaretResolver {
            let f = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
             return f
         }
+        // Size only (Chrome): pick the font family whose rendering of the last few
+        // characters matches their on-screen width.
+        let k = min(caret, 24)
+        if k >= 4, let text = AX.string(el, range: caret - k, k), !text.contains(where: \.isNewline),
+           let r = AX.bounds(el, caret - k, k), r.width > 0, r.height < size * 2.2 {
+            return FontMatcher.best(text: text, width: r.width, size: size)
+        }
         return NSFont.systemFont(ofSize: size)
+    }
+}
+
+/// Guesses a font from a measured text width (Tabber's approach for Chromium, which
+/// reports a font size but no name).
+enum FontMatcher {
+    static let families = [
+        "Helvetica Neue", "Helvetica", "Arial", "Times New Roman", "Times", "Georgia", "Verdana",
+        "Tahoma", "Trebuchet MS", "Menlo", "Courier New", "Courier", "Palatino",
+    ]
+
+    static func width(_ text: String, _ font: NSFont) -> CGFloat {
+        NSAttributedString(string: text, attributes: [.font: font]).size().width
+    }
+
+    static func best(text: String, width measured: CGFloat, size: CGFloat) -> NSFont {
+        var candidates = [NSFont.systemFont(ofSize: size)]
+        candidates += families.compactMap { NSFont(name: $0, size: size) ?? NSFontManager.shared.font(withFamily: $0, traits: [], weight: 5, size: size) }
+        return candidates.min { abs(width(text, $0) - measured) < abs(width(text, $1) - measured) }!
+    }
+
+    /// `Foretype --font-selftest`: each family must be recovered from its own width.
+    static func selfTest() -> Bool {
+        let sample = "Thanks for sending the notes"
+        var ok = true
+        for family in ["Georgia", "Menlo", "Times New Roman", "Verdana", "Helvetica Neue"] {
+            guard let font = NSFont(name: family, size: 17) else { continue }
+            let picked = best(text: sample, width: width(sample, font), size: 17)
+            let pass = picked.familyName == font.familyName
+            ok = ok && pass
+            print("\(family): picked \(picked.familyName ?? "?") \(pass ? "ok" : "WRONG")")
+        }
+        let sys = NSFont.systemFont(ofSize: 15)
+        let picked = best(text: sample, width: width(sample, sys), size: 15)
+        print("system: picked \(picked.familyName ?? "?") \(picked.familyName == sys.familyName ? "ok" : "WRONG")")
+        print(ok ? "font self-test passed" : "font self-test FAILED")
+        return ok
     }
 }

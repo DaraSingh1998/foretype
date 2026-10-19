@@ -28,6 +28,7 @@ let package = Package(
                 .linkedFramework("Accelerate"),
                 .linkedFramework("ScreenCaptureKit"),
                 .linkedFramework("Vision"),
+                .linkedFramework("IOKit"),
             ]
         ),
     ]

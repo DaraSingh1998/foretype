@@ -4,9 +4,10 @@ Free, open-source, on-device inline autocomplete for every app: gray "ghost text
 your caret, Tab to take the next word, the key above Tab to take all of it. A Cotypist-style
 tool built so the engine can be shared across macOS, Windows and Linux.
 
-Status: **Phase 1 MVP, macOS only.** Works end to end with a local Qwen3 base model in
-every app except those off by default (terminals, code editors, password managers, remote
-desktops); not packaged or notarized yet.
+Status: **Phase 2 (compatibility), macOS only.** Works end to end with a local Qwen3 base
+model in every app except those off by default (code editors, password managers, remote
+desktops, spreadsheets). In Terminal and iTerm it suggests only on AI-agent prompts (Claude
+Code, Codex, ...). Not packaged or notarized yet.
 
 ## How it works
 
@@ -33,9 +34,10 @@ desktops); not packaged or notarized yet.
   *state*, so a Windows TSF service or a Linux Fcitx5/IBus preedit can render the same
   output. C header: `core/include/foretype_core.h`.
 - `mac/`: the macOS shell (SwiftPM, AppKit, Accessibility, event taps).
-- `compat/apps.json`: per-app rules (off by default in terminals, code editors, password
-  managers and remote desktops; Chromium/Electron accessibility priming). Licensed CC0 so
-  any project can use it.
+- `compat/apps.json`: per-app rules for about 50 apps: off by default (code editors,
+  password managers, remote desktops, spreadsheets), agent-prompt-only (terminals),
+  insertion strategy, Chromium/Electron accessibility priming. Licensed CC0 so any project
+  can use it.
 
 ### Screen context
 
@@ -96,6 +98,25 @@ switch, the suggestion length and a per-app toggle.
 | key above Tab (` or §) | insert the whole suggestion |
 | Esc | dismiss (no new suggestion until you type) |
 | Option+Tab | a real Tab |
+| Ctrl + key above Tab | suggest here even where Foretype normally stays quiet (this line only) |
+| Ctrl+Opt+Cmd + key above Tab | snooze suggestions in the current app for 5 minutes |
+
+### Per-app behaviour
+
+- **Terminals** (Terminal, iTerm, WezTerm, Alacritty): suggestions only when the caret line
+  is an AI-agent prompt (an optional `│`/`┃` border, then `> `, `› ` or `▌ `). Only the
+  prompt's own text is used as the document; the scrollback reaches the model as screen
+  context. Shell prompts (`$`, `%`, `❯`) never get suggestions.
+- **Insertion**: keystrokes by default. Apps can be set to `paste`, `paste-long` (paste
+  from 40 characters) or `first-word-then-paste`. Paste borrows the clipboard, marks the
+  item transient so clipboard managers skip it, and restores the previous clipboard. It is
+  used only when macOS clipboard access for Foretype is "always allow" (macOS 15.4+ asks
+  otherwise); without that it falls back to keystrokes, never leaving your clipboard
+  overwritten.
+- **Chromium** reports a font size but no font name; Foretype measures the on-screen width
+  of the last few characters and picks the matching font family.
+- **Power**: the model is unloaded after 5 idle minutes (about 1 GB freed) and reloaded on
+  the next keystroke; on battery, mid-word suggestions wait 80 ms for the next keystroke.
 
 ## Development
 
@@ -103,14 +124,17 @@ switch, the suggestion length and a per-app toggle.
   reuse, policy).
 - `ft-replay MODEL TEXT_FILE` replays typing through the core and reports keystrokes saved,
   characters per accept and latency, with no UI.
-- `scripts/e2e-textedit.sh` drives a new TextEdit document with synthetic keystrokes.
-  It restricts Foretype to TextEdit (`FORETYPE_ONLY_APPS`), waits for the user to be idle,
-  and aborts if focus leaves TextEdit.
+- `scripts/e2e-textedit.sh` drives a new TextEdit document with synthetic keystrokes
+  (Tab, accept-all, mid-word, Esc, Option+Tab; `FORETYPE_INSERTION=paste` repeats it with
+  paste insertion). `scripts/e2e-terminal.sh` opens a Terminal window running `tee` (so
+  nothing reaches a shell) and checks ordinary lines, agent prompts, force and snooze. Both
+  restrict Foretype to the app under test (`FORETYPE_ONLY_APPS`), wait for the user to be
+  idle, and pause or abort if focus leaves that app.
 - `FORETYPE_DEBUG=1` logs snapshots, caret strategy, suggestions and latency to stderr.
 - `FORETYPE_ONLY_APPS=bundle.id,...` restricts reading and suggestions to those apps. Use
   it whenever you run a dev build on a machine you are also working on.
-- `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly
-  (no permissions needed). `ft-replay ... --screen FILE` adds screen text to a replay.
+- `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly;
+  `Foretype --font-selftest` checks the width-based font matcher (no permissions needed). `ft-replay ... --screen FILE` adds screen text to a replay.
 - **Accessibility grants and ad-hoc signing:** macOS ties the grant to the exact build, so
   every rebuild of an ad-hoc-signed `Foretype.app` needs the Accessibility entry removed
   and re-added. Sign with a stable identity (`FORETYPE_SIGN_IDENTITY`) to avoid that. A
@@ -120,9 +144,8 @@ switch, the suggestion length and a per-app toggle.
 
 - Dense full-attention models only (Qwen3 base). Gemma 4 and Qwen3.5 need KV state
   snapshots (sliding-window / recurrent layers can't roll back).
-- Keystroke insertion only; the per-app paste strategy and clipboard restore are not wired
-  up yet.
-- Chrome reports a font size but no font name, so ghost text there uses the system font.
+- Per-app insertion overrides are in place but every app still defaults to keystrokes;
+  entries need testing app by app.
 - Screen context has only been tested through the OCR self-test and replays; live window
   capture needs the Screen Recording grant on `Foretype.app`, which the dev test setup
   doesn't have.

@@ -15,6 +15,9 @@ pub const BUNDLED_COMPAT: &str = include_str!("../../compat/apps.json");
 pub struct AppRule {
     #[serde(default)]
     pub disabled: bool,
+    /// Terminals: suggest only when the caret line is an AI-agent prompt.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub agent_prompt_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub insertion: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -23,12 +26,23 @@ pub struct AppRule {
     pub note: Option<String>,
 }
 
+/// How CLI agents draw their input line: an optional border character, then a marker.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct AgentPrompt {
+    #[serde(default)]
+    pub borders: Vec<String>,
+    #[serde(default)]
+    pub markers: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct CompatDb {
     #[serde(default)]
     pub apps: HashMap<String, AppRule>,
     #[serde(default)]
     pub prefixes: HashMap<String, AppRule>,
+    #[serde(default)]
+    pub agent_prompt: AgentPrompt,
 }
 
 impl CompatDb {
@@ -46,6 +60,21 @@ impl CompatDb {
             .max_by_key(|(p, _)| p.len())
             .map(|(_, r)| r.clone())
             .unwrap_or_default()
+    }
+
+    /// The prompt text typed so far if `text_before`'s last line is an AI-agent prompt
+    /// (e.g. Claude Code's `> `), or `None` for an ordinary shell line.
+    pub fn agent_prompt_text<'a>(&self, text_before: &'a str) -> Option<&'a str> {
+        let line = text_before.rsplit('\n').next().unwrap_or("");
+        let mut rest = line.trim_start();
+        if let Some(b) = self.agent_prompt.borders.iter().find(|b| rest.starts_with(b.as_str())) {
+            rest = rest[b.len()..].trim_start();
+        }
+        self.agent_prompt
+            .markers
+            .iter()
+            .find(|m| rest.starts_with(m.as_str()))
+            .map(|m| &rest[m.len()..])
     }
 }
 
@@ -89,8 +118,13 @@ pub fn evaluate(
     if user_disabled.contains(&snap.bundle_id) {
         return Some("appDisabledByUser");
     }
-    if compat.rule(&snap.bundle_id).disabled && !user_enabled.contains(&snap.bundle_id) && !snap.force {
+    let rule = compat.rule(&snap.bundle_id);
+    let user_on = user_enabled.contains(&snap.bundle_id);
+    if rule.disabled && !user_on && !snap.force {
         return Some("appDisabledByDefault");
+    }
+    if rule.agent_prompt_only && !user_on && !snap.force && compat.agent_prompt_text(&snap.text_before).is_none() {
+        return Some("notAgentPrompt");
     }
     if snap.role == "AXTextField"
         && snap.field_width > 0.0
@@ -129,10 +163,22 @@ mod tests {
     #[test]
     fn bundled_db_parses_and_matches_prefixes() {
         let db = CompatDb::bundled();
-        assert!(db.rule("com.apple.Terminal").disabled);
+        assert!(db.rule("com.apple.Terminal").agent_prompt_only);
+        assert!(db.rule("dev.warp.Warp-Stable").disabled);
         assert!(db.rule("com.jetbrains.intellij").disabled);
         assert!(!db.rule("com.apple.TextEdit").disabled);
         assert_eq!(db.rule("com.google.Chrome").prime.as_deref(), Some("chromium"));
+    }
+
+    #[test]
+    fn agent_prompts() {
+        let db = CompatDb::bundled();
+        assert_eq!(db.agent_prompt_text("history\n> add a test for"), Some("add a test for"));
+        assert_eq!(db.agent_prompt_text("\u{2502} > refactor the"), Some("refactor the"));
+        assert_eq!(db.agent_prompt_text("  \u{203a} explain this"), Some("explain this"));
+        assert_eq!(db.agent_prompt_text("$ git status"), None);
+        assert_eq!(db.agent_prompt_text("user@host ~ % ls"), None);
+        assert_eq!(db.agent_prompt_text("\u{276f} cd src"), None); // starship shell prompt
     }
 
     #[test]
@@ -153,8 +199,13 @@ mod tests {
         s.text_after = ".\nnext line".into();
         assert_eq!(evaluate(&s, &db, &none, &none), None);
         let mut s = snap("ls -la");
-        s.bundle_id = "com.apple.Terminal".into();
+        s.bundle_id = "dev.warp.Warp-Stable".into();
         assert_eq!(evaluate(&s, &db, &none, &none), Some("appDisabledByDefault"));
+        let mut s = snap("Last login: Mon\n$ ls -la");
+        s.bundle_id = "com.apple.Terminal".into();
+        assert_eq!(evaluate(&s, &db, &none, &none), Some("notAgentPrompt"));
+        s.text_before = "Welcome to Claude Code\n\u{2502} > fix the failing te".into();
+        assert_eq!(evaluate(&s, &db, &none, &none), None);
         let mut s = snap("secret");
         s.subrole = "AXSecureTextField".into();
         assert_eq!(evaluate(&s, &db, &none, &none), Some("secureField"));
