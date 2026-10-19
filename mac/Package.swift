@@ -3,6 +3,7 @@
 // linked against the Rust core (../core) as a static library.
 //
 // FORETYPE_SPARKLE=1 adds the Sparkle 2 updater (release builds); default builds don't fetch it.
+// Sparkle is pinned exactly; keep SPARKLE_VERSION in .github/workflows/release.yml in step.
 import Foundation
 import PackageDescription
 
@@ -20,7 +21,7 @@ if useSparkle {
 let package = Package(
     name: "Foretype",
     platforms: [.macOS(.v14)],
-    dependencies: useSparkle ? [.package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0")] : [],
+    dependencies: useSparkle ? [.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")] : [],
     targets: [
         .systemLibrary(name: "CForetypeCore", path: "Sources/CForetypeCore"),
         .executableTarget(

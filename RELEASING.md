@@ -15,8 +15,8 @@ and also installable with a Homebrew cask.
    xcrun notarytool store-credentials foretype-notary --apple-id YOU@EXAMPLE.COM --team-id TEAMID1234
    ```
 
-3. **Sparkle keys.** Download the Sparkle release tarball (the same version SwiftPM resolves,
-   see `mac/Package.resolved`) and run `bin/generate_keys`. It stores the EdDSA private key
+3. **Sparkle keys.** Download the Sparkle release tarball (the version pinned in
+   `mac/Package.swift`, 2.10.0) and run `bin/generate_keys`. It stores the EdDSA private key
    in your keychain and prints the public key. Keep a backup of the private key
    (`generate_keys -x private-key-file`): losing it means existing installs can no longer
    verify updates.
