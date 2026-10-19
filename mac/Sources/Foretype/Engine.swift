@@ -80,6 +80,25 @@ final class EngineBridge {
         return ft_engine_configure(handle, json)
     }
 
+    func historyStats() -> (records: Int, words: Int) {
+        guard let handle, let raw = ft_engine_history_stats(handle) else { return (0, 0) }
+        defer { ft_string_free(raw) }
+        let o = (try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Int]) ?? [:]
+        return (o["records"] ?? 0, o["words"] ?? 0)
+    }
+
+    @discardableResult
+    func clearHistory() -> Bool {
+        guard let handle else { return false }
+        return ft_engine_clear_history(handle)
+    }
+
+    @discardableResult
+    func openHistory(path: String, keyHex: String) -> Bool {
+        guard let handle else { return false }
+        return ft_engine_open_history(handle, path, keyHex)
+    }
+
     func compatRule(_ bundleId: String) -> [String: Any] {
         guard let handle, let raw = ft_engine_compat_rule(handle, bundleId) else { return [:] }
         defer { ft_string_free(raw) }

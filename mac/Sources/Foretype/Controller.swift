@@ -203,6 +203,8 @@ final class Controller {
     private func coreSettingsJSON() -> String {
         var d = settings.coreDict
         d["debounce_ms"] = power.onBattery ? 80 : 0
+        // Prefetching roughly doubles generated tokens; keep it for mains power.
+        d["prefetch"] = !power.onBattery
         return String(data: try! JSONSerialization.data(withJSONObject: d), encoding: .utf8)!
     }
 

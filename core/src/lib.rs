@@ -10,11 +10,13 @@
 pub mod context;
 pub mod engine;
 pub mod ffi;
+pub mod history;
 pub mod policy;
+pub mod profile;
 pub mod session;
 pub mod words;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock};
 use std::thread::JoinHandle;
@@ -24,7 +26,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::context::{ContextInput, Prompt};
 use crate::engine::{Engine, EngineConfig, GenError, GenOptions};
+use crate::history::{History, Record};
 use crate::policy::CompatDb;
+use crate::profile::Profile;
 use crate::session::{AcceptMode, Session};
 
 /// One read of the focused field, sent by the shell on every change.
@@ -67,6 +71,8 @@ pub struct Settings {
     pub length_words: usize,
     pub stop_at_sentence_end: bool,
     pub instructions: String,
+    /// Extra instructions per bundle ID, appended after the global ones.
+    pub app_instructions: HashMap<String, String>,
     pub disabled_apps: Vec<String>,
     pub enabled_apps: Vec<String>,
     /// When non-empty, suggest only in these apps (development and testing safety net).
@@ -78,6 +84,37 @@ pub struct Settings {
     /// Wait this long for more typing before generating mid-word (0 = never wait). Shells
     /// raise it on battery power.
     pub debounce_ms: u64,
+    /// After showing a suggestion, compute the one that would follow it, so accepting the
+    /// whole suggestion (or typing through it) shows the next one instantly.
+    pub prefetch: bool,
+    /// Learn from the user's writing (opt-in): record accepted-in fields to the encrypted
+    /// history, bias word choice and show the model short examples from the same app.
+    pub personalize: bool,
+    /// 0 gentle, 1 balanced, 2 strong.
+    pub personalize_strength: u8,
+    pub personal_examples: bool,
+}
+
+impl Settings {
+    /// Logit boost at full weight for the strength setting.
+    pub fn personal_strength(&self) -> f32 {
+        if !self.personalize {
+            return 0.0;
+        }
+        match self.personalize_strength {
+            0 => 1.0,
+            1 => 2.0,
+            _ => 4.0,
+        }
+    }
+
+    fn instructions_for(&self, bundle_id: &str) -> String {
+        match self.app_instructions.get(bundle_id).map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            Some(app) if !self.instructions.trim().is_empty() => format!("{} {}", self.instructions.trim(), app),
+            Some(app) => app.to_string(),
+            None => self.instructions.trim().to_string(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -87,6 +124,7 @@ impl Default for Settings {
             length_words: 4,
             stop_at_sentence_end: true,
             instructions: String::new(),
+            app_instructions: HashMap::new(),
             disabled_apps: Vec::new(),
             enabled_apps: Vec::new(),
             only_apps: Vec::new(),
@@ -94,6 +132,10 @@ impl Default for Settings {
             max_body_chars: 1600,
             unload_after_s: 300,
             debounce_ms: 0,
+            prefetch: true,
+            personalize: false,
+            personalize_strength: 1,
+            personal_examples: true,
         }
     }
 }
@@ -107,6 +149,10 @@ pub struct CoreConfig {
     pub n_gpu_layers: u32,
     pub n_threads: i32,
     pub settings: Settings,
+    /// Encrypted writing history (personalization). Empty path or key = memory only.
+    pub history_path: String,
+    /// 256-bit key as 64 hex characters, kept by the shell in the platform keystore.
+    pub history_key_hex: String,
 }
 
 impl Default for CoreConfig {
@@ -118,6 +164,8 @@ impl Default for CoreConfig {
             n_gpu_layers: e.n_gpu_layers,
             n_threads: e.n_threads,
             settings: Settings::default(),
+            history_path: String::new(),
+            history_key_hex: String::new(),
         }
     }
 }
@@ -160,7 +208,21 @@ struct Job {
     text_before: String,
     prompt: Prompt,
     queued: Instant,
+    /// The snapshot the prompt came from (rebuilt for the prefetch).
+    snapshot: Snapshot,
 }
+
+/// What the user typed in the focused field since it got focus, for the history.
+struct FieldTrack {
+    key: u64,
+    app: String,
+    start: String,
+    last: String,
+    accepted: bool,
+}
+
+/// Minimum typed characters for a field to be recorded (Cotypist skips short texts).
+const MIN_RECORD_CHARS: usize = 20;
 
 struct Shared {
     latest: AtomicU64,
@@ -171,6 +233,13 @@ struct Shared {
     settings: RwLock<Settings>,
     compat: CompatDb,
     sink: EventSink,
+    history: Mutex<History>,
+    profile: Mutex<Profile>,
+    /// Bumped whenever the profile changes; the engine re-derives its bias when it differs.
+    profile_gen: AtomicU64,
+    track: Mutex<Option<FieldTrack>>,
+    /// Personal examples chosen once per field, so the prompt header stays stable.
+    examples: Mutex<HashMap<u64, Vec<String>>>,
 }
 
 fn debug() -> bool {
@@ -187,6 +256,11 @@ pub struct Core {
 
 impl Core {
     pub fn new(config: CoreConfig, sink: EventSink) -> Self {
+        let history = match history::parse_key(&config.history_key_hex) {
+            Some(key) if !config.history_path.is_empty() => History::open(&config.history_path, &key),
+            _ => History::in_memory(),
+        };
+        let profile = Profile::from_records(history.records());
         let shared = Arc::new(Shared {
             latest: AtomicU64::new(0),
             pending: Mutex::new(None),
@@ -196,6 +270,11 @@ impl Core {
             settings: RwLock::new(config.settings.clone()),
             compat: CompatDb::bundled(),
             sink,
+            history: Mutex::new(history),
+            profile: Mutex::new(profile),
+            profile_gen: AtomicU64::new(1),
+            track: Mutex::new(None),
+            examples: Mutex::new(HashMap::new()),
         });
         let engine_cfg = EngineConfig {
             model_path: config.model_path.clone(),
@@ -215,6 +294,112 @@ impl Core {
     pub fn configure(&self, settings: Settings) {
         *self.shared.settings.write().unwrap() = settings;
         self.shared.session.lock().unwrap().clear();
+        self.shared.examples.lock().unwrap().clear();
+    }
+
+    /// (records, distinct words) in the personalization history.
+    pub fn history_stats(&self) -> (usize, usize) {
+        (self.shared.history.lock().unwrap().records().len(), self.shared.profile.lock().unwrap().word_count())
+    }
+
+    /// Switches to the encrypted history file at `path` (personalization turned on at
+    /// runtime). Returns false if the key is not 64 hex characters.
+    pub fn open_history(&self, path: &str, key_hex: &str) -> bool {
+        let Some(key) = history::parse_key(key_hex) else { return false };
+        let h = History::open(path, &key);
+        *self.shared.profile.lock().unwrap() = Profile::from_records(h.records());
+        *self.shared.history.lock().unwrap() = h;
+        self.shared.examples.lock().unwrap().clear();
+        self.shared.profile_gen.fetch_add(1, Ordering::SeqCst);
+        true
+    }
+
+    /// Deletes the writing history; the model is unbiased again from the next suggestion.
+    pub fn clear_history(&self) -> Result<(), String> {
+        self.shared.history.lock().unwrap().clear()?;
+        *self.shared.profile.lock().unwrap() = Profile::new();
+        *self.shared.track.lock().unwrap() = None;
+        self.shared.examples.lock().unwrap().clear();
+        self.shared.profile_gen.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    /// Adds earlier writing (e.g. imported from another app) as `(app, text)` pairs.
+    pub fn import_history(&self, items: Vec<(String, String)>) -> Result<usize, String> {
+        let mut n = 0;
+        {
+            let mut h = self.shared.history.lock().unwrap();
+            let mut p = self.shared.profile.lock().unwrap();
+            for (app, text) in items {
+                if text.trim().chars().count() < MIN_RECORD_CHARS {
+                    continue;
+                }
+                p.add_text(&text);
+                h.append(Record::now(&app, text.trim()))?;
+                n += 1;
+            }
+        }
+        self.shared.examples.lock().unwrap().clear();
+        self.shared.profile_gen.fetch_add(1, Ordering::SeqCst);
+        Ok(n)
+    }
+
+    fn record(&self, t: &FieldTrack) {
+        if !t.accepted {
+            return;
+        }
+        let common = t.start.char_indices().zip(t.last.chars()).take_while(|((_, a), b)| a == b).count();
+        let typed: String = t.last.chars().skip(common).collect();
+        let typed = typed.trim();
+        if typed.chars().count() < MIN_RECORD_CHARS {
+            return;
+        }
+        if let Err(e) = self.shared.history.lock().unwrap().append(Record::now(&t.app, typed)) {
+            eprintln!("[foretype] history append failed: {e}");
+            return;
+        }
+        self.shared.profile.lock().unwrap().add_text(typed);
+        self.shared.profile_gen.fetch_add(1, Ordering::SeqCst);
+        if debug() {
+            eprintln!("[foretype] recorded {} chars from {}", typed.chars().count(), t.app);
+        }
+    }
+
+    /// Follows the focused field for the history: finishes a field when focus moves away or
+    /// its text is cleared (a sent chat message), and starts tracking eligible fields.
+    fn observe(&self, snap: &Snapshot, doc_text: &str, eligible: bool) {
+        let mut track = self.shared.track.lock().unwrap();
+        let finished = match track.as_ref() {
+            Some(t) if t.key != snap.field_key => true,
+            Some(t) => {
+                let (now, before) = (doc_text.chars().count(), t.last.chars().count());
+                before >= MIN_RECORD_CHARS && now < before / 2
+            }
+            None => false,
+        };
+        if finished {
+            if let Some(t) = track.take() {
+                self.record(&t);
+            }
+        }
+        if !eligible {
+            if track.as_ref().is_some_and(|t| t.key != snap.field_key) {
+                *track = None;
+            }
+            return;
+        }
+        match track.as_mut() {
+            Some(t) => t.last = doc_text.to_string(),
+            None => {
+                *track = Some(FieldTrack {
+                    key: snap.field_key,
+                    app: snap.bundle_id.clone(),
+                    start: doc_text.to_string(),
+                    last: doc_text.to_string(),
+                    accepted: false,
+                })
+            }
+        }
     }
 
     pub fn settings(&self) -> Settings {
@@ -245,6 +430,9 @@ impl Core {
         let enabled: HashSet<String> = settings.enabled_apps.iter().cloned().collect();
         if let Some(reason) = policy::evaluate(&snap, &self.shared.compat, &disabled, &enabled) {
             self.shared.session.lock().unwrap().clear();
+            if settings.personalize {
+                self.observe(&snap, &snap.text_before, false);
+            }
             return self.emit_suggestion(rev, String::new(), "policy", Some(reason.into()));
         }
         // In a terminal only the agent prompt's own text is the document; the scrollback
@@ -253,6 +441,9 @@ impl Core {
             if let Some(prompt) = self.shared.compat.agent_prompt_text(&snap.text_before) {
                 snap.text_before = prompt.to_string();
             }
+        }
+        if settings.personalize {
+            self.observe(&snap, &snap.text_before, true);
         }
         {
             let mut session = self.shared.session.lock().unwrap();
@@ -270,14 +461,16 @@ impl Core {
             }
             session.clear();
         }
-        let prompt = build_prompt(&snap, &settings);
+        let examples = self.examples_for(&snap, &settings);
+        let prompt = build_prompt(&snap, &settings, &examples);
         self.enqueue(Job {
             kind: JobKind::Complete,
             revision: rev,
             field_key: snap.field_key,
-            text_before: snap.text_before,
+            text_before: snap.text_before.clone(),
             prompt,
             queued: Instant::now(),
+            snapshot: snap,
         });
         self.emit_suggestion(rev, String::new(), "pending", None);
     }
@@ -286,16 +479,18 @@ impl Core {
     /// Never displaces a queued completion.
     pub fn warm(&self, snap: Snapshot) {
         let settings = self.settings();
-        let prompt = build_prompt(&snap, &settings);
+        let examples = self.examples_for(&snap, &settings);
+        let prompt = build_prompt(&snap, &settings, &examples);
         let mut pending = self.shared.pending.lock().unwrap();
         if pending.is_none() {
             *pending = Some(Job {
                 kind: JobKind::Warm,
                 revision: snap.revision,
                 field_key: snap.field_key,
-                text_before: snap.text_before,
+                text_before: snap.text_before.clone(),
                 prompt,
                 queued: Instant::now(),
+                snapshot: snap,
             });
             self.shared.wake.notify_one();
         }
@@ -306,9 +501,33 @@ impl Core {
         self.shared.wake.notify_one();
     }
 
+    /// Earlier writing from the same app for the prompt header, chosen on the field's first
+    /// prompt and then kept, so the header (and the KV cache) stays stable while typing.
+    fn examples_for(&self, snap: &Snapshot, settings: &Settings) -> Vec<String> {
+        if !settings.personalize || !settings.personal_examples || snap.field_key == 0 {
+            return Vec::new();
+        }
+        let mut cache = self.shared.examples.lock().unwrap();
+        if let Some(e) = cache.get(&snap.field_key) {
+            return e.clone();
+        }
+        let ex = profile::examples(self.shared.history.lock().unwrap().records(), &snap.bundle_id, &snap.text_before, 2, 280);
+        if cache.len() > 64 {
+            cache.clear();
+        }
+        cache.insert(snap.field_key, ex.clone());
+        ex
+    }
+
     /// Returns `(insert, remaining)` for Tab (next word) or accept-all.
     pub fn accept(&self, mode: AcceptMode) -> Option<(String, String)> {
-        self.shared.session.lock().unwrap().accept(mode)
+        let r = self.shared.session.lock().unwrap().accept(mode);
+        if r.is_some() {
+            if let Some(t) = self.shared.track.lock().unwrap().as_mut() {
+                t.accepted = true;
+            }
+        }
+        r
     }
 
     /// Hides the suggestion and suppresses new ones until the text changes.
@@ -320,6 +539,9 @@ impl Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        if let Some(t) = self.shared.track.lock().unwrap().take() {
+            self.record(&t);
+        }
         self.shared.shutdown.store(true, Ordering::SeqCst);
         self.shared.latest.fetch_add(1, Ordering::SeqCst);
         self.shared.wake.notify_all();
@@ -329,14 +551,16 @@ impl Drop for Core {
     }
 }
 
-fn build_prompt(snap: &Snapshot, settings: &Settings) -> Prompt {
+fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String]) -> Prompt {
+    let instructions = settings.instructions_for(&snap.bundle_id);
     context::build(
         &ContextInput {
             app_name: &snap.app_name,
             window_title: &snap.window_title,
             url: &snap.url,
-            instructions: &settings.instructions,
+            instructions: &instructions,
             screen_context: &snap.screen_context,
+            examples,
             text_before: &snap.text_before,
         },
         settings.max_body_chars,
@@ -364,6 +588,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
     let Some(first) = load(&shared) else { return };
     let mut engine_slot = Some(first);
     let mut last_used = Instant::now();
+    let mut applied_gen = 0u64;
 
     loop {
         let job = {
@@ -380,6 +605,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                 if engine_slot.is_some() && unload_after > 0 && last_used.elapsed() >= Duration::from_secs(unload_after) {
                     drop(pending);
                     engine_slot = None;
+                    applied_gen = 0;
                     (shared.sink)(&Event::Status { state: "idle", detail: "model unloaded".into() });
                     pending = shared.pending.lock().unwrap();
                     continue;
@@ -400,6 +626,12 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
             }
         }
         let engine = engine_slot.as_mut().unwrap();
+        let gen = shared.profile_gen.load(Ordering::SeqCst);
+        if gen != applied_gen && shared.settings.read().unwrap().personalize {
+            let words = shared.profile.lock().unwrap().weighted_words(3000, 2);
+            engine.set_vocabulary(&words);
+            applied_gen = gen;
+        }
         let rev = job.revision;
         let latest = &shared.latest;
         let cancel = || latest.load(Ordering::SeqCst) != rev;
@@ -430,6 +662,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                     max_words: settings.length_words.max(1),
                     deadline: Duration::from_millis(settings.deadline_ms),
                     stop_at_sentence_end: settings.stop_at_sentence_end,
+                    personal_strength: settings.personal_strength(),
                 };
                 match engine.complete(&job.prompt, &opts, &cancel) {
                     Ok(c) => {
@@ -444,6 +677,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                             continue;
                         }
                         shared.session.lock().unwrap().set(job.field_key, &job.text_before, &c.text);
+                        let shown = c.text.clone();
                         (shared.sink)(&Event::Suggestion {
                             revision: rev,
                             text: c.text,
@@ -453,6 +687,28 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                             prefilled: Some(c.prefilled_tokens),
                             stop: Some(c.stop),
                         });
+                        // Prefetch what follows the suggestion while the user reads it; any new
+                        // request cancels this between decode steps.
+                        if settings.prefetch && !shown.trim().is_empty() {
+                            let mut next = job.snapshot.clone();
+                            next.text_before = format!("{}{}", job.text_before, shown);
+                            let examples = shared.examples.lock().unwrap().get(&job.field_key).cloned().unwrap_or_default();
+                            let prompt = build_prompt(&next, &settings, &examples);
+                            let busy = || {
+                                shared.shutdown.load(Ordering::SeqCst)
+                                    || shared.pending.lock().map(|p| p.is_some()).unwrap_or(true)
+                            };
+                            if !busy() {
+                                if let Ok(p) = engine.complete(&prompt, &opts, &busy) {
+                                    if !p.text.trim().is_empty() {
+                                        shared.session.lock().unwrap().remember(job.field_key, &next.text_before, &p.text);
+                                        if debug() {
+                                            eprintln!("[foretype] prefetched {:?} after {:?}", p.text, shown);
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     Err(GenError::Cancelled) => {}
                     Err(GenError::Failed(e)) => {
@@ -469,5 +725,68 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn core() -> Core {
+        // No model: the engine thread reports an error and exits; the policy, session and
+        // history paths still run on the caller's thread.
+        let core = Core::new(CoreConfig { model_path: "/nonexistent.gguf".into(), ..CoreConfig::default() }, Box::new(|_| {}));
+        core.configure(Settings { personalize: true, ..Settings::default() });
+        core
+    }
+
+    fn snap(key: u64, text: &str) -> Snapshot {
+        Snapshot { field_key: key, bundle_id: "com.apple.mail".into(), role: "AXTextArea".into(), text_before: text.into(), ..Snapshot::default() }
+    }
+
+    fn accept_here(c: &Core) {
+        c.shared.track.lock().unwrap().as_mut().unwrap().accepted = true;
+    }
+
+    #[test]
+    fn records_typed_text_on_focus_change_only_after_an_accept() {
+        let c = core();
+        c.submit(snap(1, "Quoted thread above."));
+        c.submit(snap(1, "Quoted thread above. Thanks Priya, I will send the timeline"));
+        c.submit(snap(2, "Other field"));
+        assert_eq!(c.history_stats().0, 0, "no accept, nothing recorded");
+
+        c.submit(snap(3, "Re: planning."));
+        accept_here(&c);
+        c.submit(snap(3, "Re: planning. Thanks Priya, I will send the timeline before Thursday."));
+        c.submit(snap(4, "elsewhere"));
+        let h = c.shared.history.lock().unwrap();
+        assert_eq!(h.records().len(), 1);
+        assert_eq!(h.records()[0].text, "Thanks Priya, I will send the timeline before Thursday.");
+        assert_eq!(h.records()[0].app, "com.apple.mail");
+    }
+
+    #[test]
+    fn records_a_sent_chat_message_when_the_field_clears() {
+        let c = core();
+        c.submit(snap(7, "Hi"));
+        accept_here(&c);
+        c.submit(snap(7, "Hi team, the deployment finished without errors"));
+        c.submit(snap(7, ""));
+        assert_eq!(c.shared.history.lock().unwrap().records()[0].text, "team, the deployment finished without errors");
+        // Short texts are skipped.
+        c.submit(snap(7, "ok"));
+        accept_here(&c);
+        c.submit(snap(7, "ok thanks"));
+        c.submit(snap(8, ""));
+        assert_eq!(c.history_stats().0, 1);
+    }
+
+    #[test]
+    fn personalization_off_records_nothing() {
+        let c = core();
+        c.configure(Settings { personalize: false, ..Settings::default() });
+        c.submit(snap(1, "Hello"));
+        assert!(c.shared.track.lock().unwrap().is_none());
     }
 }

@@ -27,6 +27,12 @@ char *ft_engine_accept(FtEngine *engine, int32_t mode);
 void ft_engine_dismiss(FtEngine *engine, uint64_t field_key, const char *text_before);
 
 bool ft_engine_configure(FtEngine *engine, const char *settings_json);
+
+/// Personalization: {"records": n, "words": n}; delete the history; import [{"app","text"}].
+char *ft_engine_history_stats(FtEngine *engine);
+bool ft_engine_clear_history(FtEngine *engine);
+int64_t ft_engine_import_history(FtEngine *engine, const char *items_json);
+bool ft_engine_open_history(FtEngine *engine, const char *path, const char *key_hex);
 char *ft_engine_compat_rule(FtEngine *engine, const char *bundle_id);
 
 void ft_string_free(char *s);

@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var lastFrontApp: NSRunningApplication?
     private var trustTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
+    private var instructionsWindow: InstructionsWindowController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -66,7 +67,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Log.debug(engineDetail)
             return
         }
-        let config: [String: Any] = ["model_path": model, "settings": settings.coreDict]
+        var config: [String: Any] = ["model_path": model, "settings": settings.coreDict]
+        if settings.personalize, let key = HistoryStore.keyHex() {
+            config["history_path"] = HistoryStore.path
+            config["history_key_hex"] = key
+        }
         let json = String(data: try! JSONSerialization.data(withJSONObject: config), encoding: .utf8)!
         guard let engine = EngineBridge(configJSON: json) else {
             engineState = "error"
@@ -156,6 +161,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         menu.addItem(.separator())
+        menu.addItem(.separator())
+        let personal = NSMenuItem(title: "Personalization", action: nil, keyEquivalent: "")
+        let pm = NSMenu()
+        let learn = NSMenuItem(title: "Learn From My Writing", action: #selector(togglePersonalize), keyEquivalent: "")
+        learn.target = self
+        learn.state = settings.personalize ? .on : .off
+        pm.addItem(learn)
+        if settings.personalize {
+            for (i, name) in ["Gentle", "Balanced", "Strong"].enumerated() {
+                let item = NSMenuItem(title: name, action: #selector(setStrength(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = i
+                item.indentationLevel = 1
+                item.state = settings.personalizeStrength == i ? .on : .off
+                pm.addItem(item)
+            }
+            if let stats = controller?.engine.historyStats() {
+                let info = NSMenuItem(title: "\(stats.records) texts, \(stats.words) words learned", action: nil, keyEquivalent: "")
+                info.isEnabled = false
+                pm.addItem(info)
+            }
+        }
+        pm.addItem(.separator())
+        let del = NSMenuItem(title: "Delete Writing History\u{2026}", action: #selector(deleteHistory), keyEquivalent: "")
+        del.target = self
+        pm.addItem(del)
+        let note = NSMenuItem(title: "Stored encrypted on this Mac; only texts where you accepted a suggestion.", action: nil, keyEquivalent: "")
+        note.isEnabled = false
+        pm.addItem(note)
+        personal.submenu = pm
+        menu.addItem(personal)
+        let instr = NSMenuItem(title: "Custom Instructions\u{2026}", action: #selector(openInstructions), keyEquivalent: "")
+        instr.target = self
+        menu.addItem(instr)
+        menu.addItem(.separator())
+
         if !AXIsProcessTrusted() {
             let item = NSMenuItem(title: "Open Accessibility Settings\u{2026}", action: #selector(openAccessibility), keyEquivalent: "")
             item.target = self
@@ -187,6 +228,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings.disabledApps = list
         }
         controller?.applySettings()
+    }
+
+    @objc private func togglePersonalize() {
+        if !settings.personalize {
+            guard let key = HistoryStore.keyHex() else {
+                let alert = NSAlert()
+                alert.messageText = "Couldn't create the encryption key"
+                alert.informativeText = "Foretype needs a key in your Keychain to store your writing history encrypted."
+                alert.runModal()
+                return
+            }
+            controller?.engine.openHistory(path: HistoryStore.path, keyHex: key)
+        }
+        settings.personalize.toggle()
+        controller?.applySettings()
+    }
+
+    @objc private func setStrength(_ sender: NSMenuItem) {
+        settings.personalizeStrength = sender.tag
+        controller?.applySettings()
+    }
+
+    @objc private func deleteHistory() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Delete your writing history?"
+        alert.informativeText = "Foretype forgets everything it learned from your writing. This can't be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            if controller?.engine.clearHistory() != true {
+                try? FileManager.default.removeItem(atPath: HistoryStore.path)
+            }
+        }
+    }
+
+    @objc private func openInstructions() {
+        let bundle = lastFrontApp?.bundleIdentifier
+        let w = InstructionsWindowController(global: settings.instructions, appName: lastFrontApp?.localizedName,
+                                             appBundle: bundle, appText: bundle.flatMap { settings.appInstructions[$0] } ?? "")
+        w.onSave = { [weak self] global, appText, bundle in
+            guard let self else { return }
+            self.settings.instructions = global
+            if let bundle {
+                var all = self.settings.appInstructions
+                all[bundle] = appText.isEmpty ? nil : appText
+                self.settings.appInstructions = all
+            }
+            self.controller?.applySettings()
+        }
+        instructionsWindow = w
+        w.show()
     }
 
     @objc private func unsnooze(_ sender: NSMenuItem) {

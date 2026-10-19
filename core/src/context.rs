@@ -15,6 +15,8 @@ pub struct ContextInput<'a> {
     /// On-screen text near the field (OCR of the focused window), refreshed by the shell
     /// only on focus changes and typing pauses so the header stays stable while typing.
     pub screen_context: &'a str,
+    /// Short snippets of the user's earlier writing in this app (personalization).
+    pub examples: &'a [String],
     pub text_before: &'a str,
 }
 
@@ -72,6 +74,18 @@ fn header(input: &ContextInput) -> String {
         h.push_str("[Text visible on screen]\n");
         h.push_str(&screen);
         h.push_str("\n[End of screen text]\n\n");
+    }
+    let examples: Vec<String> = input
+        .examples
+        .iter()
+        .map(|e| e.trim().replace('[', "(").replace(']', ")"))
+        .filter(|e| !e.is_empty())
+        .collect();
+    if !examples.is_empty() {
+        let app = input.app_name.trim();
+        h.push_str(&format!("[Earlier writing by the same person{}]\n", if app.is_empty() { String::new() } else { format!(" in {app}") }));
+        h.push_str(&examples.join("\n---\n"));
+        h.push_str("\n[End of earlier writing]\n\n");
     }
     if !place.is_empty() {
         h.push_str(&format!("[Written in {place}]\n"));
@@ -138,6 +152,7 @@ mod tests {
             url: "",
             instructions: "",
             screen_context: "",
+            examples: &[],
             text_before: text,
         }
     }
@@ -174,6 +189,17 @@ mod tests {
         let p = build(&i, 2000);
         assert!(p.prefix.contains("line 399\n[End of screen text]"));
         assert!(!p.prefix.contains("line 1\n"));
+    }
+
+    #[test]
+    fn examples_section() {
+        let ex = vec!["Thanks Priya [noted], talk Thursday.".to_string()];
+        let mut i = input("Hi Sam");
+        i.examples = &ex;
+        let p = build(&i, 2000);
+        assert!(p.prefix.starts_with(
+            "[Earlier writing by the same person in Mail]\nThanks Priya (noted), talk Thursday.\n[End of earlier writing]\n\n[Written in Mail"
+        ));
     }
 
     #[test]

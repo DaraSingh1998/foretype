@@ -9,10 +9,14 @@
 //!   the typed fragment is not a token boundary.
 //! - Greedy decoding with word, sentence, newline and wall-clock limits, cancellable between
 //!   decode steps.
+//! - Optional personal-vocabulary bias: logit boosts towards words the user often writes,
+//!   both for whole single-token words at a word start and for completing a word in
+//!   progress (typed or generated) into one of the user's words.
 //!
 //! The MVP supports dense, full-attention models only (e.g. Qwen3 base). Sliding-window and
 //! recurrent models cannot roll the cache back to an arbitrary position.
 
+use std::collections::HashMap;
 use std::mem::ManuallyDrop;
 use std::num::NonZeroU32;
 use std::time::{Duration, Instant};
@@ -48,12 +52,23 @@ pub struct GenOptions {
     pub max_words: usize,
     pub deadline: Duration,
     pub stop_at_sentence_end: bool,
+    /// Logit boost for the user's own words at full weight (0 = off).
+    pub personal_strength: f32,
 }
 
 impl Default for GenOptions {
     fn default() -> Self {
-        Self { max_words: 4, deadline: Duration::from_millis(300), stop_at_sentence_end: true }
+        Self { max_words: 4, deadline: Duration::from_millis(300), stop_at_sentence_end: true, personal_strength: 0.0 }
     }
+}
+
+/// The user's vocabulary prepared for biasing.
+#[derive(Default)]
+struct Vocabulary {
+    /// (display form, lowercase form, weight in (0, 1]), heaviest first.
+    words: Vec<(String, String, f32)>,
+    /// Token of " word" for words that are a single token, with weight.
+    whole: HashMap<i32, f32>,
 }
 
 #[derive(Debug)]
@@ -88,6 +103,7 @@ pub struct Engine {
     add_bos: bool,
     n_batch: usize,
     n_ctx: usize,
+    vocab_bias: Vocabulary,
 }
 
 fn ms(since: Instant) -> f64 {
@@ -164,6 +180,7 @@ impl Engine {
             add_bos,
             n_batch: cfg.n_batch as usize,
             n_ctx: cfg.n_ctx as usize,
+            vocab_bias: Vocabulary::default(),
         })
     }
 
@@ -174,6 +191,71 @@ impl Engine {
 
     pub fn tokenize(&self, text: &str) -> Vec<LlamaToken> {
         self.model().vocab().tokenize(text.as_bytes(), self.add_bos, false)
+    }
+
+    /// Tokenizes a fragment in the middle of a text (no BOS).
+    fn tokenize_piece(&self, text: &str) -> Vec<LlamaToken> {
+        self.model().vocab().tokenize(text.as_bytes(), false, false)
+    }
+
+    /// Installs the user's vocabulary (word, weight in (0, 1]) for personal biasing.
+    pub fn set_vocabulary(&mut self, words: &[(String, f32)]) {
+        let mut whole = HashMap::new();
+        for (w, weight) in words {
+            let toks = self.tokenize_piece(&format!(" {w}"));
+            if toks.len() == 1 {
+                let e = whole.entry(toks[0].0).or_insert(0.0f32);
+                *e = e.max(*weight);
+            }
+        }
+        self.vocab_bias = Vocabulary {
+            words: words.iter().map(|(w, s)| (w.clone(), w.to_lowercase(), *s)).collect(),
+            whole,
+        };
+    }
+
+    /// Logit boosts for the next token given the text produced so far (`full`: what the
+    /// user typed of the current word, or what was generated, whichever is longer) and the
+    /// bytes already generated (`out_len`).
+    fn step_bias(&self, full: &str, out_len: usize, strength: f32) -> Vec<(usize, f32)> {
+        if strength <= 0.0 || self.vocab_bias.words.is_empty() {
+            return Vec::new();
+        }
+        let partial_start = full
+            .char_indices()
+            .rev()
+            .take_while(|(_, c)| c.is_alphanumeric() || *c == '\'' || *c == '\u{2019}')
+            .last()
+            .map_or(full.len(), |(i, _)| i);
+        let partial = &full[partial_start..];
+        if partial.is_empty() {
+            // Word start: only whole-word tokens, so common sub-word prefixes stay neutral.
+            if out_len > 0 && !full.ends_with(char::is_whitespace) {
+                return Vec::new();
+            }
+            return self.vocab_bias.whole.iter().map(|(&t, &w)| (t as usize, w * strength)).collect();
+        }
+        // Completing a word: steer towards the user's words that extend `partial`.
+        let lower = partial.to_lowercase();
+        let mut out = Vec::new();
+        for (display, low, w) in self.vocab_bias.words.iter() {
+            if low.len() <= lower.len() || !low.starts_with(&lower) {
+                continue;
+            }
+            let typed_chars = partial.chars().count();
+            let rest: String = display.chars().skip(typed_chars).collect();
+            let desired = format!("{}{}", full, rest);
+            if desired.len() <= out_len {
+                continue;
+            }
+            if let Some(t) = self.tokenize_piece(&desired[out_len..]).first() {
+                out.push((t.0 as usize, w * strength));
+            }
+            if out.len() >= 8 {
+                break;
+            }
+        }
+        out
     }
 
     /// Makes the KV cache hold exactly `tokens` and leaves the logits of the last token in
@@ -226,22 +308,40 @@ impl Engine {
         self.batch.n_tokens() - 1
     }
 
-    fn argmax(&self, logits: &[f32], remaining: &[u8]) -> Option<LlamaToken> {
+    fn allowed(&self, id: usize, remaining: &[u8]) -> bool {
+        let piece = &self.pieces[id];
+        if !remaining.is_empty() {
+            // Healing: the token must agree with the typed fragment as far as both go.
+            !piece.is_empty() && (piece.starts_with(remaining) || remaining.starts_with(piece))
+        } else {
+            !piece.is_empty() || self.eog[id]
+        }
+    }
+
+    /// Greedy pick under the healing constraint. Boosts are non-negative and sparse, so the
+    /// winner is either the unboosted argmax or one of the boosted tokens.
+    fn argmax(&self, logits: &[f32], remaining: &[u8], bias: &[(usize, f32)]) -> Option<LlamaToken> {
         let mut best: Option<(usize, f32)> = None;
         for (id, &l) in logits.iter().enumerate() {
-            if best.is_some_and(|(_, b)| l <= b) {
-                continue;
-            }
-            let piece = &self.pieces[id];
-            if !remaining.is_empty() {
-                // Healing: the token must agree with the typed fragment as far as both go.
-                if piece.is_empty() || !(piece.starts_with(remaining) || remaining.starts_with(piece)) {
-                    continue;
-                }
-            } else if piece.is_empty() && !self.eog[id] {
+            if best.is_some_and(|(_, b)| l <= b) || !self.allowed(id, remaining) {
                 continue;
             }
             best = Some((id, l));
+        }
+        if !bias.is_empty() {
+            let boost = |id: usize| bias.iter().filter(|(t, _)| *t == id).map(|(_, b)| *b).fold(0.0f32, f32::max);
+            if let Some((id, l)) = best {
+                best = Some((id, l + boost(id)));
+            }
+            for &(id, _) in bias {
+                if id >= logits.len() || !self.allowed(id, remaining) {
+                    continue;
+                }
+                let v = logits[id] + boost(id);
+                if best.is_none_or(|(_, b)| v > b) {
+                    best = Some((id, v));
+                }
+            }
         }
         best.map(|(id, _)| LlamaToken(id as i32))
     }
@@ -280,7 +380,13 @@ impl Engine {
                 break Ok(());
             }
             let remaining: &[u8] = if out.len() < fragment.len() { &fragment[out.len()..] } else { &[] };
-            let Some(tok) = self.argmax(self.ctx.get_logits_ith(idx), remaining) else {
+            let bias = if opts.personal_strength > 0.0 {
+                let full = if out.len() < fragment.len() { &prompt.fragment } else { std::str::from_utf8(&out).unwrap_or("") };
+                self.step_bias(full, out.len(), opts.personal_strength)
+            } else {
+                Vec::new()
+            };
+            let Some(tok) = self.argmax(self.ctx.get_logits_ith(idx), remaining, &bias) else {
                 stop = "noCandidate";
                 break Ok(());
             };

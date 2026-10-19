@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 /// User settings persisted in UserDefaults and mirrored into the core as JSON.
 final class AppSettings {
@@ -47,6 +48,24 @@ final class AppSettings {
         set { d.set(newValue, forKey: "askedForScreenRecording") }
     }
 
+    /// Learn from the user's writing (opt-in, off by default).
+    var personalize: Bool {
+        get { d.bool(forKey: "personalize") }
+        set { d.set(newValue, forKey: "personalize") }
+    }
+
+    /// 0 gentle, 1 balanced, 2 strong.
+    var personalizeStrength: Int {
+        get { d.object(forKey: "personalizeStrength") as? Int ?? 1 }
+        set { d.set(newValue, forKey: "personalizeStrength") }
+    }
+
+    /// Extra instructions per bundle ID.
+    var appInstructions: [String: String] {
+        get { d.dictionary(forKey: "appInstructions") as? [String: String] ?? [:] }
+        set { d.set(newValue, forKey: "appInstructions") }
+    }
+
     var modelPath: String? {
         get { d.string(forKey: "modelPath") }
         set { d.set(newValue, forKey: "modelPath") }
@@ -61,11 +80,43 @@ final class AppSettings {
 
     var coreDict: [String: Any] {
         ["enabled": enabled, "length_words": lengthWords, "instructions": instructions,
-         "disabled_apps": disabledApps, "enabled_apps": enabledApps, "only_apps": onlyApps]
+         "app_instructions": appInstructions, "disabled_apps": disabledApps, "enabled_apps": enabledApps,
+         "only_apps": onlyApps, "personalize": personalize, "personalize_strength": personalizeStrength]
     }
 
     func coreJSON() -> String {
         String(data: try! JSONSerialization.data(withJSONObject: coreDict), encoding: .utf8)!
+    }
+}
+
+/// The personalization history's location and its encryption key, kept in the Keychain.
+/// The key is only created or read when personalization is on.
+enum HistoryStore {
+    static var path: String {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Foretype/history.bin").path
+    }
+
+    private static let service = "dev.foretype.Foretype"
+    private static let account = "history-key"
+
+    /// The 256-bit key as hex, created on first use.
+    static func keyHex() -> String? {
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                    kSecAttrAccount as String: account, kSecReturnData as String: true]
+        var out: CFTypeRef?
+        if SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data, data.count == 32 {
+            return data.map { String(format: "%02x", $0) }.joined()
+        }
+        var key = Data(count: 32)
+        let ok = key.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) } == errSecSuccess
+        guard ok else { return nil }
+        let add: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                  kSecAttrAccount as String: account, kSecValueData as String: key,
+                                  kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+                                  kSecAttrLabel as String: "Foretype writing history key"]
+        guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { return nil }
+        return key.map { String(format: "%02x", $0) }.joined()
     }
 }
 

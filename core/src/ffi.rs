@@ -143,3 +143,54 @@ pub unsafe extern "C" fn ft_string_free(s: *mut c_char) {
         drop(CString::from_raw(s));
     }
 }
+
+/// Personalization history size as `{"records": n, "words": n}`.
+///
+/// # Safety
+/// `engine` must be live.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_history_stats(engine: *mut FtEngine) -> *mut c_char {
+    let Some(e) = engine.as_ref() else { return ptr::null_mut() };
+    let (records, words) = e.core.history_stats();
+    to_c(serde_json::json!({ "records": records, "words": words }).to_string())
+}
+
+/// Deletes the personalization history (file included). Returns false on failure.
+///
+/// # Safety
+/// `engine` must be live.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_clear_history(engine: *mut FtEngine) -> bool {
+    engine.as_ref().is_some_and(|e| e.core.clear_history().is_ok())
+}
+
+/// Imports earlier writing: a JSON array of `{"app": "...", "text": "..."}`. Returns the
+/// number of records added, or -1 on error.
+///
+/// # Safety
+/// `engine` must be live; `items_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_import_history(engine: *mut FtEngine, items_json: *const c_char) -> i64 {
+    #[derive(serde::Deserialize)]
+    struct Item {
+        #[serde(default)]
+        app: String,
+        text: String,
+    }
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(items_json)) else { return -1 };
+    let Ok(items) = serde_json::from_str::<Vec<Item>>(s) else { return -1 };
+    match e.core.import_history(items.into_iter().map(|i| (i.app, i.text)).collect()) {
+        Ok(n) => n as i64,
+        Err(_) => -1,
+    }
+}
+
+/// Opens the encrypted history at `path` with a 64-hex-character key.
+///
+/// # Safety
+/// `engine` must be live; `path` and `key_hex` valid C strings.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_open_history(engine: *mut FtEngine, path: *const c_char, key_hex: *const c_char) -> bool {
+    let (Some(e), Some(p), Some(k)) = (engine.as_ref(), read_str(path), read_str(key_hex)) else { return false };
+    e.core.open_history(p, k)
+}

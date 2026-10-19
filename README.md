@@ -4,7 +4,7 @@ Free, open-source, on-device inline autocomplete for every app: gray "ghost text
 your caret, Tab to take the next word, the key above Tab to take all of it. A Cotypist-style
 tool built so the engine can be shared across macOS, Windows and Linux.
 
-Status: **Phase 2 (compatibility), macOS only.** Works end to end with a local Qwen3 base
+Status: **Phase 3 (quality and personalization), macOS only.** Works end to end with a local Qwen3 base
 model in every app except those off by default (code editors, password managers, remote
 desktops, spreadsheets). In Terminal and iTerm it suggests only on AI-agent prompts (Claude
 Code, Codex, ...). Not packaged or notarized yet.
@@ -60,6 +60,36 @@ On a chat-reply sample (`scripts/fixtures/chat-*.txt`), screen context raised ke
 from 29% to 66% and characters per Tab from 3.2 to 5.2, at the same latency. The reply was
 written to refer to the visible messages, so treat this as a best case.
 
+### Personalization (opt-in)
+
+**Learn From My Writing** (menu: Personalization) is off by default. When on:
+
+- **What is recorded:** only fields where you accepted a suggestion, only the text you typed
+  there (not text that was already in the field), only when it is at least 20 characters.
+  A field is recorded when focus leaves it or when its text is cleared (a sent chat
+  message). Secure fields, and apps where suggestions are off, are never recorded.
+- **Where:** `~/Library/Application Support/Foretype/history.bin`, each record sealed with
+  ChaCha20-Poly1305. The 256-bit key lives in your login Keychain and is only created or
+  read when personalization is on. Nothing leaves the Mac. **Delete Writing History…**
+  deletes the file, and suggestions are unbiased again immediately.
+- **How it is used:** no fine-tuning. Words you use often (at least twice, ignoring very
+  common English words) get a small logit boost: whole-word tokens at a word start, and
+  completions towards your words once you have typed their first letters. Up to two short
+  snippets of your earlier writing in the same app go into the prompt header, picked once
+  per field so the cache stays warm. Strength: Gentle, Balanced (default), Strong.
+
+Measured leave-one-out on the 12 self-written documents of the Phase 0 corpus (each one
+replayed with the other 11 as history; Qwen3-1.7B): keystrokes saved went from 41.0% to
+41.6% (Gentle and Balanced), 41.3% (Strong), and 41.2% with the vocabulary bias alone, so
+the earlier-writing examples contribute most of the gain. Those documents share few names
+and phrases; real histories repeat more, so treat this as a floor.
+
+### Custom instructions
+
+**Custom Instructions…** in the menu edits a note for all apps (who you are, tone,
+spelling) and one for the app you were last in, appended after it. Both go into the prompt
+header.
+
 ### Latency design
 
 - The prompt ends *before* the partial word. Token healing masks the first decode steps to
@@ -69,6 +99,10 @@ written to refer to the visible messages, so treat this as a best case.
 - No fixed debounce: each keystroke cancels the in-flight job between decode steps.
 - Typing through a visible suggestion, backspacing inside it, and repeated Tabs reuse it
   with no inference at all.
+- **Prefetch** (mains power only): while a suggestion is on screen, the engine computes the
+  one that would follow it, so taking the whole suggestion shows the next one instantly.
+  Any keystroke cancels it between decode steps. With a 150 ms reaction time it served 6% of
+  suggestions instantly at no latency cost (p50 64 ms with, 67 ms without).
 
 Measured with `ft-replay` on an M3 Pro (Qwen3-1.7B-Base Q4_K_M, sample email):
 41–44% of keystrokes saved, 3.5–3.7 characters per Tab, model suggestions p50 74–85 ms and
@@ -121,9 +155,11 @@ switch, the suggestion length and a per-app toggle.
 ## Development
 
 - `cargo test` in `core/` runs the unit tests (word splitting, prompt stability, session
-  reuse, policy).
+  reuse, policy, encrypted history, profile, recorder).
 - `ft-replay MODEL TEXT_FILE` replays typing through the core and reports keystrokes saved,
-  characters per accept and latency, with no UI.
+  characters per accept and latency, with no UI. `--corpus FILE.jsonl` replays a corpus
+  (the Phase 0 one is `spike/eval/corpus/corpus.jsonl`), `--think MS` adds a reaction time,
+  and `--personal-loo` runs the leave-one-out personalization comparison.
 - `scripts/e2e-textedit.sh` drives a new TextEdit document with synthetic keystrokes
   (Tab, accept-all, mid-word, Esc, Option+Tab; `FORETYPE_INSERTION=paste` repeats it with
   paste insertion). `scripts/e2e-terminal.sh` opens a Terminal window running `tee` (so
@@ -149,7 +185,9 @@ switch, the suggestion length and a per-app toggle.
 - Screen context has only been tested through the OCR self-test and replays; live window
   capture needs the Screen Recording grant on `Foretype.app`, which the dev test setup
   doesn't have.
-- No model download UI, personalization, autocorrect or emoji yet.
+- No model download UI, autocorrect, emoji, phrase beam search or Gemma 4 support yet.
+- The personalization menu and the Custom Instructions window have not been exercised in
+  the automated tests; the recorder, history and bias are covered by unit tests and replays.
 - Not notarized; no Sparkle updates yet.
 
 ## Licensing

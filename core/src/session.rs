@@ -40,6 +40,18 @@ impl Session {
         }
     }
 
+    /// Caches a suggestion for `base` without showing it (prefetch).
+    pub fn remember(&mut self, field_key: u64, base: &str, suggestion: &str) {
+        if suggestion.is_empty() {
+            return;
+        }
+        self.cache.retain(|(k, b, _)| !(*k == field_key && b == base));
+        self.cache.push_back((field_key, base.to_string(), suggestion.to_string()));
+        if self.cache.len() > CACHE_SIZE {
+            self.cache.pop_front();
+        }
+    }
+
     pub fn clear(&mut self) {
         self.suggestion.clear();
         self.base.clear();
