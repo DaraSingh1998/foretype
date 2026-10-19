@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>axprobe test field</title>
+<style>
+  body { font: 16px -apple-system, system-ui, sans-serif; margin: 40px; }
+  textarea, [contenteditable] { width: 640px; height: 220px; font: 17px Georgia, serif; padding: 10px;
+    border: 1px solid #999; display: block; overflow: auto; }
+</style>
+</head>
+<body>
+<p>axprobe fixture. <code>#textarea</code> (default) or <code>#ce</code> for a contenteditable div.</p>
+<div id="slot"></div>
+<script>
+  const seed = "Thanks for sending the notes from Tuesday. I think we are closer to agreement than the meeting made it feel, and";
+  const slot = document.getElementById("slot");
+  let el;
+  if (location.hash === "#ce") {
+    el = document.createElement("div");
+    el.contentEditable = "true";
+    el.textContent = seed;
+  } else {
+    el = document.createElement("textarea");
+    el.value = seed;
+  }
+  slot.appendChild(el);
+  function focusEnd() {
+    el.focus();
+    if (el.setSelectionRange) {
+      el.setSelectionRange(el.value.length, el.value.length);
+    } else {
+      const r = document.createRange();
+      r.selectNodeContents(el);
+      r.collapse(false);
+      const s = getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+    }
+  }
+  focusEnd();
+  window.addEventListener("load", focusEnd);
+  window.addEventListener("focus", focusEnd);
+</script>
+</body>
+</html>

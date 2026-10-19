@@ -1,0 +1,4 @@
+# key	file	url	sha256	bytes
+0.6b	Qwen3-0.6B-Base.Q8_0.gguf	https://huggingface.co/mradermacher/Qwen3-0.6B-Base-GGUF/resolve/main/Qwen3-0.6B-Base.Q8_0.gguf	4b088f1793f6cba9f0c2f77ab835ef6734f205c2159168698c6e1a51b7df168a	639447232
+1.7b	Qwen3-1.7B-Base.Q4_K_M.gguf	https://huggingface.co/mradermacher/Qwen3-1.7B-Base-GGUF/resolve/main/Qwen3-1.7B-Base.Q4_K_M.gguf	8b5d946a169e62dd49444be8858c8a7f06067573de990b2bc19380d3a260b5fa	1107409024
+4b	Qwen3-4B-Base.Q4_K_M.gguf	https://huggingface.co/mradermacher/Qwen3-4B-Base-GGUF/resolve/main/Qwen3-4B-Base.Q4_K_M.gguf	a7eb1d92eaf34e116f8b522aeeaf4072e66d69b5b10676e0cb7cd9e11889bed6	2497280736

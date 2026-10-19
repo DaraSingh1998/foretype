@@ -1,0 +1,49 @@
+## prefetch on
+53 docs in 252s: 12704 chars, keystrokes saved 41.9%, chars/accept 3.68, accepts 1985, model p50 75 ms p90 105 ms, sources {"model": 3063, "policy": 112, "typeThrough": 4203}
+## prefetch off
+53 docs in 209s: 12704 chars, keystrokes saved 41.9%, chars/accept 3.68, accepts 1986, model p50 64 ms p90 89 ms, sources {"model": 3063, "policy": 112, "typeThrough": 4201}
+## personal LOO strength 1
+sw-email-1     off  45.3%  on  45.3%
+sw-email-2     off  42.4%  on  41.8%
+sw-email-3     off  41.0%  on  45.9%
+sw-chat-1      off  37.7%  on  38.9%
+sw-chat-2      off  19.8%  on  19.8%
+sw-chat-3      off  37.4%  on  38.5%
+sw-chat-4      off  43.3%  on  42.9%
+sw-notes-1     off  32.6%  on  31.9%
+sw-notes-2     off  34.9%  on  35.7%
+sw-essay-1     off  43.3%  on  43.9%
+sw-support-1   off  52.8%  on  52.2%
+sw-review-1    off  45.5%  on  45.5%
+personalization off: 5489 chars, keystrokes saved 41.0%, chars/accept 3.55, accepts 881, model p50 68 ms p90 90 ms, sources {"model": 1330, "policy": 25, "typeThrough": 1886}
+personalization on (strength 1): 5489 chars, keystrokes saved 41.6%, chars/accept 3.60, accepts 880, model p50 68 ms p90 90 ms, sources {"model": 1307, "policy": 25, "typeThrough": 1873}
+## personal LOO strength 2
+sw-email-1     off  45.3%  on  45.7%
+sw-email-2     off  42.4%  on  41.6%
+sw-email-3     off  41.0%  on  45.1%
+sw-chat-1      off  37.7%  on  37.7%
+sw-chat-2      off  19.8%  on  19.4%
+sw-chat-3      off  37.4%  on  37.4%
+sw-chat-4      off  43.3%  on  42.5%
+sw-notes-1     off  32.6%  on  31.5%
+sw-notes-2     off  34.9%  on  36.0%
+sw-essay-1     off  43.3%  on  43.3%
+sw-support-1   off  52.8%  on  52.2%
+sw-review-1    off  45.5%  on  45.1%
+personalization off: 5489 chars, keystrokes saved 41.0%, chars/accept 3.55, accepts 881, model p50 65 ms p90 87 ms, sources {"model": 1330, "policy": 25, "typeThrough": 1886}
+personalization on (strength 2): 5489 chars, keystrokes saved 41.3%, chars/accept 3.59, accepts 876, model p50 66 ms p90 87 ms, sources {"model": 1331, "policy": 25, "typeThrough": 1868}
+## personal LOO strength 0
+sw-email-1     off  45.3%  on  45.4%
+sw-email-2     off  42.4%  on  42.0%
+sw-email-3     off  41.0%  on  45.7%
+sw-chat-1      off  37.7%  on  38.9%
+sw-chat-2      off  19.8%  on  19.8%
+sw-chat-3      off  37.4%  on  38.0%
+sw-chat-4      off  43.3%  on  43.3%
+sw-notes-1     off  32.6%  on  31.9%
+sw-notes-2     off  34.9%  on  35.4%
+sw-essay-1     off  43.3%  on  43.9%
+sw-support-1   off  52.8%  on  52.2%
+sw-review-1    off  45.5%  on  45.5%
+personalization off: 5489 chars, keystrokes saved 41.0%, chars/accept 3.55, accepts 881, model p50 66 ms p90 88 ms, sources {"model": 1330, "policy": 25, "typeThrough": 1886}
+personalization on (strength 0): 5489 chars, keystrokes saved 41.6%, chars/accept 3.59, accepts 881, model p50 66 ms p90 88 ms, sources {"model": 1307, "policy": 25, "typeThrough": 1874}

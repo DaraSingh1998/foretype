@@ -1,0 +1,161 @@
+{
+  "label": "Qwen3-4B-Base.Q4_K_M",
+  "backend": "llama-server (started by harness)",
+  "corpus": {
+    "path": "corpus/corpus.jsonl",
+    "docs": 53,
+    "words": 2367,
+    "chars": 12704
+  },
+  "settings": {
+    "presets": [
+      2,
+      4,
+      7
+    ],
+    "n_predict": 16,
+    "decoding": "greedy",
+    "token_healing": "GBNF prefix constraint",
+    "max_suffix_after_caret": 8
+  },
+  "wall_s": 1217.8,
+  "backend_requests": 3275,
+  "prefill_tokens_per_request_p50": 1,
+  "presets": {
+    "2": {
+      "chars": 12704,
+      "keystrokes": 7102,
+      "keystrokes_saved_pct": 44.1,
+      "tabs": 1954,
+      "accepted_chars": 7556,
+      "chars_per_accept": 3.87,
+      "chars_saved_per_accept_net": 2.87,
+      "suggestions_shown": 3361,
+      "suggestions_accepted": 1403,
+      "acceptance_rate_pct": 41.74,
+      "requests": 3365,
+      "type_through_chars": 2358,
+      "gate": {
+        "boundary": 509,
+        "word-prefix": 2851,
+        "not-a-word-prefix": 18,
+        "contraction": 6
+      },
+      "gate_blocks": 19,
+      "blocked_words": {
+        "malbolge": 4,
+        "colours": 3,
+        "chatgpt": 3,
+        "priya": 2,
+        "bbc": 2,
+        "sff": 1,
+        "l'h": 1,
+        "luau": 1,
+        "hauts": 1,
+        "pc": 1
+      },
+      "grammar_fail": 0,
+      "latency_ms": {
+        "p50": 102.1,
+        "p90": 159.2,
+        "mean": 110.9
+      },
+      "ttft_ms": {
+        "p50": 30.8,
+        "p90": 38.0
+      },
+      "tokens_generated": 14314,
+      "tokens_per_accepted_char": 1.894
+    },
+    "4": {
+      "chars": 12704,
+      "keystrokes": 7093,
+      "keystrokes_saved_pct": 44.17,
+      "tabs": 1955,
+      "accepted_chars": 7566,
+      "chars_per_accept": 3.87,
+      "chars_saved_per_accept_net": 2.87,
+      "suggestions_shown": 2886,
+      "suggestions_accepted": 1208,
+      "acceptance_rate_pct": 41.86,
+      "requests": 2890,
+      "type_through_chars": 2349,
+      "gate": {
+        "boundary": 474,
+        "word-prefix": 2412,
+        "not-a-word-prefix": 18,
+        "contraction": 5
+      },
+      "gate_blocks": 19,
+      "blocked_words": {
+        "malbolge": 4,
+        "colours": 3,
+        "chatgpt": 3,
+        "priya": 2,
+        "bbc": 2,
+        "sff": 1,
+        "l'h": 1,
+        "luau": 1,
+        "hauts": 1,
+        "pc": 1
+      },
+      "grammar_fail": 0,
+      "latency_ms": {
+        "p50": 150.4,
+        "p90": 225.8,
+        "mean": 165.2
+      },
+      "ttft_ms": {
+        "p50": 30.7,
+        "p90": 38.0
+      },
+      "tokens_generated": 19103,
+      "tokens_per_accepted_char": 2.525
+    },
+    "7": {
+      "chars": 12704,
+      "keystrokes": 7092,
+      "keystrokes_saved_pct": 44.18,
+      "tabs": 1955,
+      "accepted_chars": 7567,
+      "chars_per_accept": 3.87,
+      "chars_saved_per_accept_net": 2.87,
+      "suggestions_shown": 2814,
+      "suggestions_accepted": 1171,
+      "acceptance_rate_pct": 41.61,
+      "requests": 2818,
+      "type_through_chars": 2349,
+      "gate": {
+        "boundary": 469,
+        "word-prefix": 2345,
+        "not-a-word-prefix": 18,
+        "contraction": 5
+      },
+      "gate_blocks": 19,
+      "blocked_words": {
+        "malbolge": 4,
+        "colours": 3,
+        "chatgpt": 3,
+        "priya": 2,
+        "bbc": 2,
+        "sff": 1,
+        "l'h": 1,
+        "luau": 1,
+        "hauts": 1,
+        "pc": 1
+      },
+      "grammar_fail": 0,
+      "latency_ms": {
+        "p50": 230.1,
+        "p90": 320.8,
+        "mean": 244.6
+      },
+      "ttft_ms": {
+        "p50": 30.7,
+        "p90": 37.6
+      },
+      "tokens_generated": 28504,
+      "tokens_per_accepted_char": 3.767
+    }
+  }
+}

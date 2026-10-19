@@ -4,10 +4,17 @@ Free, open-source, on-device inline autocomplete for every app: gray "ghost text
 your caret, Tab to take the next word, the key above Tab to take all of it. A Cotypist-style
 tool built so the engine can be shared across macOS, Windows and Linux.
 
-Status: **Phase 4 (packaging), macOS only.** Works end to end with a local Qwen3 base
-model in every app except those off by default (code editors, password managers, remote
-desktops, spreadsheets). In Terminal and iTerm it suggests only on AI-agent prompts (Claude
-Code, Codex, ...). Not packaged or notarized yet.
+Status: **phases 1–4 done** (Mac MVP, compatibility, personalization, packaging); macOS
+only. Works end to end with a local Qwen3 base model in every app except those off by
+default (code editors, password managers, remote desktops, spreadsheets). In Terminal and
+iTerm it suggests only on AI-agent prompts (Claude Code, Codex, ...). No release is tagged
+yet (signing and notarization need a Developer ID).
+
+**Docs:** [Architecture](docs/ARCHITECTURE.md) · [Decisions](docs/DECISIONS.md) ·
+[Development](docs/DEVELOPMENT.md) · [Measurements](docs/MEASUREMENTS.md) ·
+[Roadmap](docs/ROADMAP.md) · [Releasing](RELEASING.md) · [Changelog](CHANGELOG.md) ·
+[Research](docs/research/) · [Phase 0 spike](tools/spike/RESULTS.md) ·
+[Claude guidance](CLAUDE.md)
 
 ## How it works
 

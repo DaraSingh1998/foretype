@@ -1,0 +1,375 @@
+# Architecture
+
+Foretype has two halves joined by a small C ABI:
+
+- **`core/`**: Rust crate `foretype-core`. Platform-independent: the policy gate,
+  suggestion reuse, prompt building, inference (in-process llama.cpp or a server),
+  personalization, the model catalog. It receives *snapshots* of the focused field and emits
+  *suggestion state*. It never draws anything, so a Windows TSF service or a Linux
+  Fcitx5/IBus preedit can render the same output.
+- **`mac/`**: Swift package `Foretype`. Everything macOS-specific: Accessibility capture,
+  the caret resolver, the ghost-text panel, event taps, text insertion, screen capture and
+  OCR, hotkeys, menus, setup, the model downloader, Sparkle.
+
+```
+ macOS shell (Swift)                                     core (Rust, C ABI)
+ ──────────────────                                      ─────────────────
+ FocusTracker   AX thread: AXObserver + post-keystroke ─┐
+                re-read burst + 0.5 s poll               │ Snapshot JSON (ft_engine_submit)
+ ScreenContext  window capture + Vision OCR ─────────────┤ (+ screen_context text)
+                                                         ▼
+                                                 policy gate ─── compat/apps.json rules
+                                                 recorder ────── encrypted history (opt-in)
+                                                 session ─────── type-through, backspace, cache, accept
+                                                 context ─────── byte-stable header + text before caret
+                                                 worker thread ─ Runner: llama.cpp engine | HTTP server
+                                                         │ Event JSON (callback)
+ Controller ◄────────────────────────────────────────────┘ revision check, main thread
+   GhostPanel   non-activating click-through panel at the caret (or mirror card)
+   KeyTap       listen-only tap + consuming tap (enabled only while a suggestion shows)
+   Inserter     Unicode CGEvents (≤20 UTF-16 units) or paste with clipboard restore
+```
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `core/src/lib.rs` | `Core` (public API), `Snapshot`, `Settings`, `CoreConfig`, `Event`, submit pipeline, worker loop, recorder |
+| `core/src/engine.rs` | In-process llama.cpp: KV-cache sync, token healing, greedy decoding, personal bias |
+| `core/src/backend.rs` | `llama-server` and OpenAI-compatible HTTP backends |
+| `core/src/context.rs` | Prompt builder |
+| `core/src/words.rs` | Fragment splitting, word counting and limiting |
+| `core/src/session.rs` | Suggestion reuse: type-through, backspace, accept, cache, dismiss |
+| `core/src/policy.rs` | The gate, compatibility DB types, agent-prompt detection |
+| `core/src/history.rs` | Encrypted writing history (ChaCha20-Poly1305) |
+| `core/src/profile.rs` | Vocabulary profile and example selection |
+| `core/src/models.rs` | Model catalog (`models/catalog.json`) and tier choice |
+| `core/src/ffi.rs`, `core/include/foretype_core.h` | C ABI |
+| `core/src/bin/ft-replay.rs` | Headless replay and evaluation tool |
+| `core/build.rs` | Links clang's runtime into test binaries and `ft-replay` |
+| `compat/apps.json` | Per-app rules (CC0) |
+| `models/catalog.json` | Downloadable models with pinned SHA-256 |
+| `eval/corpus.jsonl` | 53-document evaluation corpus |
+| `mac/Sources/Foretype/*.swift` | macOS shell (one file per component, see below) |
+| `scripts/` | `build-mac.sh`, `package-mac.sh`, e2e tests, `ftdrive.swift` test driver |
+| `packaging/homebrew/` | Cask template |
+| `tools/spike/` | Phase 0 spike: AX probe, llama.cpp benchmarks, replay harness (archival) |
+
+## Core
+
+### Threads
+
+- **Caller threads** (on macOS, the shell's AX thread and the main thread) call `submit`,
+  `warm`, `accept`, `dismiss`, `configure`. `submit` runs the policy gate and the reuse
+  paths synchronously and may emit an event before it returns.
+- **`foretype.engine` worker thread** owns the `Runner` (the llama.cpp engine or an HTTP
+  backend). It takes jobs from a single **latest-wins slot** (`pending: Mutex<Option<Job>>`
+  plus a condvar): a new job replaces any queued one, and the running job is cancelled
+  between decode steps when `latest` (an atomic revision) moves on.
+- Events go out through the sink the shell registered (`FtEventCallback`), from whichever
+  thread produced them.
+
+### Submit pipeline (`Core::submit`)
+
+In order; the first rule that applies decides:
+
+1. Store `revision` as `latest` (this cancels in-flight work for older revisions).
+2. `settings.enabled` false → hide (`policy`, `disabled`).
+3. `settings.only_apps` non-empty and the app is not in it → hide (`notInOnlyApps`).
+4. `policy::evaluate` → hide with a reason. Checks, in order: secure input, secure field
+   (`AXSecureTextField`, or "password"/"secure" in the role description), role not
+   `AXTextArea`/`AXTextField`/`AXComboBox`, `AXSearchField` (unless forced), a selection,
+   IME composition (`marked_len > 0`), app disabled by the user, app disabled by default in
+   the compat DB (unless the user enabled it or forced), agent-prompt-only app whose caret
+   line is not an agent prompt, single-line field narrower than 260 pt, more than 8
+   non-space characters after the caret on the line, fewer than 2 characters typed, a
+   partial word longer than 30 characters.
+5. Agent-prompt apps (terminals): `text_before` is replaced by the prompt's own text.
+6. Recorder (`observe`) when personalization is on.
+7. Dismissed for exactly this text (unless forced) → hide (`dismissed`).
+8. **Type-through**: the text extends the shown suggestion's base by a prefix of the
+   suggestion, or backspaces up to 24 characters into it → emit the rest (`typeThrough`),
+   no inference.
+9. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
+   prefetch → emit (`cache`).
+10. Build the prompt (personal examples are chosen once per field and cached) and enqueue a
+    `Complete` job; emit an empty `pending` event so the shell hides the stale ghost.
+
+`warm` enqueues a zero-token prefill of a field's prompt only if nothing is queued.
+
+### Worker loop
+
+- **Load**: the local engine (model file) or an `HttpBackend`; emits `status` events
+  `loading` / `ready` / `error`.
+- **Idle unload**: with no job for `unload_after_s` (default 300 s) the local engine is
+  dropped (about 1 GB freed; `status: idle`) and reloaded on the next job.
+- **Vocabulary**: when the profile generation counter changed, the engine re-derives its
+  personal bias.
+- **Debounce**: if `debounce_ms > 0` (the shell sets 80 ms on battery) and the job is
+  mid-word, wait that long; a newer keystroke cancels the job.
+- **Complete** → session `set` → emit `suggestion` (`source: model`, `ms`, `prefilled`,
+  `stop`).
+- **Prefetch** (when `settings.prefetch`; the shell enables it on mains power only):
+  complete the prompt for `text_before + suggestion` and `remember` it in the session cache.
+  It is cancelled as soon as any job is queued.
+
+### Engine (`engine.rs`)
+
+- **One context, one sequence.** `sync(tokens)` keeps the longest common prefix with the
+  tokens already in the KV cache, removes the rest (`clear_kv_cache_seq`), and prefills
+  only the tail; the last prompt token is always re-decoded so its logits are fresh.
+- **Rollback**: after generating, the generated tokens are removed again, so the cache
+  always mirrors the prompt and the next keystroke prefills only 0–2 tokens.
+- **Token healing**: the prompt stops before the partial word; while the generated bytes
+  are shorter than the typed fragment, only tokens whose bytes agree with the fragment are
+  allowed (logit masking over the detokenized vocabulary). Mid-word completion therefore
+  works even when the fragment is not a token boundary, and the prompt prefix stays
+  identical for a whole word.
+- **Greedy decoding** with stops: newline; the next word would exceed `max_words`; a
+  sentence end before a new word (`stop_at_sentence_end`); end-of-generation token; a
+  deadline (`deadline_ms`, default 300 ms, counted from the end of prefill); token budget
+  `max_words * 3 + 8 + fragment length`. A word cut off by the budget or the deadline is
+  dropped.
+- **Personal bias** (`set_vocabulary`, `personal_strength` logits at full weight):
+  at a word start, boosts the single token of `" word"` for the user's whole-word tokens;
+  while a word is in progress (typed or generated), boosts the next token of the user's
+  words that extend it (up to 8 candidates). Boosts are non-negative and sparse, so the
+  argmax is either the unboosted winner or one of the boosted tokens.
+- **Model constraints**: dense, full-attention models only. Recurrent or hybrid models are
+  rejected at load (their state can't be rolled back to an arbitrary position).
+- The backend, model and context live behind raw pointers and are freed in order in `Drop`
+  (context, model, backend); Metal asserts at process exit if a context outlives its
+  device.
+
+### Prompt format (`context.rs`)
+
+```
+[Text visible on screen]                         ← screen_context, last ≤1,500 chars, lines
+...                                                 starting with "[" dropped
+[End of screen text]
+
+[Earlier writing by the same person in Mail]     ← personalization examples (≤2 × 280 chars)
+...
+---
+...
+[End of earlier writing]
+
+[Written in Mail — Re: planning (mail.example.com)]   ← app, window title (≤80), URL host
+[Writer's notes: …]                                   ← global + per-app instructions (≤400)
+
+Hi Priya,\n\nThanks for the                     ← body: text before the caret, up to the
+                                                    partial word ("prefix")
+fragment = " no"                                 ← typed partial word + its leading space
+```
+
+- The body window is at most `max_body_chars` (1,600) bytes. Its start moves in 512-byte
+  steps and lands after whitespace, and the shell sends a text window aligned to 1,024
+  UTF-16 units, so the prefix stays byte-stable for many keystrokes.
+- `words::split_fragment` defines the fragment: the trailing run of word characters
+  (letters, digits, `'`, `’`, `-`, `_`) plus the single space before it. After a space the
+  fragment is `" "`; after punctuation or a newline it is empty. Base-model BPE attaches
+  spaces to the following word, so a prompt never ends in a bare space.
+- Everything that changes rarely (screen text, examples, header) comes first; everything
+  that changes per keystroke comes last.
+
+### Session (`session.rs`)
+
+Holds the shown suggestion (`base`, `suggestion`) for one field, a 64-entry cache and a
+dismissal marker.
+
+- `type_through`: typed characters matching the suggestion advance it; backspacing up to
+  24 characters (no newline) re-prepends the deleted text.
+- `accept(NextWord | All)`: returns `(insert, remaining)` and advances `base`, so a second
+  Tab before the host reports the edit still inserts the following word.
+- `dismiss`: suppresses suggestions until the text changes.
+- `remember`: cache-only insert used by the prefetch.
+
+### Compatibility database (`compat/apps.json`, `policy.rs`)
+
+```json
+{
+  "apps": { "<bundle id>": { "disabled": bool, "agent_prompt_only": bool,
+                             "insertion": "keystrokes|paste|paste-long|first-word-then-paste",
+                             "prime": "chromium|electron", "note": "…" } },
+  "prefixes": { "com.jetbrains.": { "disabled": true } },
+  "agent_prompt": { "borders": ["│", "┃", "|"], "markers": ["> ", "› ", "▌ "] }
+}
+```
+
+The longest matching prefix applies when there is no exact entry. An agent prompt line is
+`[whitespace][border][whitespace]marker text`; shell prompts (`$`, `%`, `❯`) don't match.
+The file is compiled into the core (`include_str!`).
+
+### Personalization (`history.rs`, `profile.rs`, recorder in `lib.rs`)
+
+- **Recorder**: tracks the focused field (`start` text at focus, `last` text, `accepted`
+  flag set by `accept`). A field is finished when focus moves to another field or its
+  text shrinks to under half (a sent chat message). If a suggestion was accepted there,
+  the text typed since focus (after the common prefix with `start`) is recorded when it is
+  at least 20 characters. Fields the gate rejects are never tracked.
+- **History file**: frames of `u32 LE length | 12-byte nonce | ChaCha20-Poly1305
+  ciphertext of the JSON record {ts, app, text}`. Frames that fail to decrypt are skipped.
+  At most 3,000 records (compacted atomically). The 256-bit key is supplied by the shell
+  (hex) and never stored by the core. Without a key, history is memory-only.
+- **Profile**: words of 4+ characters with no digits, minus a list of very common English
+  words; counted case-insensitively, most recent spelling kept. The bias uses words seen at
+  least twice (top 3,000), weighted `ln(1+count)/ln(1+max)`.
+- **Examples**: up to 2 records from the same app, at least 30 characters, ranked by shared
+  words with the current text, then recency, truncated to 280 characters at a word
+  boundary; chosen on the field's first prompt.
+- **Strength**: gentle 1.0, balanced 2.0, strong 4.0 logits at full weight.
+
+### HTTP backends (`backend.rs`)
+
+| | `llama-server` | OpenAI-compatible |
+|---|---|---|
+| Endpoint | `POST /completion`, streamed | `POST /v1/completions`, streamed |
+| Prompt | prefix | prefix (without the partial word) |
+| Healing | GBNF grammar `root ::= "<fragment>" [^\n]*` | reply used only if it starts with the fragment; otherwise a second request with prefix + fragment |
+| Caching | `cache_prompt: true`, zero-token warm | last `(prefix, reply)` reused for every keystroke in a word |
+| Bias | none | none |
+
+Responses are read line by line, so a new keystroke abandons a request between chunks.
+
+### Model catalog (`models.rs`)
+
+`ft_model_catalog(ram_gb)` returns the models whose `min_ram_gb` fits, with `recommended`
+set: tier `light` (Qwen3 0.6B Q8_0) below 12 GB, `default` (Qwen3 1.7B Q4_K_M) otherwise.
+The `quality` tier (Qwen3 4B Q4_K_M, 16 GB+) is never picked automatically.
+
+### C ABI
+
+All strings are UTF-8 JSON. Strings returned by the core must be freed with
+`ft_string_free`.
+
+| Function | Purpose |
+|---|---|
+| `ft_engine_new(config_json, callback, ctx)` | Create; the model loads on the worker thread |
+| `ft_engine_free(engine)` | Stop the worker, free the model |
+| `ft_engine_submit(engine, snapshot_json)` | Field changed |
+| `ft_engine_warm(engine, snapshot_json)` | Prefill a newly focused field |
+| `ft_engine_accept(engine, mode)` | 0 next word, 1 all → `{"insert","remaining"}` or NULL |
+| `ft_engine_dismiss(engine, field_key, text_before)` | Esc |
+| `ft_engine_configure(engine, settings_json)` | Replace settings |
+| `ft_engine_compat_rule(engine, bundle_id)` | Rule JSON for an app |
+| `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization |
+| `ft_model_catalog(ram_gb)` | Model list (no engine needed) |
+
+**CoreConfig** (`ft_engine_new`): `model_path`, `n_ctx` (2048), `n_gpu_layers` (999),
+`n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`
+(`local`|`llama-server`|`openai`), `backend_url`, `backend_model`, `backend_api_key`.
+
+**Settings** (`ft_engine_configure`): `enabled`, `length_words` (4), `stop_at_sentence_end`,
+`instructions`, `app_instructions` {bundle: text}, `disabled_apps`, `enabled_apps`,
+`only_apps`, `deadline_ms` (300), `max_body_chars` (1600), `unload_after_s` (300),
+`debounce_ms` (0), `prefetch` (true), `personalize` (false), `personalize_strength` (1),
+`personal_examples` (true).
+
+**Snapshot** (`submit`/`warm`): `revision`, `field_key`, `bundle_id`, `app_name`,
+`window_title`, `url`, `role`, `subrole`, `role_description`, `text_before`, `text_after`
+(rest of the caret line), `screen_context`, `selection_len`, `marked_len`, `secure_input`,
+`field_width`, `field_height`, `force`.
+
+**Events** (callback):
+
+```json
+{"type":"suggestion","revision":42,"text":" going next week","source":"model","ms":71.2,"prefilled":1,"stop":"words"}
+{"type":"suggestion","revision":43,"text":"","source":"policy","reason":"secureField"}
+{"type":"status","state":"ready","detail":"loaded in 846 ms"}
+```
+
+`source`: `model`, `typeThrough`, `cache`, `pending`, `policy`, `dismissed`, `error`. An
+empty `text` means hide. The shell must ignore events whose `revision` is not its latest.
+
+## macOS shell
+
+### Threads
+
+| Thread | Work |
+|---|---|
+| main | `AppDelegate` menus and windows, `Controller` event handling, `GhostPanel`, insertion, Carbon hotkeys, power monitor, URLSession delegate |
+| `foretype.ax` | `FocusTracker`: CFRunLoop with AXObserver sources, timers, all AX reads (80 ms global messaging timeout) |
+| `foretype.keys` | `KeyTap`: both event taps; callbacks never block or call Accessibility |
+| `foretype.screen` (queue) | Screen capture completion and Vision OCR |
+| `foretype.engine` (Rust) | Inference |
+
+### Components (`mac/Sources/Foretype/`)
+
+- **`FocusTracker.swift`**: follows the frontmost app (NSWorkspace activation), one
+  `AXObserver` per app (focus, window, value, selection notifications on the app element
+  and the focused element), a re-read burst 8 and 45 ms after each keystroke (from the
+  listen tap), reads coalesced 2 ms, an idle poll every 0.5 s. Emits a `FieldSnapshot` only
+  when its signature changed, with a monotonically increasing revision. Reads the text
+  before the caret through `AXStringForRange` in a window of 3,000 UTF-16 units whose start
+  is aligned to 1,024 (falling back to `AXValue`), the rest of the line (≤160), role,
+  subrole, frame, marked range (`AXTextInputMarkedRange`, only length > 0 counts), window
+  title and frame (on focus). `field_key = pid << 32 ^ CFHash(element)`. Primes Chromium
+  (`AXEnhancedUserInterface`) and Electron (`AXManualAccessibility`) apps per the compat
+  DB and restores the flags on quit. With `FORETYPE_ONLY_APPS`, other apps' text is never
+  read.
+- **`Caret.swift`**: `CaretResolver` reads both the zero-length `AXBoundsForRange` and the
+  previous character's trailing edge, validates each (origin zero, zero or huge height,
+  equal to the field frame, outside the field, off-screen, too wide for one character) and
+  prefers the previous-character edge. When the two disagree by more than half a line with
+  the zero-length rect higher, that's the TextKit bug: it learns a per-app offset and uses
+  it at line starts. Zero-length lower means a soft wrap. `font()` reads `AXFont`: the
+  family wins over a fake name (Word); size-only (Chrome) goes to `FontMatcher`, which picks
+  the family whose rendering of the last ≤24 characters matches their on-screen width.
+- **`GhostPanel.swift`**: borderless, non-activating, click-through `NSPanel` at
+  `.statusBar` level, on all Spaces, excluded from Accessibility. Draws the words that fit
+  before the field's right edge in the host font, gray. Without a caret rect it shows a
+  "mirror card" (⇥ suggestion) above the field. `advance` shifts the ghost after an accept
+  until the host reports the new caret.
+- **`KeyTap.swift`**: a permanent listen-only session tap (notices typing) and a consuming
+  head-inserted session tap that is enabled only while a suggestion is visible (disabled 50
+  ms after it hides, so the last synthetic key drains). Consumes Tab (next word), the key
+  above Tab (` on ANSI, § on ISO: accept all), Esc (dismiss), Option+Tab (real Tab), and
+  swallows their key-ups. Ignores events carrying the inserter's marker. Re-enables itself
+  on `tapDisabledByTimeout`.
+- **`Inserter.swift`**: keystrokes posted at the annotated session tap with marker
+  `0x46545950` ("FTYP"), at most 20 UTF-16 units per event on virtual key 0, Return for
+  newlines. Paste: snapshot the pasteboard, write the text plus nspasteboard.org transient
+  markers, Cmd-V on the layout's V key, restore after 250 ms unless the user copied
+  meanwhile; only if `NSPasteboard.accessBehavior == .alwaysAllow` (macOS 15.4+).
+- **`Controller.swift`**: wires everything. On the AX thread it adds the cached screen text
+  to each snapshot, applies force (per field and line) and snooze, submits, and asks the
+  screen provider for a refresh. On the main thread it drops events whose revision is
+  stale, shows or hides the panel, toggles the consuming tap, and performs key actions. If
+  an accept finds no suggestion (it went stale), it gives the key back. The engine can be
+  swapped at runtime (`replaceEngine`) when the model or server changes.
+- **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
+  every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
+  `SCScreenshotManager.captureImage` → Vision `.accurate` OCR → lines grouped into rows,
+  rows inside the field dropped, rows nearest the field kept (rows above first, budget
+  1,400 characters) in reading order. The new text is prefilled with `warm` right away.
+  Skipped for secure input, secure fields and apps where suggestions are off. The image is
+  discarded after OCR.
+- **`Hotkeys.swift`**: Carbon `RegisterEventHotKey`: Ctrl + key above Tab forces
+  suggestions on the current line; Ctrl+Opt+Cmd + key above Tab snoozes the app for 5
+  minutes. `PowerMonitor` polls the power source every 30 s; on battery the core gets an
+  80 ms debounce and no prefetch.
+- **`Settings.swift`**: `AppSettings` (UserDefaults: enabled, lengthWords, instructions,
+  appInstructions, disabled/enabled apps, useScreenContext, personalize, strength, backend,
+  backendURL, backendModel, modelPath, onboarded), `Keychain` (service
+  `dev.foretype.Foretype`; accounts `history-key`, `backend-api-key`), `HistoryStore`
+  (`~/Library/Application Support/Foretype/history.bin`), `ModelLocator`.
+- **`ModelManager.swift`**: catalog from the core, URLSession downloads with resume data,
+  streaming SHA-256 (CryptoKit) before moving into `Models/`.
+- **`OnboardingWindow.swift`**, **`InstructionsWindow.swift`**, **`AppDelegate.swift`**:
+  setup checklist (Accessibility, Screen Recording, model), custom instructions, the
+  menu-bar menu (on/off, length, per-app toggle, screen context, personalization,
+  instructions, model, server, setup, updates). The setup window opens when Accessibility
+  or a model is missing, and on the bundled app's first run.
+- **`UpdateController.swift`**: Sparkle 2 when built with `FORETYPE_SPARKLE=1` and the
+  Info.plist has `SUFeedURL` and `SUPublicEDKey`; otherwise a no-op.
+- **`AX.swift`**: typed AX helpers and the debug logger.
+
+## Data and privacy
+
+| Data | Where it goes |
+|---|---|
+| Text of the focused field | In memory; into the prompt. Never logged unless `FORETYPE_DEBUG` (suggestions only) |
+| Screen text (OCR) | In memory per field; image discarded immediately |
+| Writing history (opt-in) | `history.bin`, encrypted, key in the Keychain; deleted from the menu |
+| Clipboard | Read only to restore it after a paste, only with "always allow" access |
+| Network | Model downloads (Hugging Face), Sparkle update checks (release builds), and the user's own server if one is configured. Nothing else |

@@ -1,0 +1,7 @@
+## LOO strength 1, bias only (no examples)
+personalization off: 5489 chars, keystrokes saved 41.0%, chars/accept 3.55, accepts 881, model p50 72 ms p90 96 ms, sources {"model": 1330, "policy": 25, "typeThrough": 1886}
+personalization on (strength 1): 5489 chars, keystrokes saved 41.2%, chars/accept 3.57, accepts 880, model p50 72 ms p90 95 ms, sources {"model": 1322, "policy": 25, "typeThrough": 1878}
+## sw-email, think 150 ms, prefetch on
+3 docs in 208s: 2005 chars, keystrokes saved 42.9%, chars/accept 3.62, accepts 329, model p50 64 ms p90 85 ms, sources {"cache": 26, "model": 433, "policy": 6, "typeThrough": 679}
+## sw-email, think 150 ms, prefetch off
+3 docs in 210s: 2005 chars, keystrokes saved 42.9%, chars/accept 3.62, accepts 329, model p50 67 ms p90 87 ms, sources {"model": 459, "policy": 6, "typeThrough": 679}

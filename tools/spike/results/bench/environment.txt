@@ -1,0 +1,9 @@
+date: 2026-10-18T18:09:29Z
+model: Mac15,6 / Apple M3 Pro
+cpu: 5P + 6E cores
+gpu: 14 cores
+ram: 18 GB
+macOS: 27.0.1 (26A434)
+power: AC Power
+llama.cpp: version 0.7.0 (build 11669, commit 620d2225c), Homebrew, Metal+BLAS backends
+other GPU tenants: Cotypist (gemma-4-E2B) and Ollama 0.35.1 app were running idle
