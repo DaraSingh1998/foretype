@@ -1,8 +1,9 @@
 name: CI
 
+# Manual only for now (Actions tab > CI > Run workflow): macOS runner minutes are billed at
+# 10x on private repositories. Add push/pull_request triggers back when wanted.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   macos:

@@ -209,7 +209,7 @@ personalization, custom instructions, model and setup.
   `Foretype --download-selftest MODEL_ID` downloads and verifies one catalog model
   (`FORETYPE_MODEL_BASE_URL` and `FORETYPE_MODELS_DIR` point it at a local server and a
   scratch folder).
-- CI (`.github/workflows/ci.yml`) runs the unit tests, builds the app, runs the self-tests
+- CI (`.github/workflows/ci.yml`, manual trigger only for now) runs the unit tests, builds the app, runs the self-tests
   and replays the self-written corpus documents with the 0.6B model on CPU. `ft-replay ... --screen FILE` adds screen text to a replay.
 - **Accessibility grants and ad-hoc signing:** macOS ties the grant to the exact build, so
   every rebuild of an ad-hoc-signed `Foretype.app` needs the Accessibility entry removed
