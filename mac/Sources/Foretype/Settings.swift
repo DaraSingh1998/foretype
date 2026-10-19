@@ -60,6 +60,33 @@ final class AppSettings {
         set { d.set(newValue, forKey: "personalizeStrength") }
     }
 
+    /// "local" (built-in llama.cpp), "llama-server" or "openai".
+    var backend: String {
+        get { d.string(forKey: "backend") ?? "local" }
+        set { d.set(newValue, forKey: "backend") }
+    }
+
+    var backendURL: String {
+        get { d.string(forKey: "backendURL") ?? "http://127.0.0.1:8080" }
+        set { d.set(newValue, forKey: "backendURL") }
+    }
+
+    var backendModel: String {
+        get { d.string(forKey: "backendModel") ?? "" }
+        set { d.set(newValue, forKey: "backendModel") }
+    }
+
+    /// API key for a server backend, kept in the Keychain (only read when a server is used).
+    var backendAPIKey: String {
+        get { Keychain.get("backend-api-key").flatMap { String(data: $0, encoding: .utf8) } ?? "" }
+        set { Keychain.set("backend-api-key", newValue.data(using: .utf8), label: "Foretype server API key") }
+    }
+
+    var onboarded: Bool {
+        get { d.bool(forKey: "onboarded") }
+        set { d.set(newValue, forKey: "onboarded") }
+    }
+
     /// Extra instructions per bundle ID.
     var appInstructions: [String: String] {
         get { d.dictionary(forKey: "appInstructions") as? [String: String] ?? [:] }
@@ -89,6 +116,31 @@ final class AppSettings {
     }
 }
 
+/// Generic-password items for this app in the login Keychain.
+enum Keychain {
+    private static let service = "dev.foretype.Foretype"
+
+    static func get(_ account: String) -> Data? {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                kSecAttrAccount as String: account, kSecReturnData as String: true]
+        var out: CFTypeRef?
+        return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
+    }
+
+    @discardableResult
+    static func set(_ account: String, _ data: Data?, label: String) -> Bool {
+        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                                kSecAttrAccount as String: account]
+        SecItemDelete(q as CFDictionary)
+        guard let data, !data.isEmpty else { return true }
+        var add = q
+        add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        add[kSecAttrLabel as String] = label
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+}
+
 /// The personalization history's location and its encryption key, kept in the Keychain.
 /// The key is only created or read when personalization is on.
 enum HistoryStore {
@@ -97,25 +149,14 @@ enum HistoryStore {
             .appendingPathComponent("Foretype/history.bin").path
     }
 
-    private static let service = "dev.foretype.Foretype"
-    private static let account = "history-key"
-
     /// The 256-bit key as hex, created on first use.
     static func keyHex() -> String? {
-        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                    kSecAttrAccount as String: account, kSecReturnData as String: true]
-        var out: CFTypeRef?
-        if SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess, let data = out as? Data, data.count == 32 {
+        if let data = Keychain.get("history-key"), data.count == 32 {
             return data.map { String(format: "%02x", $0) }.joined()
         }
         var key = Data(count: 32)
         let ok = key.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) } == errSecSuccess
-        guard ok else { return nil }
-        let add: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                  kSecAttrAccount as String: account, kSecValueData as String: key,
-                                  kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
-                                  kSecAttrLabel as String: "Foretype writing history key"]
-        guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else { return nil }
+        guard ok, Keychain.set("history-key", key, label: "Foretype writing history key") else { return nil }
         return key.map { String(format: "%02x", $0) }.joined()
     }
 }
@@ -123,17 +164,19 @@ enum HistoryStore {
 /// Finds a GGUF model: $FORETYPE_MODEL, the saved path, then
 /// ~/Library/Application Support/Foretype/Models (preferring the 1.7B default tier).
 enum ModelLocator {
+    /// FORETYPE_MODELS_DIR overrides the location (tests).
     static var modelsDir: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        if let dir = ProcessInfo.processInfo.environment["FORETYPE_MODELS_DIR"] { return URL(fileURLWithPath: dir) }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Foretype/Models")
     }
 
-    static func find(settings: AppSettings) -> String? {
+    static func find(settings: AppSettings, recommendedFile: String? = nil) -> String? {
         let fm = FileManager.default
         if let env = ProcessInfo.processInfo.environment["FORETYPE_MODEL"], fm.fileExists(atPath: env) { return env }
         if let saved = settings.modelPath, fm.fileExists(atPath: saved) { return saved }
         let files = ((try? fm.contentsOfDirectory(atPath: modelsDir.path)) ?? []).filter { $0.hasSuffix(".gguf") }.sorted()
-        let pick = files.first { $0.contains("1.7B") } ?? files.first
+        let pick = files.first { $0 == recommendedFile } ?? files.first
         return pick.map { modelsDir.appendingPathComponent($0).path }
     }
 }

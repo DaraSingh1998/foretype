@@ -35,6 +35,9 @@ int64_t ft_engine_import_history(FtEngine *engine, const char *items_json);
 bool ft_engine_open_history(FtEngine *engine, const char *path, const char *key_hex);
 char *ft_engine_compat_rule(FtEngine *engine, const char *bundle_id);
 
+/// Downloadable models for a machine with ram_gb of memory (JSON array, "recommended" set).
+char *ft_model_catalog(uint32_t ram_gb);
+
 void ft_string_free(char *s);
 
 #ifdef __cplusplus

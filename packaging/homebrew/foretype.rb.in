@@ -1,0 +1,21 @@
+# Homebrew cask template; scripts/package-mac.sh fills in the version and checksum
+# (build/foretype.rb). Replace OWNER with the GitHub account that hosts the releases.
+cask "foretype" do
+  version "@VERSION@"
+  sha256 "@SHA256@"
+
+  url "https://github.com/OWNER/foretype/releases/download/v#{version}/Foretype-#{version}.dmg"
+  name "Foretype"
+  desc "On-device inline autocomplete for every app"
+  homepage "https://github.com/OWNER/foretype"
+
+  depends_on macos: ">= :sonoma"
+  depends_on arch: :arm64
+
+  app "Foretype.app"
+
+  zap trash: [
+    "~/Library/Application Support/Foretype",
+    "~/Library/Preferences/dev.foretype.Foretype.plist",
+  ]
+end

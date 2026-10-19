@@ -7,10 +7,12 @@
 //! It emits suggestion *state*, never pixels, so the same engine can sit behind an overlay
 //! (macOS), a TSF text service (Windows) or an Fcitx5/IBus preedit (Linux).
 
+pub mod backend;
 pub mod context;
 pub mod engine;
 pub mod ffi;
 pub mod history;
+pub mod models;
 pub mod policy;
 pub mod profile;
 pub mod session;
@@ -153,6 +155,12 @@ pub struct CoreConfig {
     pub history_path: String,
     /// 256-bit key as 64 hex characters, kept by the shell in the platform keystore.
     pub history_key_hex: String,
+    /// "local" (in-process llama.cpp, default), "llama-server" or "openai".
+    pub backend: String,
+    pub backend_url: String,
+    /// Model name for OpenAI-compatible servers.
+    pub backend_model: String,
+    pub backend_api_key: String,
 }
 
 impl Default for CoreConfig {
@@ -166,6 +174,10 @@ impl Default for CoreConfig {
             settings: Settings::default(),
             history_path: String::new(),
             history_key_hex: String::new(),
+            backend: "local".into(),
+            backend_url: String::new(),
+            backend_model: String::new(),
+            backend_api_key: String::new(),
         }
     }
 }
@@ -283,10 +295,16 @@ impl Core {
             n_threads: config.n_threads,
             ..EngineConfig::default()
         };
+        let remote = (config.backend != "local" && !config.backend.is_empty()).then(|| RemoteConfig {
+            kind: config.backend.clone(),
+            url: config.backend_url.clone(),
+            model: config.backend_model.clone(),
+            api_key: config.backend_api_key.clone(),
+        });
         let worker_shared = shared.clone();
         let worker = std::thread::Builder::new()
             .name("foretype.engine".into())
-            .spawn(move || worker_loop(worker_shared, engine_cfg))
+            .spawn(move || worker_loop(worker_shared, engine_cfg, remote))
             .expect("spawn engine thread");
         Self { shared, worker: Some(worker) }
     }
@@ -567,8 +585,59 @@ fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String]) -> Pr
     )
 }
 
-fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
-    let load = |shared: &Shared| -> Option<Engine> {
+struct RemoteConfig {
+    kind: String,
+    url: String,
+    model: String,
+    api_key: String,
+}
+
+/// Where completions come from: the in-process engine or a user-supplied server.
+enum Runner {
+    Local(Engine),
+    Remote(backend::HttpBackend),
+}
+
+impl Runner {
+    fn warm(&mut self, prefix: &str, cancel: &dyn Fn() -> bool) -> Result<usize, GenError> {
+        match self {
+            Runner::Local(e) => e.warm(prefix, cancel),
+            Runner::Remote(b) => b.warm(prefix),
+        }
+    }
+
+    fn complete(&mut self, prompt: &Prompt, opts: &GenOptions, cancel: &dyn Fn() -> bool) -> Result<engine::Completion, GenError> {
+        match self {
+            Runner::Local(e) => e.complete(prompt, opts, cancel),
+            Runner::Remote(b) => b.complete(prompt, opts, cancel),
+        }
+    }
+
+    fn set_vocabulary(&mut self, words: &[(String, f32)]) {
+        if let Runner::Local(e) = self {
+            e.set_vocabulary(words);
+        }
+    }
+
+    fn is_local(&self) -> bool {
+        matches!(self, Runner::Local(_))
+    }
+}
+
+fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConfig>) {
+    let load = |shared: &Shared| -> Option<Runner> {
+        if let Some(r) = &remote {
+            return match backend::HttpBackend::new(&r.kind, &r.url, &r.model, &r.api_key) {
+                Ok(b) => {
+                    (shared.sink)(&Event::Status { state: "ready", detail: b.describe() });
+                    Some(Runner::Remote(b))
+                }
+                Err(err) => {
+                    (shared.sink)(&Event::Status { state: "error", detail: err });
+                    None
+                }
+            };
+        }
         (shared.sink)(&Event::Status { state: "loading", detail: cfg.model_path.clone() });
         let t = Instant::now();
         match Engine::load(&cfg) {
@@ -577,7 +646,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                     state: "ready",
                     detail: format!("loaded in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0),
                 });
-                Some(e)
+                Some(Runner::Local(e))
             }
             Err(err) => {
                 (shared.sink)(&Event::Status { state: "error", detail: err });
@@ -602,7 +671,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                 }
                 // Idle: free the model's memory (Cotypist does the same) until needed again.
                 let unload_after = shared.settings.read().unwrap().unload_after_s;
-                if engine_slot.is_some() && unload_after > 0 && last_used.elapsed() >= Duration::from_secs(unload_after) {
+                let local = engine_slot.as_ref().is_some_and(Runner::is_local);
+                if local && unload_after > 0 && last_used.elapsed() >= Duration::from_secs(unload_after) {
                     drop(pending);
                     engine_slot = None;
                     applied_gen = 0;
@@ -610,7 +680,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig) {
                     pending = shared.pending.lock().unwrap();
                     continue;
                 }
-                let timeout = if engine_slot.is_some() && unload_after > 0 {
+                let timeout = if local && unload_after > 0 {
                     Duration::from_secs(unload_after).saturating_sub(last_used.elapsed()).max(Duration::from_millis(50))
                 } else {
                     Duration::from_secs(3600)

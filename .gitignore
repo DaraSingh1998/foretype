@@ -3,3 +3,4 @@ mac/.build/
 build/
 *.gguf
 .DS_Store
+mac/.build-sparkle/

@@ -194,3 +194,11 @@ pub unsafe extern "C" fn ft_engine_open_history(engine: *mut FtEngine, path: *co
     let (Some(e), Some(p), Some(k)) = (engine.as_ref(), read_str(path), read_str(key_hex)) else { return false };
     e.core.open_history(p, k)
 }
+
+/// The downloadable model catalog for a machine with `ram_gb` of memory, as a JSON array
+/// (`id`, `name`, `tier`, `file`, `url`, `sha256`, `bytes`, `min_ram_gb`, `license`,
+/// `recommended`). Needs no engine.
+#[no_mangle]
+pub extern "C" fn ft_model_catalog(ram_gb: u32) -> *mut c_char {
+    to_c(serde_json::to_string(&crate::models::catalog(ram_gb)).unwrap_or_else(|_| "[]".into()))
+}

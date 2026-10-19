@@ -3,7 +3,13 @@ import AppKit
 /// Wires the pieces together:
 /// FocusTracker (AX thread) -> core -> events (main) -> GhostPanel + KeyTap -> Inserter.
 final class Controller {
-    let engine: EngineBridge
+    private var _engine: EngineBridge
+    private let engineLock = NSLock()
+    /// The current engine; replaced when the user switches model or server.
+    var engine: EngineBridge {
+        engineLock.lock(); defer { engineLock.unlock() }
+        return _engine
+    }
     let settings: AppSettings
     let tracker = FocusTracker()
     let keys = KeyTap()
@@ -26,14 +32,28 @@ final class Controller {
     private var latest = FieldSnapshot()
 
     init(engine: EngineBridge, settings: AppSettings) {
-        self.engine = engine
+        _engine = engine
         self.settings = settings
+    }
+
+    /// Swaps in a new engine (model or server changed) without restarting capture.
+    func replaceEngine(_ new: EngineBridge) {
+        new.onEvent = { [weak self] ev in DispatchQueue.main.async { self?.handle(ev) } }
+        engineLock.lock()
+        let old = _engine
+        _engine = new
+        engineLock.unlock()
+        lock.lock(); rules.removeAll(); lock.unlock()
+        old.onEvent = nil
+        new.configure(coreSettingsJSON())
+        hide()
+        DispatchQueue.global(qos: .utility).async { old.shutdown() }
     }
 
     /// Returns false if the event taps could not be created (no Accessibility grant).
     func start() -> Bool {
         engine.onEvent = { [weak self] ev in DispatchQueue.main.async { self?.handle(ev) } }
-        tracker.primeKind = { [weak engine] bundle in engine?.compatRule(bundle)["prime"] as? String }
+        tracker.primeKind = { [weak self] bundle in self?.engine.compatRule(bundle)["prime"] as? String }
         tracker.onlyApps = Set(settings.onlyApps)
         tracker.onSnapshot = { [weak self] snap in self?.arrived(snap) }
         tracker.onFocusChange = { [weak self] snap in self?.engine.warm(snap) }

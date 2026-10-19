@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  macos:
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      EVAL_MODEL: Qwen3-0.6B-Base.Q8_0.gguf
+      EVAL_MODEL_SHA256: 4b088f1793f6cba9f0c2f77ab835ef6734f205c2159168698c6e1a51b7df168a
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          rustup show
+          brew list cmake >/dev/null 2>&1 || brew install cmake
+
+      - name: Core unit tests
+        run: cargo test --release --manifest-path core/Cargo.toml
+
+      - name: Build app
+        run: scripts/build-mac.sh
+
+      - name: App self-tests (no permissions needed)
+        run: |
+          mac/.build/release/Foretype --font-selftest
+          mac/.build/release/Foretype --ocr-selftest
+
+      - name: Cache eval model
+        uses: actions/cache@v4
+        with:
+          path: models-cache
+          key: eval-model-${{ env.EVAL_MODEL_SHA256 }}
+
+      - name: Fetch eval model (pinned sha256)
+        run: |
+          mkdir -p models-cache
+          f="models-cache/$EVAL_MODEL"
+          [ -f "$f" ] || curl -fL --retry 3 -o "$f" "https://huggingface.co/mradermacher/Qwen3-0.6B-Base-GGUF/resolve/main/$EVAL_MODEL"
+          echo "$EVAL_MODEL_SHA256  $f" | shasum -a 256 -c
+
+      - name: Replay evaluation (self-written documents, CPU)
+        run: |
+          cargo build --release --bins --manifest-path core/Cargo.toml
+          core/target/release/ft-replay "models-cache/$EVAL_MODEL" --corpus eval/corpus.jsonl --only sw- --cpu | tee eval-results.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: eval-results.txt

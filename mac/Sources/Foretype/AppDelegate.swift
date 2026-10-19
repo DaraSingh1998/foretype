@@ -12,6 +12,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var trustTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private var instructionsWindow: InstructionsWindowController?
+    private var onboarding: OnboardingWindowController?
+    private let models = ModelManager()
+    private var updater: UpdateController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -33,20 +36,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         installSignalHandlers()
+        models.onChange = { [weak self] _, _ in self?.onboarding?.refresh() }
+        updater = UpdateController()
 
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        if AXIsProcessTrustedWithOptions(options) {
-            startEngine()
+        // The setup window opens when something is missing, and on the bundled app's first
+        // run. A dev binary started from a terminal with everything in place skips it.
+        let ready = AXIsProcessTrusted() && modelReady
+        if !ready || (!settings.onboarded && Bundle.main.bundleIdentifier != nil) {
+            engineState = "setup"
+            engineDetail = "Finish setup to start"
+            showOnboarding()
         } else {
-            engineState = "waiting"
-            engineDetail = "Grant Accessibility in System Settings"
-            trustTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] t in
-                if AXIsProcessTrusted() {
-                    t.invalidate()
-                    self?.startEngine()
-                }
-            }
+            startEngine()
         }
+    }
+
+    private var modelReady: Bool {
+        settings.backend != "local" || ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) != nil
+    }
+
+    private func showOnboarding() {
+        let w = onboarding ?? OnboardingWindowController(models: models, settings: settings)
+        w.onReady = { [weak self] in self?.startEngine() }
+        onboarding = w
+        w.show()
     }
 
     /// Ctrl-C / kill from a terminal should still restore Chromium flags and free Metal.
@@ -60,14 +73,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Starts the engine, or swaps a new one into the running controller (model or server
+    /// changed).
     private func startEngine() {
-        guard let model = ModelLocator.find(settings: settings) else {
-            engineState = "error"
-            engineDetail = "No model: put a .gguf in \(ModelLocator.modelsDir.path) or set FORETYPE_MODEL"
-            Log.debug(engineDetail)
+        guard AXIsProcessTrusted() else {
+            engineState = "waiting"
+            engineDetail = "Grant Accessibility in System Settings"
             return
         }
-        var config: [String: Any] = ["model_path": model, "settings": settings.coreDict]
+        var config: [String: Any] = ["settings": settings.coreDict]
+        var label: String
+        if settings.backend == "local" {
+            guard let model = ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) else {
+                engineState = "error"
+                engineDetail = "No model yet: open Setup\u{2026} to download one"
+                showOnboarding()
+                return
+            }
+            config["model_path"] = model
+            label = URL(fileURLWithPath: model).lastPathComponent
+        } else {
+            config["backend"] = settings.backend
+            config["backend_url"] = settings.backendURL
+            config["backend_model"] = settings.backendModel
+            config["backend_api_key"] = settings.backendAPIKey
+            label = settings.backendURL
+        }
         if settings.personalize, let key = HistoryStore.keyHex() {
             config["history_path"] = HistoryStore.path
             config["history_key_hex"] = key
@@ -85,16 +116,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings.askedForScreenRecording = true
             CGRequestScreenCaptureAccess()
         }
+        if let c = controller {
+            c.onStatus = { [weak self] state, detail in
+                self?.engineState = state
+                self?.engineDetail = state == "ready" ? label : detail
+            }
+            c.replaceEngine(engine)
+            return
+        }
         let c = Controller(engine: engine, settings: settings)
         c.onStatus = { [weak self] state, detail in
             self?.engineState = state
-            self?.engineDetail = state == "ready" ? URL(fileURLWithPath: model).lastPathComponent : detail
+            self?.engineDetail = state == "ready" ? label : detail
         }
         if !c.start() {
             engineState = "error"
             engineDetail = "Could not create event taps (Accessibility permission?)"
         }
         controller = c
+    }
+
+    private func useModel(_ m: ModelInfo) {
+        settings.modelPath = models.path(m)
+        settings.backend = "local"
+        startEngine()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -197,6 +242,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(instr)
         menu.addItem(.separator())
 
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        let mm = NSMenu()
+        let active = settings.backend == "local" ? ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) : nil
+        for m in models.catalog {
+            var title = "\(m.name) \u{2014} \(m.sizeText)"
+            if m.recommended { title += " (recommended)" }
+            switch models.states[m.id] ?? .notInstalled {
+            case let .downloading(p): title += String(format: " \u{2014} downloading %.0f%%, click to cancel", p * 100)
+            case .verifying: title += " \u{2014} verifying\u{2026}"
+            case .notInstalled, .failed: title += " \u{2014} download"
+            case .installed: break
+            }
+            let item = NSMenuItem(title: title, action: #selector(modelChosen(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = m.id
+            item.state = active == models.path(m) ? .on : .off
+            mm.addItem(item)
+        }
+        mm.addItem(.separator())
+        let server = NSMenuItem(title: "Use a Server Instead\u{2026}", action: #selector(configureServer), keyEquivalent: "")
+        server.target = self
+        server.state = settings.backend == "local" ? .off : .on
+        mm.addItem(server)
+        let folder = NSMenuItem(title: "Show Models Folder", action: #selector(showModelsFolder), keyEquivalent: "")
+        folder.target = self
+        mm.addItem(folder)
+        modelItem.submenu = mm
+        menu.addItem(modelItem)
+        let setup = NSMenuItem(title: "Setup\u{2026}", action: #selector(openSetup), keyEquivalent: "")
+        setup.target = self
+        menu.addItem(setup)
+        if let updater, updater.isConfigured {
+            let check = NSMenuItem(title: "Check for Updates\u{2026}", action: #selector(checkForUpdates), keyEquivalent: "")
+            check.target = self
+            menu.addItem(check)
+        }
+        menu.addItem(.separator())
+
         if !AXIsProcessTrusted() {
             let item = NSMenuItem(title: "Open Accessibility Settings\u{2026}", action: #selector(openAccessibility), keyEquivalent: "")
             item.target = self
@@ -228,6 +311,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings.disabledApps = list
         }
         controller?.applySettings()
+    }
+
+    @objc private func modelChosen(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let m = models.catalog.first(where: { $0.id == id }) else { return }
+        switch models.states[m.id] ?? .notInstalled {
+        case .installed:
+            useModel(m)
+        case .downloading:
+            models.cancel(m)
+        case .verifying:
+            break
+        case .notInstalled, .failed:
+            models.download(m) { [weak self] result in
+                if case .success = result { self?.useModel(m) }
+            }
+        }
+    }
+
+    @objc private func showModelsFolder() {
+        try? FileManager.default.createDirectory(at: ModelLocator.modelsDir, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(ModelLocator.modelsDir)
+    }
+
+    @objc private func openSetup() {
+        showOnboarding()
+    }
+
+    @objc private func checkForUpdates() {
+        updater?.checkForUpdates()
+    }
+
+    /// Bring-your-own server: llama-server (best: grammar-based token healing) or any
+    /// OpenAI-compatible completions endpoint (Ollama, LM Studio, a cloud provider).
+    @objc private func configureServer() {
+        NSApp.activate(ignoringOtherApps: true)
+        let kind = NSPopUpButton()
+        kind.addItems(withTitles: ["Built-in (on this Mac)", "llama.cpp llama-server", "OpenAI-compatible (Ollama, LM Studio, ...)"])
+        kind.selectItem(at: ["local", "llama-server", "openai"].firstIndex(of: settings.backend) ?? 0)
+        let url = NSTextField(string: settings.backendURL)
+        url.placeholderString = "http://127.0.0.1:8080"
+        let model = NSTextField(string: settings.backendModel)
+        model.placeholderString = "model name (OpenAI-compatible only)"
+        let key = NSSecureTextField(string: "")
+        key.placeholderString = settings.backendAPIKey.isEmpty ? "API key (optional)" : "API key saved; type to replace"
+        let stack = NSStackView(views: [kind, url, model, key])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 6
+        for f in [url, model, key] { f.widthAnchor.constraint(equalToConstant: 340).isActive = true }
+        stack.frame = NSRect(x: 0, y: 0, width: 340, height: 118)
+        let alert = NSAlert()
+        alert.messageText = "Where should suggestions come from?"
+        alert.informativeText = "A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers work too, but complete words you have started less well (about half the typing saved). The API key is stored in your Keychain."
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        settings.backend = ["local", "llama-server", "openai"][max(0, kind.indexOfSelectedItem)]
+        settings.backendURL = url.stringValue.trimmingCharacters(in: .whitespaces)
+        settings.backendModel = model.stringValue.trimmingCharacters(in: .whitespaces)
+        if !key.stringValue.isEmpty { settings.backendAPIKey = key.stringValue }
+        startEngine()
     }
 
     @objc private func togglePersonalize() {

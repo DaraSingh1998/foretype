@@ -4,7 +4,7 @@ Free, open-source, on-device inline autocomplete for every app: gray "ghost text
 your caret, Tab to take the next word, the key above Tab to take all of it. A Cotypist-style
 tool built so the engine can be shared across macOS, Windows and Linux.
 
-Status: **Phase 3 (quality and personalization), macOS only.** Works end to end with a local Qwen3 base
+Status: **Phase 4 (packaging), macOS only.** Works end to end with a local Qwen3 base
 model in every app except those off by default (code editors, password managers, remote
 desktops, spreadsheets). In Terminal and iTerm it suggests only on AI-agent prompts (Claude
 Code, Codex, ...). Not packaged or notarized yet.
@@ -108,23 +108,58 @@ Measured with `ft-replay` on an M3 Pro (Qwen3-1.7B-Base Q4_K_M, sample email):
 41–44% of keystrokes saved, 3.5–3.7 characters per Tab, model suggestions p50 74–85 ms and
 p90 106–119 ms, 1 token prefilled per keystroke (p50).
 
+## Install
+
+- **DMG:** download `Foretype-<version>.dmg` from the releases page, drag Foretype to
+  Applications, open it. (Release builds are signed and notarized; see `RELEASING.md`.)
+- **Homebrew:** `brew install --cask foretype` once the cask is published.
+- **From source:** see Build below.
+
+Requirements: Apple Silicon, macOS 14 (Sonoma) or later, 8 GB of RAM (16 GB recommended).
+
+On first launch a setup window walks through Accessibility (required), Screen Recording
+(optional, for screen context) and the model download. Updates arrive through Sparkle in
+release builds (menu: Check for Updates…).
+
+### Models
+
+The menu's **Model** submenu lists the catalog (`models/catalog.json`, shared by every
+shell): Qwen3 base models in three tiers, each pinned to a SHA-256 and verified after
+download (interrupted downloads resume; a mismatch is discarded).
+
+| Model | Size | Picked for |
+|---|---|---|
+| Qwen3 0.6B Base Q8_0 | 0.6 GB | under 12 GB of RAM |
+| Qwen3 1.7B Base Q4_K_M | 1.1 GB | 12 GB and up (default) |
+| Qwen3 4B Base Q4_K_M | 2.5 GB | opt-in on 16 GB+ (about twice the latency) |
+
+**Use a Server Instead…** points Foretype at your own inference server:
+
+- a llama.cpp `llama-server`: same suggestions as the built-in engine (token healing via a
+  GBNF grammar); measured 40.7% keystrokes saved, the same as built-in, at p50 130–147 ms
+  over HTTP against 79 ms in-process;
+- any OpenAI-compatible completions endpoint (Ollama, LM Studio, a cloud provider): works,
+  but with no grammar it completes half-typed words less well (20% saved on the same text).
+  An API key, if any, is kept in the Keychain.
+
 ## Build
 
-Requirements: Apple Silicon, macOS 14+, Xcode command-line tools, Rust (`brew install rust cmake`).
+Requirements: Xcode command-line tools, Rust (`brew install rust cmake`).
 
 ```bash
-scripts/build-mac.sh
+scripts/build-mac.sh          # build/Foretype.app (ad-hoc signed unless FORETYPE_SIGN_IDENTITY is set)
+scripts/package-mac.sh        # build/Foretype-<version>.dmg, plus notarization, appcast item and cask when configured
 ```
 
-This builds `core` (with Metal), the Swift shell, and `build/Foretype.app` (ad-hoc signed
-unless `FORETYPE_SIGN_IDENTITY` is set).
+`FORETYPE_SPARKLE=1` adds the Sparkle updater (fetched by SwiftPM); see `RELEASING.md` for
+signing, notarization and Sparkle keys.
 
 ## Run
 
-Put a GGUF base model in `~/Library/Application Support/Foretype/Models/` (default tier:
-`Qwen3-1.7B-Base.Q4_K_M.gguf`), or set `FORETYPE_MODEL=/path/to/model.gguf`. Open
-`build/Foretype.app` and grant Accessibility when asked. The menu-bar icon has the on/off
-switch, the suggestion length and a per-app toggle.
+From source: put a GGUF base model in `~/Library/Application Support/Foretype/Models/` or
+set `FORETYPE_MODEL=/path/to/model.gguf`, open `build/Foretype.app` and grant Accessibility
+when asked. The menu-bar icon has the on/off switch, suggestion length, per-app toggle,
+personalization, custom instructions, model and setup.
 
 | Key | Action |
 |---|---|
@@ -170,7 +205,12 @@ switch, the suggestion length and a per-app toggle.
 - `FORETYPE_ONLY_APPS=bundle.id,...` restricts reading and suggestions to those apps. Use
   it whenever you run a dev build on a machine you are also working on.
 - `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly;
-  `Foretype --font-selftest` checks the width-based font matcher (no permissions needed). `ft-replay ... --screen FILE` adds screen text to a replay.
+  `Foretype --font-selftest` checks the width-based font matcher (no permissions needed).
+  `Foretype --download-selftest MODEL_ID` downloads and verifies one catalog model
+  (`FORETYPE_MODEL_BASE_URL` and `FORETYPE_MODELS_DIR` point it at a local server and a
+  scratch folder).
+- CI (`.github/workflows/ci.yml`) runs the unit tests, builds the app, runs the self-tests
+  and replays the self-written corpus documents with the 0.6B model on CPU. `ft-replay ... --screen FILE` adds screen text to a replay.
 - **Accessibility grants and ad-hoc signing:** macOS ties the grant to the exact build, so
   every rebuild of an ad-hoc-signed `Foretype.app` needs the Accessibility entry removed
   and re-added. Sign with a stable identity (`FORETYPE_SIGN_IDENTITY`) to avoid that. A
@@ -188,7 +228,12 @@ switch, the suggestion length and a per-app toggle.
 - No model download UI, autocorrect, emoji, phrase beam search or Gemma 4 support yet.
 - The personalization menu and the Custom Instructions window have not been exercised in
   the automated tests; the recorder, history and bias are covered by unit tests and replays.
-- Not notarized; no Sparkle updates yet.
+- Notarization and the Sparkle feed are wired up but have not been exercised: they need a
+  Developer ID certificate, notary credentials and Sparkle keys (`RELEASING.md`). The
+  release workflow is an untested template.
+- The setup window, Model menu and server dialog have not been exercised in the automated
+  tests; the downloader is covered by `--download-selftest` and the server backends by
+  replays against a local llama-server.
 
 ## Licensing
 

@@ -84,6 +84,34 @@ pub fn drop_partial_last_word(s: &str) -> &str {
     }
 }
 
+/// Cuts a raw continuation to at most `max_words` words, at the first sentence end when
+/// `stop_at_sentence` is set, and without a trailing word that `truncated` generation may
+/// have cut off.
+pub fn limit(s: &str, max_words: usize, stop_at_sentence: bool, truncated: bool) -> String {
+    let mut cut = take_words(s, max_words.max(1));
+    let complete = cut.len() < s.len();
+    if stop_at_sentence {
+        let mut end = 0;
+        let mut in_word = false;
+        for (i, c) in cut.char_indices() {
+            if c.is_whitespace() {
+                if in_word && ends_sentence(&cut[..i]) {
+                    end = i;
+                    break;
+                }
+                in_word = false;
+            } else {
+                in_word = true;
+            }
+        }
+        if end > 0 {
+            cut = &cut[..end];
+        }
+    }
+    let cut = if truncated && !complete { drop_partial_last_word(cut) } else { cut };
+    cut.trim_end().to_string()
+}
+
 /// True when `s` ends a sentence.
 pub fn ends_sentence(s: &str) -> bool {
     let t = s.trim_end_matches(['"', '\u{201D}', ')', '\'']);
@@ -130,5 +158,9 @@ mod tests {
         assert!(ends_sentence(" see you then."));
         assert!(ends_sentence(" really?\""));
         assert!(!ends_sentence(" e.g"));
+        assert_eq!(limit(" do the first part of it", 4, true, false), " do the first part");
+        assert_eq!(limit("tes. Then we go on", 4, true, false), "tes.");
+        assert_eq!(limit(" the reconcil", 4, true, true), " the");
+        assert_eq!(limit(" one two three four five", 4, true, true), " one two three four");
     }
 }

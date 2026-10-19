@@ -4,7 +4,8 @@
 //! The simulated user types one character at a time and presses Tab (accept next word)
 //! whenever the visible suggestion's next word is exactly what they were about to type.
 //!
-//! usage:
+//! --cpu runs without Metal offload.
+//! usage (MODEL may be "-" with --backend llama-server|openai --url URL [--remote-model NAME]):
 //!   ft-replay MODEL TEXT_FILE [--prime N] [--chars N] [--words N] [--app NAME] [--screen FILE] [-v]
 //!   ft-replay MODEL --corpus CORPUS.jsonl [--words N] [--no-prefetch] [--only PREFIX] [--think MS]
 //!       --think: simulated reaction time between seeing a suggestion and the next key
@@ -80,8 +81,21 @@ struct Replayer {
 impl Replayer {
     fn new(model: &str, settings: Settings, verbose: bool) -> Self {
         let (tx, rx) = mpsc::channel::<Event>();
+        let arg = |name: &str| {
+            let args: Vec<String> = std::env::args().collect();
+            args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+        };
         let core = Core::new(
-            CoreConfig { model_path: model.to_string(), settings, ..CoreConfig::default() },
+            CoreConfig {
+                model_path: model.to_string(),
+                settings,
+                backend: arg("--backend").unwrap_or_else(|| "local".into()),
+                backend_url: arg("--url").unwrap_or_default(),
+                backend_model: arg("--remote-model").unwrap_or_default(),
+                // --cpu: no Metal offload (CI runners may have no usable GPU).
+                n_gpu_layers: if std::env::args().any(|a| a == "--cpu") { 0 } else { CoreConfig::default().n_gpu_layers },
+                ..CoreConfig::default()
+            },
             Box::new(move |ev: &Event| {
                 let _ = tx.send(ev.clone());
             }),

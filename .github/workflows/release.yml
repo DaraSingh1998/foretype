@@ -1,0 +1,74 @@
+# Builds, signs, notarizes and publishes a release when a v* tag is pushed.
+# Untested template: needs the repository secrets listed below (see RELEASING.md).
+#   DEVELOPER_ID_P12            base64 of the "Developer ID Application" certificate (.p12)
+#   DEVELOPER_ID_P12_PASSWORD
+#   DEVELOPER_ID_NAME           e.g. "Developer ID Application: Jane Doe (TEAMID1234)"
+#   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_APP_PASSWORD   (app-specific password)
+#   SPARKLE_PRIVATE_KEY         from Sparkle's generate_keys -x
+#   SPARKLE_PUBLIC_KEY          from Sparkle's generate_keys -p
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "14.0"
+      SPARKLE_VERSION: "2.10.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          KC="$RUNNER_TEMP/release.keychain-db"
+          security create-keychain -p "" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "" "$KC"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KC"
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+
+      - name: Notary credentials
+        run: |
+          xcrun notarytool store-credentials foretype-notary \
+            --apple-id "${{ secrets.NOTARY_APPLE_ID }}" --team-id "${{ secrets.NOTARY_TEAM_ID }}" \
+            --password "${{ secrets.NOTARY_APP_PASSWORD }}" --keychain "$RUNNER_TEMP/release.keychain-db"
+
+      - name: Sparkle tools
+        run: |
+          curl -fL -o "$RUNNER_TEMP/sparkle.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
+          mkdir -p "$RUNNER_TEMP/sparkle" && tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
+          echo "${{ secrets.SPARKLE_PRIVATE_KEY }}" > "$RUNNER_TEMP/sparkle_key"
+
+      - name: Build, sign, notarize
+        env:
+          FORETYPE_VERSION: ${{ github.ref_name }}
+          FORETYPE_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_NAME }}
+          FORETYPE_NOTARY_PROFILE: foretype-notary
+          FORETYPE_SPARKLE: "1"
+          FORETYPE_FEED_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/appcast.xml
+          FORETYPE_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+        run: |
+          export FORETYPE_VERSION="${FORETYPE_VERSION#v}"
+          scripts/package-mac.sh
+          "$RUNNER_TEMP/sparkle/bin/sign_update" --ed-key-file "$RUNNER_TEMP/sparkle_key" build/Foretype-*.dmg > build/sparkle-signature.txt
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" build/Foretype-*.dmg build/Foretype-*.dmg.sha256 build/foretype.rb \
+            --title "Foretype ${{ github.ref_name }}" --generate-notes
+          echo "Add this enclosure signature to appcast.xml (gh-pages): $(cat build/sparkle-signature.txt)"
