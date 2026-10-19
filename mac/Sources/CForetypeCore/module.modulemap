@@ -1,0 +1,4 @@
+module CForetypeCore {
+    header "../../../core/include/foretype_core.h"
+    export *
+}

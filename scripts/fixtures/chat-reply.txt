@@ -1,0 +1,1 @@
+Hi Priya, yes, I read the planning notes from Tuesday. I will send the migration timeline before Thursday's review. I think your team should own the reconciliation report, and I will ask for read access to the staging tables for the two contractors before Monday.

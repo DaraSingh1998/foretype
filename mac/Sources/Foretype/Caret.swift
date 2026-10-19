@@ -1,0 +1,106 @@
+import AppKit
+import ApplicationServices
+
+/// Caret rectangle in AX coordinates (top-left origin) plus how it was found.
+struct CaretInfo {
+    var rect: CGRect
+    var strategy: String
+}
+
+/// Finds a trustworthy caret rectangle. `AXBoundsForRange` with a zero-length range is
+/// wrong in many apps: Phase 0 measured it one line too high in every TextKit field
+/// (TextEdit, Safari's address bar), so both the zero-length rect and the previous
+/// character's trailing edge are read and checked against each other.
+/// Used on the AX thread only.
+enum CaretResolver {
+    /// Vertical correction learned per app when the two strategies disagreed by a line.
+    private static var zeroLengthOffset: [String: CGFloat] = [:]
+
+    static func plausible(_ r: CGRect?, frame: CGRect?, singleChar: Bool) -> Bool {
+        guard let r else { return false }
+        if r.origin == .zero || r.height <= 0 || r.height > 200 { return false }
+        if let f = frame, f.width > 0 {
+            if abs(r.minX - f.minX) < 1, abs(r.minY - f.minY) < 1,
+               abs(r.width - f.width) < 1, abs(r.height - f.height) < 1 {
+                return false
+            }
+            if !f.insetBy(dx: -4, dy: -4).contains(CGPoint(x: r.minX, y: r.midY)) { return false }
+        }
+        if singleChar, r.width > max(4 * r.height, 60) { return false }
+        let screens = displayBounds()
+        if !screens.isEmpty,
+           !screens.contains(where: { $0.insetBy(dx: -2, dy: -2).contains(CGPoint(x: r.minX, y: r.midY)) }) {
+            return false
+        }
+        return true
+    }
+
+    static func resolve(_ el: AXUIElement, caret: Int, frame: CGRect?, bundleId: String) -> CaretInfo? {
+        let zero = AX.bounds(el, caret, 0)
+        let zeroOK = plausible(zero, frame: frame, singleChar: false)
+
+        var edge: CGRect?
+        var prevIsNewline = false
+        if caret > 0 {
+            let prevText = AX.string(el, range: caret - 1, 1)
+            prevIsNewline = prevText.map { ["\n", "\r", "\u{2028}", "\u{2029}"].contains($0) } ?? false
+            let prev = AX.bounds(el, caret - 1, 1)
+            if !prevIsNewline, plausible(prev, frame: frame, singleChar: true), let p = prev {
+                edge = CGRect(x: p.maxX, y: p.minY, width: 0, height: p.height)
+            }
+        }
+
+        if let edge, zeroOK, let zero {
+            let dy = edge.minY - zero.minY
+            if dy > edge.height * 0.5 {
+                // Zero-length rect sits a line above the text: the TextKit bug. Learn it.
+                zeroLengthOffset[bundleId] = dy
+                return CaretInfo(rect: edge, strategy: "prevEdge(zeroHigh)")
+            }
+            if dy < -edge.height * 0.5 {
+                // Caret wrapped to a new visual line; the previous character is on the line above.
+                return CaretInfo(rect: CGRect(x: zero.minX, y: zero.minY, width: 0, height: zero.height),
+                                 strategy: "zero(wrapped)")
+            }
+            return CaretInfo(rect: edge, strategy: "prevEdge")
+        }
+        if let edge {
+            return CaretInfo(rect: edge, strategy: "prevEdge")
+        }
+        if zeroOK, var z = zero {
+            if let dy = zeroLengthOffset[bundleId] {
+                z.origin.y += dy
+                return CaretInfo(rect: z, strategy: prevIsNewline ? "zero+offset(newline)" : "zero+offset")
+            }
+            return CaretInfo(rect: z, strategy: "zero")
+        }
+        return nil
+    }
+
+    /// The host field's font, from `AXAttributedStringForRange` around the caret. Chrome
+    /// reports only a size; that falls back to the system font at that size.
+    static func font(_ el: AXUIElement, caret: Int, length: Int) -> NSFont? {
+        let loc = caret > 0 ? caret - 1 : (length > 0 ? 0 : -1)
+        guard loc >= 0,
+              let raw = AX.copyParam(el, "AXAttributedStringForRange", AX.makeRange(loc, 1)),
+              CFGetTypeID(raw) == CFAttributedStringGetTypeID() else { return nil }
+        let attributed = raw as! NSAttributedString
+        guard attributed.length > 0,
+              let dict = attributed.attributes(at: 0, effectiveRange: nil)[NSAttributedString.Key("AXFont")] as? [String: Any]
+        else { return nil }
+        let size = (dict["AXFontSize"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 13
+        if let name = dict["AXFontName"] as? String, !name.hasPrefix("."), let f = NSFont(name: name, size: size) {
+            // Word reports a fake name that disagrees with the family; trust the family then.
+            if let family = dict["AXFontFamily"] as? String, f.familyName != family,
+               let byFamily = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
+                return byFamily
+            }
+            return f
+        }
+        if let family = dict["AXFontFamily"] as? String, !family.hasPrefix("."),
+           let f = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
+            return f
+        }
+        return NSFont.systemFont(ofSize: size)
+    }
+}

@@ -1,0 +1,18 @@
+[package]
+name = "foretype-core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Portable inline-autocomplete engine: context building, llama.cpp inference with prefix-cache reuse and token healing, suggestion session state."
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+llama-cpp-2 = { version = "=0.1.160", default-features = false, features = ["metal"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+debug = 1
+lto = "thin"

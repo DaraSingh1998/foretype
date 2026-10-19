@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "license": "CC0-1.0",
+  "comment": "Per-app compatibility rules shared by every shell. Keys are bundle identifiers; 'prefixes' match bundle-ID prefixes. Fields: disabled (no suggestions by default), insertion ('keystrokes' | 'paste'), prime ('chromium' | 'electron'), note.",
+  "apps": {
+    "com.apple.Terminal": { "disabled": true, "note": "Terminal: off by default (shell prompts)." },
+    "com.googlecode.iterm2": { "disabled": true, "note": "Terminal." },
+    "dev.warp.Warp-Stable": { "disabled": true, "note": "Terminal; draws its own text." },
+    "com.mitchellh.ghostty": { "disabled": true, "note": "Terminal; draws its own text." },
+    "net.kovidgoyal.kitty": { "disabled": true, "note": "Terminal; draws its own text." },
+    "com.github.wez.wezterm": { "disabled": true, "note": "Terminal." },
+    "io.alacritty": { "disabled": true, "note": "Terminal." },
+    "com.microsoft.VSCode": { "disabled": true, "prime": "electron", "note": "Code editor; main buffer off by default." },
+    "com.todesktop.230313mzl4w4u92": { "disabled": true, "prime": "electron", "note": "Cursor; code editor." },
+    "com.exafunction.windsurf": { "disabled": true, "prime": "electron", "note": "Windsurf; code editor." },
+    "dev.zed.Zed": { "disabled": true, "note": "Draws its own text; no AX text." },
+    "com.sublimetext.4": { "disabled": true, "note": "Draws its own text." },
+    "com.apple.dt.Xcode": { "disabled": true, "note": "Code editor." },
+    "com.1password.1password": { "disabled": true, "note": "Password manager." },
+    "com.bitwarden.desktop": { "disabled": true, "prime": "electron", "note": "Password manager." },
+    "com.apple.Passwords": { "disabled": true, "note": "Password manager." },
+    "com.apple.keychainaccess": { "disabled": true, "note": "Password manager." },
+    "com.microsoft.rdc.macos": { "disabled": true, "note": "Remote desktop." },
+    "com.teamviewer.TeamViewer": { "disabled": true, "note": "Remote desktop." },
+    "com.anydesk.anydeskmacos": { "disabled": true, "note": "Remote desktop." },
+    "com.vmware.fusion": { "disabled": true, "note": "Virtual machine." },
+    "com.parallels.desktop.console": { "disabled": true, "note": "Virtual machine." },
+    "com.google.Chrome": { "prime": "chromium" },
+    "com.google.Chrome.canary": { "prime": "chromium" },
+    "com.brave.Browser": { "prime": "chromium" },
+    "com.microsoft.edgemac": { "prime": "chromium" },
+    "company.thebrowser.Browser": { "prime": "chromium", "note": "Arc: needs chrome://accessibility Text Metrics for inline caret." },
+    "com.tinyspeck.slackmacgap": { "prime": "electron" },
+    "notion.id": { "prime": "electron" },
+    "md.obsidian": { "prime": "electron" },
+    "com.hnc.Discord": { "prime": "electron" },
+    "com.microsoft.teams2": { "note": "Teams returns empty caret rects; expect mirror card." }
+  },
+  "prefixes": {
+    "com.jetbrains.": { "disabled": true, "note": "JetBrains IDEs." },
+    "com.google.android.studio": { "disabled": true, "note": "Android Studio." }
+  }
+}

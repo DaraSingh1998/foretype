@@ -1,0 +1,145 @@
+//! C ABI for native shells. All strings are UTF-8 JSON; strings returned by the core must
+//! be released with `ft_string_free`. Events are delivered on the core's own threads.
+
+use std::ffi::{c_char, c_void, CStr, CString};
+use std::ptr;
+
+use crate::session::AcceptMode;
+use crate::{Core, CoreConfig, Event, Settings, Snapshot};
+
+pub type FtEventCallback = extern "C" fn(ctx: *mut c_void, event_json: *const c_char);
+
+pub struct FtEngine {
+    core: Core,
+}
+
+struct CallbackCtx(*mut c_void);
+// SAFETY: the shell promises its context pointer may be used from any thread.
+unsafe impl Send for CallbackCtx {}
+unsafe impl Sync for CallbackCtx {}
+
+unsafe fn read_str<'a>(s: *const c_char) -> Option<&'a str> {
+    if s.is_null() {
+        return None;
+    }
+    CStr::from_ptr(s).to_str().ok()
+}
+
+fn to_c(s: String) -> *mut c_char {
+    CString::new(s).map_or(ptr::null_mut(), CString::into_raw)
+}
+
+/// Creates the engine and starts loading the model in the background. Progress arrives
+/// as `status` events. Returns null if `config_json` does not parse.
+///
+/// # Safety
+/// `config_json` must be a valid C string. `callback` must stay callable, and `ctx` valid,
+/// until `ft_engine_free` returns.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_new(
+    config_json: *const c_char,
+    callback: FtEventCallback,
+    ctx: *mut c_void,
+) -> *mut FtEngine {
+    let Some(cfg) = read_str(config_json).and_then(|s| serde_json::from_str::<CoreConfig>(s).ok()) else {
+        return ptr::null_mut();
+    };
+    let cctx = CallbackCtx(ctx);
+    let sink = Box::new(move |ev: &Event| {
+        let cctx = &cctx;
+        if let Ok(json) = serde_json::to_string(ev) {
+            if let Ok(c) = CString::new(json) {
+                callback(cctx.0, c.as_ptr());
+            }
+        }
+    });
+    Box::into_raw(Box::new(FtEngine { core: Core::new(cfg, sink) }))
+}
+
+/// # Safety
+/// `engine` must come from `ft_engine_new` and not be used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_free(engine: *mut FtEngine) {
+    if !engine.is_null() {
+        drop(Box::from_raw(engine));
+    }
+}
+
+/// # Safety
+/// `engine` must be live; `snapshot_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_submit(engine: *mut FtEngine, snapshot_json: *const c_char) {
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(snapshot_json)) else { return };
+    match serde_json::from_str::<Snapshot>(s) {
+        Ok(snap) => e.core.submit(snap),
+        Err(err) => eprintln!("[foretype] bad snapshot json: {err}"),
+    }
+}
+
+/// # Safety
+/// `engine` must be live; `snapshot_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_warm(engine: *mut FtEngine, snapshot_json: *const c_char) {
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(snapshot_json)) else { return };
+    if let Ok(snap) = serde_json::from_str::<Snapshot>(s) {
+        e.core.warm(snap);
+    }
+}
+
+/// Accepts the next word (`mode` 0) or the whole suggestion (`mode` 1). Returns
+/// `{"insert": "...", "remaining": "..."}`, or null when nothing is showing.
+///
+/// # Safety
+/// `engine` must be live.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_accept(engine: *mut FtEngine, mode: i32) -> *mut c_char {
+    let Some(e) = engine.as_ref() else { return ptr::null_mut() };
+    let mode = if mode == 1 { AcceptMode::All } else { AcceptMode::NextWord };
+    match e.core.accept(mode) {
+        Some((insert, remaining)) => to_c(serde_json::json!({ "insert": insert, "remaining": remaining }).to_string()),
+        None => ptr::null_mut(),
+    }
+}
+
+/// # Safety
+/// `engine` must be live; `text_before` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_dismiss(engine: *mut FtEngine, field_key: u64, text_before: *const c_char) {
+    let Some(e) = engine.as_ref() else { return };
+    e.core.dismiss(field_key, read_str(text_before).unwrap_or(""));
+}
+
+/// Replaces the settings. Returns false if the JSON does not parse.
+///
+/// # Safety
+/// `engine` must be live; `settings_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_configure(engine: *mut FtEngine, settings_json: *const c_char) -> bool {
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(settings_json)) else { return false };
+    match serde_json::from_str::<Settings>(s) {
+        Ok(settings) => {
+            e.core.configure(settings);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Compatibility rule for a bundle ID as JSON (`disabled`, `insertion`, `prime`, `note`).
+///
+/// # Safety
+/// `engine` must be live; `bundle_id` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_compat_rule(engine: *mut FtEngine, bundle_id: *const c_char) -> *mut c_char {
+    let (Some(e), Some(b)) = (engine.as_ref(), read_str(bundle_id)) else { return ptr::null_mut() };
+    to_c(serde_json::to_string(&e.core.compat_rule(b)).unwrap_or_else(|_| "{}".into()))
+}
+
+/// # Safety
+/// `s` must come from this library (or be null).
+#[no_mangle]
+pub unsafe extern "C" fn ft_string_free(s: *mut c_char) {
+    if !s.is_null() {
+        drop(CString::from_raw(s));
+    }
+}

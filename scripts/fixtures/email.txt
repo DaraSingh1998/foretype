@@ -1,0 +1,5 @@
+Hi Priya,
+
+Thanks for sending the notes from Tuesday's planning session. I read through them twice on the train this morning, and I think we are closer to agreement than the meeting made it feel. The main disagreement was never about whether to move the reporting pipeline off the old batch scheduler; everyone wants that. It was about how much of the migration we try to do before the quarter closes, and who carries the risk if the numbers come out wrong in the first month.
+
+My suggestion is that we split the work into two parts. The first part is the boring one: copy the existing jobs across one at a time, keep the outputs byte-for-byte identical, and run both systems side by side for two weeks. Nobody gets new features during that window, and nobody has to explain a surprising chart to the finance team. The second part starts only after the comparison reports have been clean for ten working days. That is when we turn on the incremental loads, retire the nightly full refresh, and finally delete the spreadsheet that Marco has been patching by hand since last spring.

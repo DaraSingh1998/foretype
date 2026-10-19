@@ -1,0 +1,4 @@
+Priya Shah  10:02 AM
+Morning! Did you get a chance to read the planning notes from Tuesday?
+Priya Shah  10:03 AM
+Also, can you send the migration timeline before Thursday's review? Marco keeps asking who owns the reconciliation report, and the two contractors start on Monday and still need read access to the staging tables.
