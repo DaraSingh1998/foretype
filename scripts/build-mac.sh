@@ -9,6 +9,7 @@
 #   FORETYPE_FEED_URL            Appcast URL (Info.plist SUFeedURL).
 #   FORETYPE_SPARKLE_PUBLIC_KEY  EdDSA public key from Sparkle's generate_keys (SUPublicEDKey).
 #   FORETYPE_VERSION             Marketing version (default: core/Cargo.toml version).
+#   FORETYPE_BUILD               Build number, CFBundleVersion (default: commit count).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export MACOSX_DEPLOYMENT_TARGET=14.0
@@ -27,7 +28,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
 cp "$SCRATCH/release/Foretype" "$APP/Contents/MacOS/Foretype"
 VERSION="${FORETYPE_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/core/Cargo.toml" | head -1)}"
-BUILD="$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)"
+BUILD="${FORETYPE_BUILD:-$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)}"
 
 SPARKLE_KEYS=""
 if [ "$SPARKLE" = 1 ]; then
@@ -38,6 +39,12 @@ if [ "$SPARKLE" = 1 ]; then
     SPARKLE_KEYS="  <key>SUFeedURL</key><string>${FORETYPE_FEED_URL}</string>
   <key>SUPublicEDKey</key><string>${FORETYPE_SPARKLE_PUBLIC_KEY}</string>
   <key>SUEnableAutomaticChecks</key><true/>"
+    # A feed on this Mac (scripts/sparkle-local-test.sh) is plain HTTP: let ATS allow it.
+    case "$FORETYPE_FEED_URL" in
+      http://127.0.0.1*|http://localhost*)
+        SPARKLE_KEYS="$SPARKLE_KEYS
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>" ;;
+    esac
   else
     echo "note: Sparkle embedded but FORETYPE_FEED_URL / FORETYPE_SPARKLE_PUBLIC_KEY unset: updates stay off"
   fi
@@ -66,9 +73,12 @@ ${SPARKLE_KEYS}
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
-TS=()
-[ "$IDENTITY" != "-" ] && TS=(--timestamp)
-sign() { codesign --force --options runtime ${TS[@]+"${TS[@]}"} --sign "$IDENTITY" "$@"; }
+# The hardened runtime enforces library validation, and ad-hoc signatures carry no Team ID,
+# so an ad-hoc app with Sparkle.framework embedded would fail to launch ("Library missing").
+# Notarization needs the runtime but also a Developer ID, so only real identities get it.
+OPTS=()
+[ "$IDENTITY" != "-" ] && OPTS=(--options runtime --timestamp)
+sign() { codesign --force ${OPTS[@]+"${OPTS[@]}"} --sign "$IDENTITY" "$@"; }
 if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then
   # Inside-out, as Sparkle's documentation describes for apps signed outside Xcode.
   FW="$APP/Contents/Frameworks/Sparkle.framework"

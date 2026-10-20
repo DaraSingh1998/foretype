@@ -62,6 +62,31 @@ runs on your own Mac, but Gatekeeper blocks it on others (right-click → Open, 
 `xattr -dr com.apple.quarantine /Applications/Foretype.app`), and the Accessibility grant
 has to be renewed after every update because ad-hoc signatures change with each build.
 
+## Testing updates locally (no Developer ID needed)
+
+```bash
+scripts/sparkle-local-test.sh            # builds 0.0.1 and 0.0.2, serves the feed on 127.0.0.1:8977
+open "$WORK/Foretype.app"                # the path it prints; menu-bar icon → Check for Updates…
+```
+
+The script signs the 0.0.2 DMG with a throwaway Ed25519 key (`tools/sparkle/edkey.swift`,
+CryptoKit; nothing goes into the keychain), writes `appcast.xml` and serves both over plain
+HTTP; `build-mac.sh` adds an ATS local-networking exception only when the feed URL is on
+127.0.0.1 or localhost. Sparkle then downloads the DMG, logs "OK: EdDSA signature is
+correct for update", replaces the app in place and relaunches it. With ad-hoc builds it also
+logs "Code signature of the new version doesn't match the old version": ad-hoc signatures
+are tied to each build's cdhash, so only the EdDSA check applies; Developer ID builds pass
+both. The test app shares the bundle ID `dev.foretype.Foretype`, so back up and restore its
+defaults (`defaults export` / `import`) if you also use a development build.
+
+Verified on 2026-10-20 (macOS 27.0.1, Sparkle 2.10.0): 0.0.1 → 0.0.2 installed and
+relaunched; a second check then reported "You're up to date!".
+
+Ad-hoc builds are signed without the hardened runtime: the runtime enforces library
+validation, and ad-hoc signatures carry no Team ID, so an ad-hoc app with Sparkle.framework
+embedded failed to launch ("Library missing", found by this test). Developer ID builds keep
+the hardened runtime, which notarization requires.
+
 ## Checks before tagging
 
 ```bash
