@@ -19,6 +19,12 @@ final class AppSettings {
         set { d.set(newValue, forKey: "lengthWords") }
     }
 
+    /// End a suggestion at the end of a sentence instead of running on into the next one.
+    var stopAtSentenceEnd: Bool {
+        get { d.object(forKey: "stopAtSentenceEnd") as? Bool ?? true }
+        set { d.set(newValue, forKey: "stopAtSentenceEnd") }
+    }
+
     var instructions: String {
         get { d.string(forKey: "instructions") ?? "" }
         set { d.set(newValue, forKey: "instructions") }
@@ -113,7 +119,8 @@ final class AppSettings {
     }
 
     var coreDict: [String: Any] {
-        ["enabled": enabled, "length_words": lengthWords, "instructions": instructions,
+        ["enabled": enabled, "length_words": lengthWords, "stop_at_sentence_end": stopAtSentenceEnd,
+         "instructions": instructions,
          "app_instructions": appInstructions, "disabled_apps": disabledApps, "enabled_apps": enabledApps,
          // The core filters by bundle ID and can't express a pid entry; then the tracker, which
          // never reads an app this list rejects, is the only filter.

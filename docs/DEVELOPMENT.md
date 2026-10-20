@@ -39,6 +39,7 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | Core unit tests (25+) | `cargo test --release --manifest-path core/Cargo.toml` | nothing |
 | Font matcher | `mac/.build/release/Foretype --font-selftest` | nothing |
 | OCR + row assembly | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
+| Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Model download + verify | `FORETYPE_MODEL_BASE_URL=http://127.0.0.1:PORT FORETYPE_MODELS_DIR=/tmp/x mac/.build/release/Foretype --download-selftest qwen3-0.6b-base-q8` | a local `python3 -m http.server` serving the GGUF |
 | Replay quality/latency | `ft-replay` (below) | a model |
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
@@ -90,15 +91,33 @@ Screen-control tools usually can't target menu-bar (`LSUIElement`) apps, so `bui
 ```bash
 build/ftdrive menu dev.foretype.Foretype                       # list the menu-bar menu
 build/ftdrive menu dev.foretype.Foretype "Custom Instructions…" # press an item (walks submenus)
+build/ftdrive menu dev.foretype.Foretype Model "Delete a Model" # a last item with a submenu lists it
+build/ftdrive menu dev.foretype.Foretype Model "Qwen3 0.6B*"   # trailing * matches by prefix (live titles)
 build/ftdrive windows dev.foretype.Foretype                    # titles, buttons, texts, CGWindowIDs
 screencapture -x -o -l WINDOW_ID shot.png                      # one window, from that list
 build/ftdrive press dev.foretype.Foretype Cancel               # press a button by title
+build/ftdrive press dev.foretype.Foretype Statistics           # Settings tabs are toolbar buttons
 FTDRIVE_HOLD=3 build/ftdrive menu dev.foretype.Foretype &      # keep the menu open for a screenshot
 ```
 
 A numeric pid works in place of the bundle ID (one process of an app that runs several);
 `ftdrive raise PID` brings a process to the front and `ftdrive front-pid` prints the current
 one.
+
+- A button that opens an `NSAlert` doesn't answer the press until the alert closes
+  (`runModal`); `ftdrive press` then reports "the app is busy" and stops. Press the alert's
+  buttons with a second `ftdrive press`. Titles compare without a trailing "…", so
+  "Delete" also matches "Delete…"; the frontmost alert is walked first.
+- For the first 15–90 s after launch (and now and then later) the app's windows can show
+  up as bare "Foretype" with no children; the menu still works. Retry `windows` until the
+  buttons appear. `screencapture -l` doesn't depend on it.
+- To try the Settings window's Model tab without touching real files, point
+  `FORETYPE_MODELS_DIR` at a scratch folder of APFS clones (`cp -c` of the installed
+  models: instant, no extra space) plus a dummy `NAME.gguf.part`. For downloads, serve
+  bytes from 127.0.0.1 with Range support and point `FORETYPE_MODEL_BASE_URL` at it; the
+  download fails its checksum at the end, as it should. A bundled build that has no
+  Accessibility grant (every fresh ad-hoc build) never starts the engine, so it reads
+  nothing; export the defaults domain first and restore it afterwards.
 
 ### End-to-end scripts
 
@@ -185,7 +204,9 @@ suggestions as a fresh context, then the corpus replay, and record both in
 `docs/ARCHITECTURE.md`.
 
 **Add a setting.** Rust `Settings` (with a default) → Swift `AppSettings` property and
-`coreDict` key → menu or window UI → `Controller.applySettings()` pushes it.
+`coreDict` key → a control in the Settings window (`PreferencesWindow.swift`, the pane's
+`build()` and `refresh()`) and, if it is a common one, the menu → `host.settingsChanged()`
+(`Controller.applySettings()`) pushes it and refreshes the window.
 
 **Change the prompt format or decoding.** Keep everything per-keystroke at the end of the
 prompt (cache stability). Replay the corpus before and after.

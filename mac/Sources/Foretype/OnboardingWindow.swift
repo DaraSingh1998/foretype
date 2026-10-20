@@ -148,6 +148,13 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
                 modelButton.isEnabled = true
                 progress.isHidden = false
                 progress.doubleValue = p
+            case let .paused(p):
+                modelStatus.stringValue = String(format: "Paused at %.0f%%", p * 100)
+                modelStatus.textColor = .secondaryLabelColor
+                modelButton.title = "Resume"
+                modelButton.isEnabled = true
+                progress.isHidden = false
+                progress.doubleValue = p
             case .verifying:
                 modelStatus.stringValue = "Verifying\u{2026}"
                 modelButton.isEnabled = false

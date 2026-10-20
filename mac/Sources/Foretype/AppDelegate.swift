@@ -1,19 +1,25 @@
 import AppKit
 import ApplicationServices
 
-/// Menu-bar agent: permissions, model discovery, engine start-up and the settings menu.
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+/// Menu-bar agent: permissions, model discovery, engine start-up, the settings menu and
+/// the windows it opens. Also the Settings window's host, so both surfaces share one code
+/// path for every change.
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PreferencesHost {
     private var statusItem: NSStatusItem!
     private var controller: Controller?
-    private let settings = AppSettings()
+    let settings = AppSettings()
+    let models = ModelManager()
+    let stats = UsageStats()
     private var engineState = "starting"
     private var engineDetail = ""
+    /// The model file the running engine loaded; nil with a server backend.
+    private var loadedModelPath: String?
     private var lastFrontApp: NSRunningApplication?
     private var trustTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
     private var instructionsWindow: InstructionsWindowController?
     private var onboarding: OnboardingWindowController?
-    private let models = ModelManager()
+    private var preferences: PreferencesWindowController?
     private var updater: UpdateController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -24,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
+        installMainMenu()
 
         let me = ProcessInfo.processInfo.processIdentifier
         lastFrontApp = NSWorkspace.shared.frontmostApplication
@@ -36,7 +43,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         installSignalHandlers()
-        models.onChange = { [weak self] _, _ in self?.onboarding?.refresh() }
+        models.onChange = { [weak self] _, _ in
+            self?.onboarding?.refresh()
+            self?.preferences?.modelsChanged()
+        }
+        stats.onChange = { [weak self] in self?.preferences?.statsChanged() }
         updater = UpdateController()
 
         // The setup window opens when something is missing, and on the bundled app's first
@@ -49,6 +60,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             startEngine()
         }
+    }
+
+    /// Accessory apps show no menu bar, but key equivalents still go through the main menu.
+    /// This one is never seen: it gives Foretype's own windows Cmd-, (Settings), Cmd-W,
+    /// Cmd-Q and the editing keys (copy and paste in the instruction and server fields).
+    private func installMainMenu() {
+        let app = NSMenu()
+        let prefs = NSMenuItem(title: "Settings\u{2026}", action: #selector(openPreferences), keyEquivalent: ",")
+        prefs.target = self
+        app.addItem(prefs)
+        app.addItem(.separator())
+        app.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        app.addItem(NSMenuItem(title: "Quit Foretype", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        let edit = NSMenu(title: "Edit")
+        edit.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(redo)
+        edit.addItem(.separator())
+        edit.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        edit.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        edit.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        edit.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        let main = NSMenu()
+        for submenu in [app, edit] {
+            let item = NSMenuItem()
+            item.submenu = submenu
+            main.addItem(item)
+        }
+        NSApp.mainMenu = main
     }
 
     private var modelReady: Bool {
@@ -92,6 +133,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             config["model_path"] = model
             label = URL(fileURLWithPath: model).lastPathComponent
+            loadedModelPath = model
         } else if settings.backend == "apple" {
             // The core asks the shell, which asks Foundation Models (AppleModel.swift).
             config["backend"] = "shell"
@@ -102,6 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             config["backend_model"] = settings.backendModel
             config["backend_api_key"] = settings.backendAPIKey
             label = settings.backendURL
+            loadedModelPath = nil
         }
         if settings.personalize, let key = HistoryStore.keyHex() {
             config["history_path"] = HistoryStore.path
@@ -121,19 +164,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             settings.askedForScreenRecording = true
             CGRequestScreenCaptureAccess()
         }
+        let onStatus: (String, String) -> Void = { [weak self] state, detail in
+            self?.engineState = state
+            self?.engineDetail = state == "ready" ? label : detail
+            self?.preferences?.refresh()
+        }
         if let c = controller {
-            c.onStatus = { [weak self] state, detail in
-                self?.engineState = state
-                self?.engineDetail = state == "ready" ? label : detail
-            }
+            c.onStatus = onStatus
             c.replaceEngine(engine)
             return
         }
-        let c = Controller(engine: engine, settings: settings)
-        c.onStatus = { [weak self] state, detail in
-            self?.engineState = state
-            self?.engineDetail = state == "ready" ? label : detail
-        }
+        let c = Controller(engine: engine, settings: settings, stats: stats)
+        c.onStatus = onStatus
         if !c.start() {
             engineState = "error"
             engineDetail = "Could not create event taps (Accessibility permission?)"
@@ -141,14 +183,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         controller = c
     }
 
-    private func useModel(_ m: ModelInfo) {
-        settings.modelPath = models.path(m)
-        settings.backend = "local"
-        startEngine()
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
         controller?.shutdown()
+        models.discardAllResumeData()
     }
 
     // MARK: - Menu
@@ -162,6 +199,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let detail = NSMenuItem(title: engineDetail, action: nil, keyEquivalent: "")
             detail.isEnabled = false
             menu.addItem(detail)
+        }
+        if stats.total.accepts > 0 {
+            let saved = NSMenuItem(title: "Saved \(Self.count(stats.today.keystrokesSaved, "keystroke")) today \u{00B7} "
+                + "\(Self.number(stats.total.keystrokesSaved)) in all", action: nil, keyEquivalent: "")
+            saved.isEnabled = false
+            menu.addItem(saved)
         }
         menu.addItem(.separator())
 
@@ -179,6 +222,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.state = settings.lengthWords == preset.words ? .on : .off
             lengthMenu.addItem(item)
         }
+        lengthMenu.addItem(.separator())
+        let sentence = NSMenuItem(title: "Stop at Sentence End", action: #selector(toggleSentenceEnd), keyEquivalent: "")
+        sentence.target = self
+        sentence.state = settings.stopAtSentenceEnd ? .on : .off
+        lengthMenu.addItem(sentence)
         lengthItem.submenu = lengthMenu
         menu.addItem(lengthItem)
 
@@ -242,39 +290,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         pm.addItem(note)
         personal.submenu = pm
         menu.addItem(personal)
-        let instr = NSMenuItem(title: "Custom Instructions\u{2026}", action: #selector(openInstructions), keyEquivalent: "")
+        let instr = NSMenuItem(title: "Custom Instructions\u{2026}", action: #selector(openInstructionsMenu), keyEquivalent: "")
         instr.target = self
         menu.addItem(instr)
         menu.addItem(.separator())
 
         let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
-        let mm = NSMenu()
-        let active = settings.backend == "local" ? ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) : nil
-        for m in models.catalog {
-            var title = "\(m.name) \u{2014} \(m.sizeText)"
-            if m.recommended { title += " (recommended)" }
-            switch models.states[m.id] ?? .notInstalled {
-            case let .downloading(p): title += String(format: " \u{2014} downloading %.0f%%, click to cancel", p * 100)
-            case .verifying: title += " \u{2014} verifying\u{2026}"
-            case .notInstalled, .failed: title += " \u{2014} download"
-            case .installed: break
-            }
-            let item = NSMenuItem(title: title, action: #selector(modelChosen(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = m.id
-            item.state = active == models.path(m) ? .on : .off
-            mm.addItem(item)
-        }
-        mm.addItem(.separator())
-        let server = NSMenuItem(title: "Use a Server Instead\u{2026}", action: #selector(configureServer), keyEquivalent: "")
-        server.target = self
-        server.state = settings.backend == "local" ? .off : .on
-        mm.addItem(server)
-        let folder = NSMenuItem(title: "Show Models Folder", action: #selector(showModelsFolder), keyEquivalent: "")
-        folder.target = self
-        mm.addItem(folder)
-        modelItem.submenu = mm
+        modelItem.submenu = modelMenu()
         menu.addItem(modelItem)
+        let prefs = NSMenuItem(title: "Settings\u{2026}", action: #selector(openPreferences), keyEquivalent: ",")
+        prefs.target = self
+        menu.addItem(prefs)
         let setup = NSMenuItem(title: "Setup\u{2026}", action: #selector(openSetup), keyEquivalent: "")
         setup.target = self
         menu.addItem(setup)
@@ -293,14 +319,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "Quit Foretype", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
+    /// Catalog models (download state or size on disk), other GGUFs in the folder, delete,
+    /// disk usage, server.
+    private func modelMenu() -> NSMenu {
+        let mm = NSMenu()
+        let active = settings.backend == "local" ? ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) : nil
+        let files = models.localFiles()
+        for m in models.catalog {
+            var title = m.name
+            if m.recommended { title += " (recommended)" }
+            switch models.states[m.id] ?? .notInstalled {
+            case let .downloading(p): title += String(format: " \u{2014} %@, downloading %.0f%%, click to cancel", m.sizeText, p * 100)
+            case let .paused(p): title += String(format: " \u{2014} %@, paused at %.0f%%, click to resume", m.sizeText, p * 100)
+            case .verifying: title += " \u{2014} verifying\u{2026}"
+            case .notInstalled, .failed: title += " \u{2014} \(m.sizeText), download"
+            case .installed:
+                let bytes = files.first { $0.model == m }?.bytes ?? m.bytes
+                title += " \u{2014} \(Self.bytes(bytes)) on disk"
+            }
+            let item = NSMenuItem(title: title, action: #selector(modelChosen(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = m.id
+            item.state = active == models.path(m) ? .on : .off
+            mm.addItem(item)
+        }
+        // GGUFs that aren't (complete) catalog models: ModelLocator may pick one, so they can
+        // be chosen too.
+        for f in files where f.model == nil && !f.incomplete {
+            let item = NSMenuItem(title: "\(f.fileName) \u{2014} \(Self.bytes(f.bytes)) on disk", action: #selector(fileChosen(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = f.path
+            item.state = active == f.path ? .on : .off
+            mm.addItem(item)
+        }
+        mm.addItem(.separator())
+        if !files.isEmpty {
+            let delete = NSMenuItem(title: "Delete a Model", action: nil, keyEquivalent: "")
+            let dm = NSMenu()
+            for f in files {
+                var title = "\(f.name) \u{2014} \(Self.bytes(f.bytes))"
+                if f.incomplete { title += " (incomplete download)" }
+                if isModelInUse(f.path) { title += " (in use)" }
+                let item = NSMenuItem(title: title + "\u{2026}", action: #selector(deleteChosen(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = f.path
+                dm.addItem(item)
+            }
+            delete.submenu = dm
+            mm.addItem(delete)
+        }
+        let usage = NSMenuItem(title: "Models folder: \(Self.bytes(models.diskUsage())) on disk", action: nil, keyEquivalent: "")
+        usage.isEnabled = false
+        mm.addItem(usage)
+        mm.addItem(.separator())
+        let server = NSMenuItem(title: "Use a Server Instead\u{2026}", action: #selector(configureServer), keyEquivalent: "")
+        server.target = self
+        server.state = settings.backend == "local" ? .off : .on
+        mm.addItem(server)
+        let folder = NSMenuItem(title: "Show Models Folder", action: #selector(showModelsFolder), keyEquivalent: "")
+        folder.target = self
+        mm.addItem(folder)
+        return mm
+    }
+
+    static func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
+
+    static func number(_ n: Int) -> String { NumberFormatter.localizedString(from: NSNumber(value: n), number: .decimal) }
+
+    /// "1 keystroke", "1,234 keystrokes".
+    static func count(_ n: Int, _ noun: String) -> String { "\(number(n)) \(noun)\(n == 1 ? "" : "s")" }
+
     @objc private func toggleEnabled() {
         settings.enabled.toggle()
-        controller?.applySettings()
+        settingsChanged()
     }
 
     @objc private func setLength(_ sender: NSMenuItem) {
         settings.lengthWords = AppSettings.lengthPresets[sender.tag].words
-        controller?.applySettings()
+        settingsChanged()
+    }
+
+    @objc private func toggleSentenceEnd() {
+        settings.stopAtSentenceEnd.toggle()
+        settingsChanged()
     }
 
     @objc private func toggleApp(_ sender: NSMenuItem) {
@@ -315,23 +416,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if let i = list.firstIndex(of: bundle) { list.remove(at: i) } else { list.append(bundle) }
             settings.disabledApps = list
         }
-        controller?.applySettings()
+        settingsChanged()
     }
 
     @objc private func modelChosen(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String, let m = models.catalog.first(where: { $0.id == id }) else { return }
         switch models.states[m.id] ?? .notInstalled {
         case .installed:
-            useModel(m)
+            useModelFile(models.path(m))
         case .downloading:
             models.cancel(m)
         case .verifying:
             break
-        case .notInstalled, .failed:
-            models.download(m) { [weak self] result in
-                if case .success = result { self?.useModel(m) }
-            }
+        case .notInstalled, .failed, .paused:
+            download(m)
         }
+    }
+
+    @objc private func fileChosen(_ sender: NSMenuItem) {
+        if let path = sender.representedObject as? String { useModelFile(path) }
+    }
+
+    @objc private func deleteChosen(_ sender: NSMenuItem) {
+        if let path = sender.representedObject as? String { confirmDeleteModel(path) }
     }
 
     @objc private func showModelsFolder() {
@@ -343,6 +450,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         showOnboarding()
     }
 
+    @objc func openPreferences() {
+        let w = preferences ?? PreferencesWindowController(host: self)
+        preferences = w
+        w.show()
+    }
+
     @objc private func checkForUpdates() {
         updater?.checkForUpdates()
     }
@@ -352,13 +465,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func configureServer() {
         NSApp.activate(ignoringOtherApps: true)
         let kind = NSPopUpButton()
-        var kinds = ["local", "llama-server", "openai"]
-        kind.addItems(withTitles: ["Built-in (on this Mac)", "llama.cpp llama-server", "OpenAI-compatible (Ollama, LM Studio, ...)"])
-        if AppleModel.isAvailable || settings.backend == "apple" {
-            kinds.append("apple")
-            kind.addItem(withTitle: "Apple on-device model (no download; slower)")
-        }
-        kind.selectItem(at: kinds.firstIndex(of: settings.backend) ?? 0)
+        kind.addItems(withTitles: Self.backendTitles)
+        kind.selectItem(at: Self.backends.firstIndex(of: settings.backend) ?? 0)
         let url = NSTextField(string: settings.backendURL)
         url.placeholderString = "http://127.0.0.1:8080"
         let model = NSTextField(string: settings.backendModel)
@@ -378,34 +486,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        settings.backend = kinds[max(0, kind.indexOfSelectedItem)]
-        settings.backendURL = url.stringValue.trimmingCharacters(in: .whitespaces)
-        settings.backendModel = model.stringValue.trimmingCharacters(in: .whitespaces)
-        if !key.stringValue.isEmpty { settings.backendAPIKey = key.stringValue }
-        startEngine()
+        applyServer(backend: Self.backends[max(0, kind.indexOfSelectedItem)], url: url.stringValue,
+                    model: model.stringValue, apiKey: key.stringValue)
+    }
+
+    /// Where suggestions can come from (the server dialog and the Settings window); Apple's
+    /// on-device model only where Apple Intelligence is available.
+    static var backends: [String] {
+        ["local", "llama-server", "openai"] + (AppleModel.isAvailable ? ["apple"] : [])
+    }
+    static var backendTitles: [String] {
+        ["Built-in (on this Mac)", "llama.cpp llama-server", "OpenAI-compatible (Ollama, LM Studio, ...)"]
+            + (AppleModel.isAvailable ? ["Apple on-device model (no download; slower)"] : [])
     }
 
     @objc private func togglePersonalize() {
-        if !settings.personalize {
-            guard let key = HistoryStore.keyHex() else {
-                let alert = NSAlert()
-                alert.messageText = "Couldn't create the encryption key"
-                alert.informativeText = "Foretype needs a key in your Keychain to store your writing history encrypted."
-                alert.runModal()
-                return
-            }
-            controller?.engine.openHistory(path: HistoryStore.path, keyHex: key)
-        }
-        settings.personalize.toggle()
-        controller?.applySettings()
+        setPersonalize(!settings.personalize)
     }
 
     @objc private func setStrength(_ sender: NSMenuItem) {
         settings.personalizeStrength = sender.tag
-        controller?.applySettings()
+        settingsChanged()
     }
 
     @objc private func deleteHistory() {
+        confirmDeleteHistory()
+    }
+
+    @objc private func openInstructionsMenu() {
+        openInstructions()
+    }
+
+    @objc private func unsnooze(_ sender: NSMenuItem) {
+        if let bundle = sender.representedObject as? String { controller?.unsnooze(bundle) }
+    }
+
+    @objc private func toggleScreenContext() {
+        settings.useScreenContext.toggle()
+        settingsChanged()
+    }
+
+    @objc private func openScreenRecording() {
+        openScreenRecordingSettings()
+    }
+
+    @objc private func openAccessibility() {
+        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    }
+
+    // MARK: - PreferencesHost (also the menu's code path)
+
+    var engineStatus: String { engineDetail.isEmpty ? engineState : "\(engineState) \u{2014} \(engineDetail)" }
+
+    func settingsChanged() {
+        controller?.applySettings()
+        preferences?.refresh()
+    }
+
+    func setPersonalize(_ on: Bool) {
+        if on, !settings.personalize {
+            guard let key = HistoryStore.keyHex() else {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "Couldn't create the encryption key"
+                alert.informativeText = "Foretype needs a key in your Keychain to store your writing history encrypted."
+                alert.runModal()
+                preferences?.refresh()
+                return
+            }
+            controller?.engine.openHistory(path: HistoryStore.path, keyHex: key)
+        }
+        settings.personalize = on
+        settingsChanged()
+    }
+
+    func historyStats() -> (records: Int, words: Int)? {
+        controller?.engine.historyStats()
+    }
+
+    func confirmDeleteHistory() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Delete your writing history?"
@@ -418,9 +577,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 try? FileManager.default.removeItem(atPath: HistoryStore.path)
             }
         }
+        preferences?.refresh()
     }
 
-    @objc private func openInstructions() {
+    func openInstructions() {
         let bundle = lastFrontApp?.bundleIdentifier
         let w = InstructionsWindowController(global: settings.instructions, appName: lastFrontApp?.localizedName,
                                              appBundle: bundle, appText: bundle.flatMap { settings.appInstructions[$0] } ?? "")
@@ -432,28 +592,84 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 all[bundle] = appText.isEmpty ? nil : appText
                 self.settings.appInstructions = all
             }
-            self.controller?.applySettings()
+            self.settingsChanged()
         }
         instructionsWindow = w
         w.show()
     }
 
-    @objc private func unsnooze(_ sender: NSMenuItem) {
-        if let bundle = sender.representedObject as? String { controller?.unsnooze(bundle) }
-    }
-
-    @objc private func toggleScreenContext() {
-        settings.useScreenContext.toggle()
-        controller?.applySettings()
-    }
-
-    @objc private func openScreenRecording() {
+    func openScreenRecordingSettings() {
         if !CGRequestScreenCaptureAccess() {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
         }
     }
 
-    @objc private func openAccessibility() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+    /// The file the engine loaded, or the one it would load next (`ModelLocator`), while
+    /// the built-in engine is selected.
+    func isModelInUse(_ path: String) -> Bool {
+        guard settings.backend == "local" else { return false }
+        let p = URL(fileURLWithPath: path).standardizedFileURL.path
+        let candidates = [loadedModelPath, ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file)]
+        return candidates.contains { $0.map { URL(fileURLWithPath: $0).standardizedFileURL.path == p } ?? false }
+    }
+
+    func useModelFile(_ path: String) {
+        settings.modelPath = path
+        settings.backend = "local"
+        startEngine()
+        preferences?.refresh()
+    }
+
+    /// Downloads (or resumes) a catalog model and switches to it once it verifies.
+    func download(_ m: ModelInfo) {
+        models.download(m) { [weak self] result in
+            guard let self, case .success = result else { return }
+            self.useModelFile(self.models.path(m))
+        }
+    }
+
+    func confirmDeleteModel(_ path: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        let file = models.localFiles().first { $0.path == path }
+        let name = file?.name ?? URL(fileURLWithPath: path).lastPathComponent
+        let alert = NSAlert()
+        if isModelInUse(path) {
+            alert.messageText = "\(name) is in use"
+            alert.informativeText = "Foretype is using this model. Choose another model or a server first, then delete it."
+            alert.runModal()
+            return
+        }
+        let size = Self.bytes(file?.bytes ?? ModelManager.sizeOnDisk(path))
+        alert.messageText = "Delete \(name)?"
+        if file?.incomplete == true {
+            alert.informativeText = "This incomplete download (\(size)) is removed from the Models folder."
+        } else if file?.model != nil {
+            alert.informativeText = "The model file (\(size)) is removed from this Mac. You can download it again from the Model menu."
+        } else {
+            alert.informativeText = "The file (\(size)) is removed from this Mac. It isn't in Foretype's catalog, so it can't be downloaded again from here."
+        }
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            try models.delete(path: path)
+            if settings.modelPath == path { settings.modelPath = nil }
+        } catch {
+            let failed = NSAlert()
+            failed.messageText = "Couldn't delete \(name)"
+            failed.informativeText = error.localizedDescription
+            failed.runModal()
+        }
+        preferences?.modelsChanged()
+    }
+
+    func applyServer(backend: String, url: String, model: String, apiKey: String?) {
+        settings.backend = backend
+        settings.backendURL = url.trimmingCharacters(in: .whitespaces)
+        settings.backendModel = model.trimmingCharacters(in: .whitespaces)
+        if let apiKey, !apiKey.isEmpty { settings.backendAPIKey = apiKey }
+        startEngine()
+        preferences?.refresh()
     }
 }

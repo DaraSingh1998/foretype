@@ -68,8 +68,10 @@ are kept for if that changes; the core stays portable.
   in Safari, Mail and Notes.
 - **Personalization**: Cotypist history import; per-app retrieval tuning; logit bias for
   `llama-server` via its `logit_bias` parameter.
-- **Product**: Foundation Models fallback (zero download), localization, a preferences
-  window, statistics (words saved), model manager polish (delete models, disk usage).
+- **Product**: Foundation Models fallback (zero download), localization, resume data
+  that survives a relaunch, adding an app to the per-app list from the Settings window (today
+  only from the menu while that app is in front). (Settings window, statistics and model
+  manager polish landed in `feat/product-ui`.)
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.
@@ -81,8 +83,10 @@ are kept for if that changes; the core stays portable.
 - Insertion overrides exist but every app still defaults to keystrokes.
 - Checked by eye on 2026-10-20: ghost-text placement in TextEdit and in a Chrome textarea
   (the fixture page), the setup window, the menu, the Custom Instructions window, live
-  screen capture (development build). Not yet: the overlay in Safari, Mail and Notes, the
-  bundled app's own Screen Recording grant.
+  screen capture (development build), the Settings window's five tabs with model delete,
+  app remove, statistics reset and download pause/resume. Not yet: the overlay in Safari,
+  Mail and Notes, the bundled app's own Screen Recording grant, Cmd-, and the editing keys
+  in Foretype's windows (they need real keystrokes).
 - A Chrome process that no Accessibility client has primed shows its web fields 2–3 s
   after Foretype first sees it in front: Chrome waits 2 s after `AXEnhancedUserInterface`
   is set before it turns on web content (`docs/MEASUREMENTS.md`). Foretype keeps the flag

@@ -192,3 +192,19 @@ Foretype to launch Chrome.
 **Cost.** About 2 s (3 s when Chrome clears the flag as it activates) before a fresh Chrome
 gets suggestions; the flag stays on while Foretype runs, which some window managers dislike
 (restored on quit, and never set while VoiceOver runs).
+
+## D24. Settings window beside the menu; statistics are counts only (2026-10-20)
+
+**Decision.** A Settings window (AppKit, toolbar tabs) is a second surface for every
+setting; the menu keeps its items. Both call the same `AppDelegate` methods
+(`PreferencesHost`). Statistics count accepts, words, characters and keystrokes saved
+(characters inserted minus one key press per accept) per local day for 30 days and in
+total; they store no text and no app names.
+**Why.** The menu was getting long, and some things (the per-app list, model files, disk
+use, statistics) don't fit in a menu. One code path keeps the two from drifting. Keystrokes
+saved uses `ft-replay`'s definition (accepted characters minus accept key presses), so the
+app's number and the measurements agree; per-app counts would say where someone writes and
+gain little.
+**Cost.** Keystrokes saved is an estimate: it assumes one key press per character the user
+would otherwise have typed (no autocorrect or shortcuts), and counts an insertion even if
+the host app dropped it.

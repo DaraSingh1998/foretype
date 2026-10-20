@@ -339,7 +339,7 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
 
 | Thread | Work |
 |---|---|
-| main | `AppDelegate` menus and windows, `Controller` event handling, `GhostPanel`, insertion, Carbon hotkeys, power monitor, URLSession delegate |
+| main | `AppDelegate` menus and windows (Settings, setup, instructions), `Controller` event handling, `GhostPanel`, insertion, statistics, Carbon hotkeys, power monitor, URLSession delegate |
 | `foretype.ax` | `FocusTracker`: CFRunLoop with AXObserver sources, timers, all AX reads (80 ms global messaging timeout) |
 | `foretype.keys` | `KeyTap`: both event taps; callbacks never block or call Accessibility |
 | `foretype.screen` (queue) | Screen capture completion and Vision OCR |
@@ -407,8 +407,9 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
   without Text Metrics), submits, and asks the screen provider for a refresh. On the main thread it drops events whose revision is
   stale, shows or hides the panel, toggles the consuming tap, and performs key actions. If
   an accept finds no suggestion (it went stale), it gives the key back; a replacement's text
-  is deleted before the insert. The engine can be
-  swapped at runtime (`replaceEngine`) when the model or server changes.
+  is deleted before the insert, and an accept that inserts text is counted in
+  `UsageStats`. The engine can be swapped at runtime (`replaceEngine`) when the model or
+  server changes.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
   every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
   `SCScreenshotManager.captureImage` → Vision `.accurate` OCR → lines grouped into rows,
@@ -420,18 +421,37 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
   suggestions on the current line; Ctrl+Opt+Cmd + key above Tab snoozes the app for 5
   minutes. `PowerMonitor` polls the power source every 30 s; on battery the core gets an
   80 ms debounce and no prefetch.
-- **`Settings.swift`**: `AppSettings` (UserDefaults: enabled, lengthWords, instructions,
-  appInstructions, disabled/enabled apps, useScreenContext, personalize, strength, backend,
-  backendURL, backendModel, modelPath, onboarded), `Keychain` (service
-  `dev.foretype.Foretype`; accounts `history-key`, `backend-api-key`), `HistoryStore`
-  (`~/Library/Application Support/Foretype/history.bin`), `ModelLocator`.
-- **`ModelManager.swift`**: catalog from the core, URLSession downloads with resume data,
-  streaming SHA-256 (CryptoKit) before moving into `Models/`.
+- **`Settings.swift`**: `AppSettings` (UserDefaults: enabled, lengthWords,
+  stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
+  useScreenContext, personalize, strength, backend, backendURL, backendModel, modelPath,
+  onboarded), `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
+  `backend-api-key`), `HistoryStore` (`~/Library/Application Support/Foretype/history.bin`),
+  `ModelLocator`.
+- **`Stats.swift`**: `UsageStats`, the words-saved counts: per accept, kind (Tab or
+  accept-all), words, characters and keystrokes saved (characters minus the one accept key
+  press). Totals plus one bucket per local day for the last 30 days, as one JSON value in
+  UserDefaults (`usageStats`); no text and no app names. `--stats-selftest` checks it with
+  in-memory storage.
+- **`ModelManager.swift`**: catalog from the core, URLSession downloads with resume data
+  (cancel pauses when the server allows resuming; resume data stays in memory, and
+  discarding it, or quitting, deletes the temporary file it names), streaming SHA-256
+  (CryptoKit) before moving into `Models/`. Lists the folder's GGUF and leftover `.part`
+  files with their allocated size, totals its disk use, and deletes only GGUF or `.part`
+  files directly inside it. Progress reaches the UI in 0.5% steps.
+- **`PreferencesWindow.swift`**: the Settings window, an `NSTabViewController` in toolbar
+  style that sizes the window to each pane (General, Personalization, Apps, Model,
+  Statistics; programmatic `NSStackView`/`NSGridView` layout). It changes settings through
+  `PreferencesHost`, which `AppDelegate` implements with the menu's own code paths
+  (`Controller.applySettings`, `startEngine`/`replaceEngine` for model and server changes).
+  The menu calls `refresh()` after its own changes so both stay in step.
 - **`OnboardingWindow.swift`**, **`InstructionsWindow.swift`**, **`AppDelegate.swift`**:
   setup checklist (Accessibility, Screen Recording, model), custom instructions, the
-  menu-bar menu (on/off, length, per-app toggle, screen context, personalization,
-  instructions, model, server, setup, updates). The setup window opens when Accessibility
-  or a model is missing, and on the bundled app's first run.
+  menu-bar menu (keystrokes saved today, on/off, length and sentence end, per-app toggle,
+  screen context, personalization, instructions, model with sizes on disk and Delete a
+  Model, server, Settings, setup, updates). A hidden main menu gives Foretype's windows
+  Cmd-, (Settings), Cmd-W, Cmd-Q and the editing keys; accessory apps show no menu bar but
+  still route key equivalents through it. The setup window opens when Accessibility or a
+  model is missing, and on the bundled app's first run.
 - **`UpdateController.swift`**: Sparkle 2 when built with `FORETYPE_SPARKLE=1` and the
   Info.plist has `SUFeedURL` and `SUPublicEDKey`; otherwise a no-op.
 - **`AX.swift`**: typed AX helpers and the debug logger.
@@ -443,5 +463,6 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
 | Text of the focused field | In memory; into the prompt. Never logged unless `FORETYPE_DEBUG` (suggestions only) |
 | Screen text (OCR) | In memory per field; image discarded immediately |
 | Writing history (opt-in) | `history.bin`, encrypted, key in the Keychain; deleted from the menu |
+| Statistics | Counts only (accepts, words, characters, keystrokes saved; per day for 30 days and in total) in UserDefaults `usageStats`; reset in Settings |
 | Clipboard | Read only to restore it after a paste, only with "always allow" access |
 | Network | Model downloads (Hugging Face), Sparkle update checks (release builds), and the user's own server if one is configured. Nothing else |
