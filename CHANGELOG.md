@@ -5,6 +5,26 @@ roadmap phase.
 
 ## Unreleased
 
+### Pixel caret locator (2026-10-20)
+- **New:** ghost text at the caret in apps whose Accessibility API gives no caret geometry.
+  When `CaretResolver` finds no caret (or an app's rule says `"caret": "pixel"`), Foretype
+  captures the text field of the app's own window at typing pauses, finds the caret as the
+  one thin bar that blinks (blink detector, ~0.7 s) or as a bar of the learned colour and
+  height near the predicted position (verify, one capture ~45 ms), and between captures
+  moves it by the rendered width of the typed text. Images are never kept. Needs Screen
+  Recording and follows the Screen Context switch.
+- **LibreOffice:** its paragraph frames are 98 pt above the text but its character rects are
+  right, so the caret resolver rejected them. The pixel caret now confirms such rects (two
+  matches) and the app's rects are used from then on, with no captures. Fonts are scaled to
+  the zoom on screen when an app reports the unzoomed size (LibreOffice: 12 pt for a 29 pt
+  line). Not yet usable end to end: after a programmatic open Writer reports no focused
+  element (see `docs/MEASUREMENTS.md`).
+- `compat/apps.json`: `caret` key (`pixel` | `ax`), `AppRule.caret` in the core;
+  `FORETYPE_CARET` overrides it for testing.
+- `Foretype --caret-selftest` (no permissions), `Foretype --caret-measure PID TITLE`,
+  `scripts/caret-measure.sh` and `scripts/e2e-pixel-caret.sh` (caret moved through
+  Accessibility, nothing typed); `ftdrive` gains `title`, `frame`, `caret`, `close`, `quit`.
+
 ### Fresh Chrome (2026-10-20)
 - **Fix:** a Chrome process no other Accessibility client had primed could get no
   suggestions. Chrome turns on web content only 2 s after `AXEnhancedUserInterface` is set

@@ -39,6 +39,9 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | Core unit tests (25+) | `cargo test --release --manifest-path core/Cargo.toml` | nothing |
 | Font matcher | `mac/.build/release/Foretype --font-selftest` | nothing |
 | OCR + row assembly | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
+| Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
+| Pixel caret vs AX caret | `scripts/caret-measure.sh [APP BUNDLE_ID FIXTURE]` | Accessibility and Screen Recording (the terminal's), user idle |
+| Pixel caret in the app (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-pixel-caret.sh [APP BUNDLE_ID FIXTURE]` | same |
 | Model download + verify | `FORETYPE_MODEL_BASE_URL=http://127.0.0.1:PORT FORETYPE_MODELS_DIR=/tmp/x mac/.build/release/Foretype --download-selftest qwen3-0.6b-base-q8` | a local `python3 -m http.server` serving the GGUF |
 | Replay quality/latency | `ft-replay` (below) | a model |
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
@@ -98,7 +101,36 @@ FTDRIVE_HOLD=3 build/ftdrive menu dev.foretype.Foretype &      # keep the menu o
 
 A numeric pid works in place of the bundle ID (one process of an app that runs several);
 `ftdrive raise PID` brings a process to the front and `ftdrive front-pid` prints the current
-one.
+one. For test documents: `ftdrive title PID` (focused window title), `ftdrive frame PID`
+(its frame, for `screencapture -R`), `ftdrive caret PID TITLE POS` (moves the caret with
+`AXSelectedTextRange`, only while PID is frontmost with TITLE in front), `ftdrive close PID
+TITLE` (presses that window's close button; an unmodified document closes silently) and
+`ftdrive quit PID`.
+
+### Pixel caret
+
+- `Foretype --caret-selftest` renders a line of text with a caret (Helvetica, Georgia,
+  Menlo, the system font and Times; 1 and 2 pt carets; accent, black and dark-mode white;
+  1× and 2×), runs the blink and verify detectors and checks that the caret is found within
+  0.5 pt, that glyph stems (`l`, `|`, `1`) next to it are never taken for a caret when it is
+  off, that text changing between captures is rejected, and the width advance.
+- `scripts/caret-measure.sh` opens a copy of `scripts/fixtures/caret-lines.txt` (or the
+  `.rtf`, Helvetica Light 15) in an app, then `Foretype --caret-measure PID TITLE` moves the
+  caret to the middle and the end of each line with `AXSelectedTextRange` and compares the
+  blink and verify results and the width advance (host font, and the fallback font with the
+  learned width scale) with the AX caret. It also reports the raw previous-character rect,
+  which shows a constant AX offset if an app has one. `--caret-measure` refuses to run
+  unless `FORETYPE_ONLY_APPS` names the app, and stops when the app or the document leaves
+  the front or the user touches the keyboard or mouse.
+- `scripts/e2e-pixel-caret.sh` runs the app (restricted to the app under test) on a copy of
+  the RTF fixture, moves the caret to line ends and along a line, screenshots the window
+  region after each step to `build/e2e-pixel/` and prints the `pixel caret` and `caret=`
+  log lines. `PRELAUNCH=1` starts the app before opening the document. `FORETYPE_CARET=pixel` (or `ax`) overrides every app's `caret` rule, so
+  `FORETYPE_CARET=pixel scripts/e2e-pixel-caret.sh TextEdit com.apple.TextEdit` checks the
+  integration where the AX caret is known to be right.
+- All three wait for an unlocked screen and 20 s of user idle (a locked screen has no key
+  window, so no caret, and Accessibility returns empty windows), close the document and
+  quit the app only if they started it.
 
 ### End-to-end scripts
 
@@ -147,7 +179,9 @@ screen: 412 chars from Microsoft Teams in 210 ms
 ```
 
 `caret=` shows the strategy (`prevEdge`, `prevEdge(zeroHigh)`, `zero`, `zero+offset`,
-`zero(wrapped)`, `none` → mirror card). `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's own logs.
+`zero(wrapped)`, `pixel`, `pixel+advance`, `none` → mirror card). The pixel caret locator
+logs `pixel caret (blink|verify): X,Y hH in N frames M ms, width scale S` and `pixel caret:
+no blinking caret found in BUNDLE`. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's own logs.
 
 ## macOS permissions and signing (TCC)
 
@@ -170,7 +204,9 @@ screen: 412 chars from Microsoft Teams in 210 ms
 ## Common tasks
 
 **Add or change an app rule.** Edit `compat/apps.json` (bundle ID → `disabled`,
-`agent_prompt_only`, `insertion`, `prime`, `note`). It's compiled into the core, so rebuild.
+`agent_prompt_only`, `insertion`, `prime`, `caret`, `note`). Set `"caret": "pixel"` only
+when `scripts/caret-measure.sh` shows the app's AX caret is wrong but plausible; an app with
+no AX caret at all gets the pixel locator without a rule. It's compiled into the core, so rebuild.
 Add a policy test in `core/src/policy.rs` if the behaviour is new.
 
 **Add a model.** Add an entry to `models/catalog.json` with the exact `bytes` and `sha256`

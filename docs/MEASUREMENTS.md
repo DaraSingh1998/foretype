@@ -274,6 +274,66 @@ nothing). CPU and DRAM are not included: their counters don't update reliably wi
   of GPU "idle" while another replay was still running, so measure with nothing else
   on the GPU.
 
+## Pixel caret locator (2026-10-20)
+
+### Synthetic (`Foretype --caret-selftest`)
+
+30 rendered cases: Helvetica 13, Georgia 17, the system font 14 (2×), Menlo 12, Times New
+Roman 12 (1×); 1 and 2 pt carets; accent blue on white, black on white (same colour as the
+text), white on dark gray. Blink and verify find every caret; worst x error 0.00 pt (after
+taking the caret colour from fully covered pixels and each column's median strength;
+before, 1× Times with a 2 pt caret at a fractional x was off by 0.64–0.76 pt). No false
+caret from `l`, `|`, `1` stems with the caret off, from identical frames, or from a word
+typed between captures.
+
+### TextEdit against its AX caret (`scripts/caret-measure.sh`)
+
+M3 Pro, built-in Retina display (2×), macOS 27.0.1, development build under the terminal's
+grants, new document from a fixture copy, caret moved with `AXSelectedTextRange` to the
+middle and the end of the first 6 lines (12 positions), no keystrokes. The AX caret
+(`prevEdge`) is correct in TextEdit, so it is the reference.
+
+| Document | Blink found | Blink x / y error | Verify found | Verify x error | Advance error (host font) | Advance, fallback font: raw / learned scale |
+|---|---|---|---|---|---|---|
+| plain text, Menlo 11 | 12/12 | 0.00 / 0.00 pt (max 0.00) | 12/12 (1 capture) | median 0.29, max 0.54 pt | 0.00 pt | – |
+| RTF, Helvetica Light 15 | 12/12 | 0.00 / 0.00 pt (max 0.00) | 8/12 (1 capture) | median 0.38, max 0.42 pt | 0.00 pt | median 7.8, max 9.3 / median 1.3, max 8.4 pt |
+
+- TextEdit draws its caret centred on the AX insertion point, so the bar's weighted centre
+  equals the AX x to 0.01 pt.
+- Blink latency from a caret move: median 668–679 ms (6 captures), max 1.3 s (11 captures);
+  the caret stays on for about 0.55 s after a move. One capture of the field (656 × 384 pt):
+  median 42–54 ms, the first one 190–200 ms (ScreenCaptureKit's window list).
+- Verify: median 43–63 ms for one capture of the ±24 pt region. The 4 misses were captures
+  in the caret's off phase: a programmatic move does not always restart TextEdit's blink
+  (blink then took 3 or 11 captures). Verify now takes up to 3 captures 250 ms apart.
+- Advance: in TextEdit's own font the predicted x after the rest of a line is exact. In the
+  fallback font (system font at 0.78 × the caret height, as GhostPanel uses when the host
+  reports no font) it drifts 7.8 pt over about 200 pt; the width scale learned from the
+  previous line (1.04 here) brings it to about 1.3 pt, and verify corrects the rest at the
+  next short pause.
+
+### LibreOffice Writer (`scripts/caret-measure.sh LibreOffice org.libreoffice.script scripts/fixtures/caret-lines.rtf`)
+
+LibreOffice 26.8.0.3, same Mac and display, the RTF fixture opened from a copy, caret moved with
+`AXSelectedTextRange` in each paragraph's own `AXTextArea` (12 positions in 6 paragraphs).
+
+- Writer exposes one `AXTextArea` per paragraph. After a programmatic open it reports no
+  `AXFocusedUIElement` at all (app or window), whatever is tried from outside (window raise,
+  `AXFocused`, a selection change, `AXEnhancedUserInterface`, which it rejects), so the bench
+  walks the window for paragraphs. Setting `AXSelectedTextRange` moves the real caret.
+- Paragraph frames are 98 pt above the text (frame y 289, characters and caret at y 387),
+  which is why `CaretResolver` rejected every rect. The zero-length rect is a sentinel.
+- Blink found the caret 12/12 (median 451 ms, 4 captures; max 586 ms), verify 12/12 with one
+  capture (median 47 ms), within 0.30 pt of blink.
+- **The previous-character rects are right**: their trailing edge is 0.50 pt left of the
+  caret's centre and 0.50 pt off vertically at all 12 positions (the caret is 1 pt wide and
+  starts at the edge). So the locator now confirms such rects (two matches) and the app's
+  rects are used from then on, at no capture cost (D24).
+- The reported font is wrong for the screen: size 12 for text drawn with a 29–30 pt caret
+  (the document is zoomed), so the width advance in that font was 205 pt off over a line, and
+  in the fallback font 66 pt (21 pt with the learned width scale). `CaretResolver.font` now
+  scales a font whose last characters are more than 25% wider or narrower on screen.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with
