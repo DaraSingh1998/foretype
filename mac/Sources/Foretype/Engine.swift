@@ -107,6 +107,16 @@ final class EngineBridge {
         return (o["records"] ?? 0, o["words"] ?? 0)
     }
 
+    /// Adds earlier writing as `(app, text)` records; returns how many were kept (texts under
+    /// 20 characters are skipped), or nil on error.
+    func importHistory(_ items: [(app: String, text: String)]) -> Int? {
+        guard let handle,
+              let data = try? JSONSerialization.data(withJSONObject: items.map { ["app": $0.app, "text": $0.text] }),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        let n = ft_engine_import_history(handle, json)
+        return n < 0 ? nil : Int(n)
+    }
+
     @discardableResult
     func clearHistory() -> Bool {
         guard let handle else { return false }

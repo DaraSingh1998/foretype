@@ -25,6 +25,30 @@ final class AppSettings {
         set { d.set(newValue, forKey: "stopAtSentenceEnd") }
     }
 
+    /// Offer the emoji for a typed `:name`.
+    var emoji: Bool {
+        get { d.object(forKey: "emoji") as? Bool ?? true }
+        set { d.set(newValue, forKey: "emoji") }
+    }
+
+    /// Offer the spell checker's correction for a misspelled word just finished.
+    var autocorrect: Bool {
+        get { d.object(forKey: "autocorrect") as? Bool ?? true }
+        set { d.set(newValue, forKey: "autocorrect") }
+    }
+
+    /// No suggestion while the word being typed can't become a real word.
+    var typoGate: Bool {
+        get { d.object(forKey: "typoGate") as? Bool ?? true }
+        set { d.set(newValue, forKey: "typoGate") }
+    }
+
+    /// Suggest in the middle of a line too (shown as a card under the caret).
+    var midLine: Bool {
+        get { d.bool(forKey: "midLine") }
+        set { d.set(newValue, forKey: "midLine") }
+    }
+
     var instructions: String {
         get { d.string(forKey: "instructions") ?? "" }
         set { d.set(newValue, forKey: "instructions") }
@@ -125,7 +149,8 @@ final class AppSettings {
          // The core filters by bundle ID and can't express a pid entry; then the tracker, which
          // never reads an app this list rejects, is the only filter.
          "only_apps": onlyApps.contains { pid_t($0) != nil } ? [] : onlyApps,
-         "personalize": personalize, "personalize_strength": personalizeStrength]
+         "personalize": personalize, "personalize_strength": personalizeStrength,
+         "emoji": emoji, "autocorrect": autocorrect, "typo_gate": typoGate, "mid_line": midLine]
     }
 
     func coreJSON() -> String {

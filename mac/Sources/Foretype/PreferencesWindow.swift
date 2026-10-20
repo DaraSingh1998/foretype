@@ -20,6 +20,8 @@ protocol PreferencesHost: AnyObject {
     func download(_ m: ModelInfo)
     func confirmDeleteModel(_ path: String)
     func applyServer(backend: String, url: String, model: String, apiKey: String?)
+    /// Adds text files the user picks to the writing history.
+    func importWriting()
 }
 
 /// The Settings window (menu: Settings…, Cmd-,): everything in the menu-bar menu plus the
@@ -240,12 +242,18 @@ final class GeneralPane: PreferencesPane {
     private let length = NSPopUpButton()
     private let sentenceEnd = NSButton(checkboxWithTitle: "Stop at the end of a sentence", target: nil, action: nil)
     private let screen = NSButton(checkboxWithTitle: "Use text on screen near the field", target: nil, action: nil)
+    private let emoji = NSButton(checkboxWithTitle: "Offer emoji for :shortcodes", target: nil, action: nil)
+    private let autocorrect = NSButton(checkboxWithTitle: "Offer a fix for a misspelled word", target: nil, action: nil)
+    private let typoGate = NSButton(checkboxWithTitle: "Wait while a word looks misspelled", target: nil, action: nil)
+    private let midLine = NSButton(checkboxWithTitle: "Suggest in the middle of a line (experimental)", target: nil, action: nil)
     private let screenStatus = NSTextField(labelWithString: "")
     private let screenAllow = NSButton(title: "Allow Screen Recording\u{2026}", target: nil, action: nil)
     private let instructionsSummary = NSTextField(labelWithString: "")
 
     override func build() {
-        for (b, sel) in [(enabled, #selector(changed(_:))), (sentenceEnd, #selector(changed(_:))), (screen, #selector(changed(_:)))] {
+        for (b, sel) in [(enabled, #selector(changed(_:))), (sentenceEnd, #selector(changed(_:))), (screen, #selector(changed(_:))),
+                         (emoji, #selector(changed(_:))), (autocorrect, #selector(changed(_:))), (typoGate, #selector(changed(_:))),
+                         (midLine, #selector(changed(_:)))] {
             b.target = self
             b.action = sel
         }
@@ -267,6 +275,13 @@ final class GeneralPane: PreferencesPane {
             [Self.formLabel("Length:"), length],
             [NSGridCell.emptyContentView, sentenceEnd],
             [NSGridCell.emptyContentView, Self.note("When this is off, a suggestion can run on into the next sentence.", width: w)],
+            [Self.formLabel("Typing aids:"), emoji],
+            [NSGridCell.emptyContentView, Self.note("Type a colon and a name, like :tada, then Tab.", width: w)],
+            [NSGridCell.emptyContentView, autocorrect],
+            [NSGridCell.emptyContentView, typoGate],
+            [NSGridCell.emptyContentView, Self.note("Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before.", width: w)],
+            [NSGridCell.emptyContentView, midLine],
+            [NSGridCell.emptyContentView, Self.note("Up to three words, shown in a small card under the caret.", width: w)],
             [Self.formLabel("Screen context:"), screen],
             [NSGridCell.emptyContentView, Self.note("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away.", width: w)],
             [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow])],
@@ -284,6 +299,10 @@ final class GeneralPane: PreferencesPane {
         length.selectItem(at: AppSettings.lengthPresets.firstIndex { $0.words == s.lengthWords } ?? 1)
         sentenceEnd.state = s.stopAtSentenceEnd ? .on : .off
         screen.state = s.useScreenContext ? .on : .off
+        emoji.state = s.emoji ? .on : .off
+        autocorrect.state = s.autocorrect ? .on : .off
+        typoGate.state = s.typoGate ? .on : .off
+        midLine.state = s.midLine ? .on : .off
         let allowed = ScreenContextProvider.hasPermission
         screenStatus.stringValue = allowed ? "\u{2713} Screen Recording allowed" : "Screen Recording not allowed yet"
         screenStatus.textColor = allowed ? .systemGreen : .secondaryLabelColor
@@ -303,6 +322,10 @@ final class GeneralPane: PreferencesPane {
         case length: s.lengthWords = AppSettings.lengthPresets[max(0, length.indexOfSelectedItem)].words
         case sentenceEnd: s.stopAtSentenceEnd = sentenceEnd.state == .on
         case screen: s.useScreenContext = screen.state == .on
+        case emoji: s.emoji = emoji.state == .on
+        case autocorrect: s.autocorrect = autocorrect.state == .on
+        case typoGate: s.typoGate = typoGate.state == .on
+        case midLine: s.midLine = midLine.state == .on
         default: return
         }
         host.settingsChanged()
@@ -319,6 +342,7 @@ final class PersonalizationPane: PreferencesPane {
     private let learn = NSButton(checkboxWithTitle: "Learn from my writing", target: nil, action: nil)
     private let strength = NSSegmentedControl(labels: ["Gentle", "Balanced", "Strong"], trackingMode: .selectOne, target: nil, action: nil)
     private let learned = NSTextField(labelWithString: "")
+    private let importButton = NSButton(title: "Import Writing\u{2026}", target: nil, action: nil)
 
     override func build() {
         learn.target = self
@@ -327,6 +351,8 @@ final class PersonalizationPane: PreferencesPane {
         strength.action = #selector(strengthChanged)
         learned.textColor = .secondaryLabelColor
         let delete = NSButton(title: "Delete Writing History\u{2026}", target: self, action: #selector(deleteHistory))
+        importButton.target = self
+        importButton.action = #selector(importWriting)
         let w: CGFloat = 400
         let grid = Self.form([
             [NSGridCell.emptyContentView, learn],
@@ -334,7 +360,8 @@ final class PersonalizationPane: PreferencesPane {
             [Self.formLabel("Strength:"), strength],
             [NSGridCell.emptyContentView, Self.note("How strongly suggestions lean towards words you use often.", width: w)],
             [Self.formLabel("Learned:"), learned],
-            [NSGridCell.emptyContentView, delete],
+            [NSGridCell.emptyContentView, Self.hstack([importButton, delete])],
+            [NSGridCell.emptyContentView, Self.note("Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words.", width: w)],
         ])
         add(grid)
     }
@@ -345,6 +372,7 @@ final class PersonalizationPane: PreferencesPane {
         learn.state = s.personalize ? .on : .off
         strength.selectedSegment = min(max(s.personalizeStrength, 0), 2)
         strength.isEnabled = s.personalize
+        importButton.isEnabled = s.personalize
         if !s.personalize {
             learned.stringValue = "Nothing while this is off"
         } else if let h = host.historyStats() {
@@ -363,6 +391,8 @@ final class PersonalizationPane: PreferencesPane {
     }
 
     @objc private func deleteHistory() { host?.confirmDeleteHistory() }
+
+    @objc private func importWriting() { host?.importWriting() }
 }
 
 // MARK: Apps

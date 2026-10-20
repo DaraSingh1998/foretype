@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import UniformTypeIdentifiers
 
 /// Menu-bar agent: permissions, model discovery, engine start-up, the settings menu and
 /// the windows it opens. Also the Settings window's host, so both surfaces share one code
@@ -282,6 +283,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             }
         }
         pm.addItem(.separator())
+        let imp = NSMenuItem(title: "Import Writing\u{2026}", action: settings.personalize ? #selector(importWritingMenu) : nil, keyEquivalent: "")
+        imp.target = self
+        pm.addItem(imp)
         let del = NSMenuItem(title: "Delete Writing History\u{2026}", action: #selector(deleteHistory), keyEquivalent: "")
         del.target = self
         pm.addItem(del)
@@ -562,6 +566,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     func historyStats() -> (records: Int, words: Int)? {
         controller?.engine.historyStats()
+    }
+
+    @objc private func importWritingMenu() { importWriting() }
+
+    /// Text files (.txt, .md) the user picks, split into paragraphs, into the writing history
+    /// (the vocabulary bias; no app, so they are never shown as same-app examples). Foretype
+    /// can't import Cotypist's history: its database is encrypted with a key only Cotypist
+    /// holds.
+    func importWriting() {
+        guard settings.personalize, let engine = controller?.engine else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.message = "Choose text files or folders with your own writing"
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        panel.allowedContentTypes = [.plainText, UTType(filenameExtension: "md") ?? .plainText]
+        guard panel.runModal() == .OK else { return }
+        var files: [URL] = []
+        for url in panel.urls {
+            if (try? url.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true,
+               let walk = FileManager.default.enumerator(at: url, includingPropertiesForKeys: nil) {
+                files += walk.compactMap { $0 as? URL }.filter { ["txt", "md"].contains($0.pathExtension.lowercased()) }
+            } else {
+                files.append(url)
+            }
+        }
+        var items: [(app: String, text: String)] = []
+        var bytes = 0
+        for f in files.prefix(2000) {
+            guard let text = try? String(contentsOf: f, encoding: .utf8), bytes < 20_000_000 else { continue }
+            bytes += text.utf8.count
+            for p in text.components(separatedBy: "\n\n") {
+                let t = p.trimmingCharacters(in: .whitespacesAndNewlines)
+                if t.count >= 20 { items.append(("", String(t.prefix(4000)))) }
+            }
+        }
+        let n = engine.importHistory(items)
+        let alert = NSAlert()
+        alert.messageText = n.map { "Imported \(AppDelegate.count($0, "passage"))" } ?? "Import failed"
+        alert.informativeText = "From \(AppDelegate.count(files.count, "file")). Suggestions lean towards the words you use from the next one on."
+        alert.runModal()
+        preferences?.refresh()
     }
 
     func confirmDeleteHistory() {
