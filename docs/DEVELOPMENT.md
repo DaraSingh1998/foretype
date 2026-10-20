@@ -74,6 +74,11 @@ $R - scripts/fixtures/email.txt --backend llama-server --url http://127.0.0.1:18
 $R "$M" --corpus eval/corpus.jsonl --only sw- --cpu                     # no Metal (CI)
 $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 4 --chars 200   # cache reuse == fresh context?
 $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 3 --long        # same, prompts past 512 tokens
+$R "$M" --corpus eval/corpus.jsonl --beam 3                             # phrase beam search
+$R "$M" --corpus eval/corpus.jsonl --mid-line-eval --typed 1            # mid-line word accuracy
+swiftc -O tools/spell-map/main.swift mac/Sources/Foretype/Speller.swift -o build/spell-map
+build/spell-map eval/corpus.jsonl > build/spell-map.json                # the app's spell verdicts
+$R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo gate + autocorrect
 ```
 
 Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`,

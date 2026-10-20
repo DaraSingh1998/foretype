@@ -274,6 +274,64 @@ nothing). CPU and DRAM are not included: their counters don't update reliably wi
   of GPU "idle" while another replay was still running, so measure with nothing else
   on the GPU.
 
+## Backlog features (2026-10-20)
+
+Qwen3-1.7B Q4_K_M, full corpus, 4 words, prefetch on, instant simulated user, unless noted.
+
+### Phrase beam search (`ft-replay --beam N`)
+
+| Beams | Keystrokes saved | Chars per accept | Model p50 / p90 | GPU energy (whole corpus) |
+|---:|---:|---:|---:|---:|
+| 1 (greedy) | 41.9% | 3.68 | 70–77 / 97–106 ms | 3,380 J |
+| 3 | 43.0% | 3.69 | 86–94 / 103–126 ms | 3,883 J (+15%) |
+| 4 | 42.7% | 3.66 | 92 / 110 ms | |
+| 6 | 42.4% | 3.64 | 98 / 118 ms | |
+| 9 | 42.3% | 3.64 | 103 / 125 ms | |
+
+Wider beams find more probable *phrases*, which is not the same as getting the next word
+right; 3 is the best width here. The app uses 3 beams on mains power and greedy on battery
+(set by the shell, like prefetch). On the 3 email documents alone, 4 beams gave 44.4% vs
+42.9%. Each beam is a KV sequence of a unified cache; making every context multi-sequence
+changed nothing for greedy (`--check-cache`, Qwen3-0.6B: 99.9% identical, same latency).
+
+### Mid-line (`ft-replay --mid-line-eval`)
+
+At word starts in the middle of lines (every 5th, with 3+ words before and 2+ after on the
+line), the word replaced by its first letters, the rest of the line as the suffix:
+
+| Prompt | 1 letter typed (340 positions) | 2 letters (262) |
+|---|---:|---:|
+| Fill-in-the-middle (`<|fim_prefix|>…<|fim_suffix|>…<|fim_middle|>`) | 5.6% right | 9.9% |
+| Plain continuation, cut where it repeats the line (shipped) | 72.1% right, p50 48 ms | 77.9%, p50 54 ms |
+
+Qwen3 base has FIM tokens but produced code-like noise with them on prose
+("tantiateViewController", "oMatchSnapshot"). Mid-line stays an experimental setting, off by
+default.
+
+### Typo gate and autocorrect (`ft-replay --spell`)
+
+The corpus has no typos, so every block or correction on it is a false one. The macOS spell
+checker (via `tools/spell-map`, the app's own `Speller`, language en_IN) flagged 19 of
+2,792 distinct fragments as impossible; all but the lowercase `malbolge…` and the American
+`apologiz…` are capitalized and pass as likely names. Replaying with the verdicts: 4
+requests blocked, keystrokes saved unchanged at 41.9%. Autocorrect proposed nothing (its
+one candidate, "ROblox" → "Roblox", is capitalized mid-sentence and treated as a name).
+Spell-checker calls cost 0.1–1 ms each off the main thread once warm (about 11 ms for the
+first).
+
+### Apple on-device model (`shell` backend)
+
+`AppleModel.complete` with the core's request format, on this M3 Pro (macOS 27.0.1):
+2.2 s for the first request, then 0.45–0.6 s; continuations were sensible ("closer to
+agreement than the" → "previous discussion suggested."). Not replayed on the corpus: the
+replay tool is Rust and this backend lives in the Swift shell.
+
+### llama-server vocabulary bias
+
+`logit_bias` for the user's single-token words (one `/tokenize` call per profile) is in;
+not yet measured against llama-server (the leave-one-out personalization replay with
+`--backend llama-server` is the way to do it).
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

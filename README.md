@@ -97,6 +97,23 @@ and phrases; real histories repeat more, so treat this as a floor.
 spelling) and one for the app you were last in, appended after it. Both go into the prompt
 header.
 
+### Typing aids
+
+- **Emoji**: type a colon and a name (`:tada`, `:+1`) and Tab replaces it with the emoji
+  (1,913 GitHub/Slack-style shortcodes).
+- **Autocorrect**: after a misspelled word and a space, the ghost shows `→ receive`; Tab
+  replaces the word. It uses the macOS spell checker in your languages and leaves names,
+  acronyms and words you have written before alone.
+- **Typo gate**: no suggestion while the word you are typing can't become a real word.
+- **Phrase beam search**: on mains power the engine weighs 3 candidate phrases instead of
+  one (+1.1 points of keystrokes saved on the corpus); greedy on battery.
+- **Mid-line** (experimental, off): up to three words in a card under the caret when text
+  follows it on the line.
+- In **VS Code, Cursor and Windsurf** only chat inputs get suggestions; the code editor
+  stays off. **Google Docs** and **Arc/Dia** show a one-time tip for the setting they need.
+
+All of these can be turned off in Settings → General.
+
 ### Settings window
 
 **Settings…** in the menu (Cmd-, while the menu or one of Foretype's windows is open)
@@ -180,7 +197,9 @@ paused download, or quitting, deletes what it had downloaded.
   over HTTP against 79 ms in-process;
 - any OpenAI-compatible completions endpoint (Ollama, LM Studio, a cloud provider): works,
   but with no grammar it completes half-typed words less well (20% saved on the same text).
-  An API key, if any, is kept in the Keychain.
+  An API key, if any, is kept in the Keychain;
+- Apple's on-device model (macOS 26+ with Apple Intelligence): nothing to download, but
+  about 0.5 s per suggestion and no token healing beyond filtering.
 
 ## Build
 
@@ -265,7 +284,10 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   entries need testing app by app.
 - Live screen capture has been checked in the TextEdit end-to-end test (a development
   build under a parent process with Screen Recording); the bundled app needs its own grant.
-- No autocorrect, emoji or phrase beam search yet.
+- New in this round and checked only by unit tests and replays so far: emoji, autocorrect
+  and the typo gate in a live app, the mid-line card, the code-editor chat patterns
+  (`allow_fields` were written without access to those apps' AX trees), text-marker
+  reads, and the Google Docs and Arc hints.
 - The setup window, the menu and the Custom Instructions window have been checked by
   screenshot (`ftdrive`, 2026-10-20), not by an automated test; saving instructions and the
   personalization submenu were not exercised. The recorder, history and bias are covered by

@@ -208,3 +208,57 @@ gain little.
 **Cost.** Keystrokes saved is an estimate: it assumes one key press per character the user
 would otherwise have typed (no autocorrect or shortcuts), and counts an insertion even if
 the host app dropped it.
+
+## D25. Spelling: the platform's spell checker decides, the core applies the policy (2026-10-20)
+
+**Decision.** The shell asks `NSSpellChecker` (off the main thread, in the user's own
+languages and learned words) whether the partial word can still become a word and whether
+the word just finished is misspelled; the core turns that into the typo gate and
+autocorrect, with leniency for capitals, acronyms, digits and the user's own words.
+**Why.** The Phase 0 gate used `/usr/share/dict/web2` and falsely blocked names, British
+spellings and brands; the system checker knows them and costs under a millisecond. Keeping
+the policy in the core keeps it portable (another shell can plug in Hunspell).
+**Cost.** The replay tool can't call the checker, so `tools/spell-map` precomputes verdicts
+for a corpus. On the clean corpus: 4 false blocks, no change in keystrokes saved.
+
+## D26. Replacement suggestions for emoji and autocorrect (2026-10-20)
+
+**Decision.** A suggestion may replace text before the caret (`replace` in the event and in
+`accept`); the shell deletes it with Backspace and inserts the new text. Replacements are
+accepted whole, never typed through or cached, and not counted as typing saved.
+**Why.** Both features change what was typed rather than extend it; one mechanism serves
+both, and other shells can implement it the same way (TSF and IBus can delete surrounding
+text).
+
+## D27. Mid-line by plain continuation, off by default (2026-10-20)
+
+**Decision.** Mid-line suggestions use the normal prompt, at most 3 words, cut where they
+repeat the rest of the line, shown as a card under the caret; the setting is off by default.
+**Why.** Fill-in-the-middle with Qwen3's FIM tokens got 5.6% of words right against 72.1%
+for plain continuation (`docs/MEASUREMENTS.md`). Inline ghost text would overlap the rest of
+the line. Cotypist keeps mid-line in Labs too.
+
+## D28. 3-beam phrase search on mains power (2026-10-20)
+
+**Decision.** Beam width 3 when on mains power, greedy on battery.
+**Why.** +1.1 points of keystrokes saved for +16 ms p50 and +15% GPU energy; wider beams
+did worse (they favour probable phrases over the right next word). Beams live in extra KV
+sequences, so prefix reuse and rollback are unaffected; recurrent models stay greedy.
+
+## D29. Apple Foundation Models as an opt-in shell backend (2026-10-20)
+
+**Decision.** The core gains a `shell` backend that calls a completer the shell installs;
+on macOS it is Apple's on-device model, offered only where Apple Intelligence is available
+and never chosen automatically.
+**Why.** The research plan called for a zero-download fallback. The model is a chat model
+(no raw continuation, no logits): about 0.5 s per suggestion warm, no token healing beyond
+the OpenAI-style filter. FoundationModels is weak-linked so the app still runs on macOS 14
+and 15.
+
+## D30. No Cotypist history import (2026-10-20)
+
+**Decision.** Instead of importing Cotypist's history, Import Writing… takes text files the
+user picks.
+**Why.** Cotypist's `cotypist.db` is encrypted (not a SQLite header) with a key in
+Cotypist's own Keychain item; reading it would mean breaking another app's encryption.
+

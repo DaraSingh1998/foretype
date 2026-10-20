@@ -5,6 +5,23 @@ roadmap phase.
 
 ## Unreleased
 
+### Quality and compatibility backlog (2026-10-20)
+- Emoji: `:name` offers the emoji (1,913 gemoji shortcodes); Tab replaces the shortcode.
+- Autocorrect: a misspelled word just finished gets the macOS spell checker's correction
+  as a suggestion (Tab replaces it); names, acronyms and your own words are left alone.
+- Typo gate: no suggestion while the word being typed can't become a real word.
+- Phrase beam search: 3 beams on mains power (+1.1 points of keystrokes saved), greedy on
+  battery.
+- Mid-line suggestions (experimental, off by default), in a card under the caret.
+- Code editors: VS Code, Cursor and Windsurf chat inputs get suggestions; their editors
+  stay off.
+- Hints for Google Docs (screen-reader support) and Arc/Dia (Text Metrics); page URLs now
+  reach the prompt header; text-marker reads for web editors whose ranges fail.
+- Apple on-device model as a no-download backend (macOS 26+, opt-in).
+- llama-server receives the personal vocabulary bias (`logit_bias`).
+- Import Writing… for personalization from text files.
+- `ft-replay --beam`, `--spell`, `--mid-line-eval`; `tools/spell-map`.
+
 ### Product (2026-10-20)
 - **Settings window** (menu: Settings…, Cmd-,): General (on/off, length, stop at sentence
   end, screen context, custom instructions), Personalization, Apps (the apps you changed,

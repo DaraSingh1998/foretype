@@ -58,20 +58,21 @@ are kept for if that changes; the core stays portable.
 
 - **Models**: a purpose-tuned small completion model; MLX as an experiment. (KV snapshots
   for Gemma 4 and Qwen3.5 landed in `phase3/kv-snapshots`.)
-- **Quality**: phrase beam search (Cotypist reportedly uses a 9-wide beam), a dictionary gate
-  that knows the user's vocabulary and names (the spike's gate falsely blocked names,
-  British spellings, brands), emoji shortcodes, inline autocorrect, mid-line completion.
-- **Compatibility**: pixel caret locator for apps without geometry (Teams, LibreOffice,
-  Obsidian/CodeMirror); WebKit/Chromium text-marker reads; app-by-app insertion testing to
-  fill `insertion` overrides; VS Code/Cursor chat panels; Google Docs (needs its
-  screen-reader mode); Arc/Dia "Text Metrics" guidance in the UI; the overlay checked by eye
-  in Safari, Mail and Notes.
-- **Personalization**: Cotypist history import; per-app retrieval tuning; logit bias for
-  `llama-server` via its `logit_bias` parameter.
-- **Product**: Foundation Models fallback (zero download), localization, resume data
-  that survives a relaunch, adding an app to the per-app list from the Settings window (today
-  only from the menu while that app is in front). (Settings window, statistics and model
-  manager polish landed in `feat/product-ui`.)
+- **Quality**: a model trained for fill-in-the-middle, so mid-line can use the rest of the
+  line (Qwen3's FIM tokens don't work on prose). (Beam search, the typo gate, emoji,
+  autocorrect and mid-line landed in `feat/quality`.)
+- **Compatibility**: app-by-app insertion testing to fill `insertion` overrides; check the
+  VS Code/Cursor/Windsurf chat `allow_fields` patterns and text-marker reads in real apps;
+  the overlay checked by eye in Safari, Mail and Notes. (Chat inputs, Google Docs and
+  Arc/Dia hints and text markers landed in `feat/compat-fallback`.)
+- **Personalization**: per-app retrieval tuning (needs a larger personal corpus than the 12
+  self-written documents: tuning on those would fit noise); measure the llama-server
+  `logit_bias`. Cotypist's history can't be imported (encrypted, D30); Import Writing…
+  takes text files instead.
+- **Product**: localization, resume data that survives a relaunch, adding an app to the
+  per-app list from the Settings window (today only from the menu while that app is in
+  front). (Settings window, statistics, model manager polish and the Apple on-device
+  fallback landed.)
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.

@@ -94,4 +94,5 @@ downloading any model** (name, size, source).
 | `FORETYPE_INSERTION` | Forces `keystrokes`, `paste`, `paste-long` or `first-word-then-paste` |
 | `FORETYPE_MODELS_DIR`, `FORETYPE_MODEL_BASE_URL` | Model folder and download host (tests) |
 | `FORETYPE_LLAMA_LOGS` | Keep llama.cpp's own logging |
+| `FORETYPE_TEXT_MARKERS` | `1` reads web fields through text markers even when ranges work (testing) |
 | Build: `FORETYPE_SIGN_IDENTITY`, `FORETYPE_SPARKLE`, `FORETYPE_FEED_URL`, `FORETYPE_SPARKLE_PUBLIC_KEY`, `FORETYPE_NOTARY_PROFILE`, `FORETYPE_VERSION`, `SPARKLE_BIN` | See `RELEASING.md` |
