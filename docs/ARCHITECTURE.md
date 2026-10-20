@@ -80,19 +80,29 @@ In order; the first rule that applies decides:
    (`AXSecureTextField`, or "password"/"secure" in the role description), role not
    `AXTextArea`/`AXTextField`/`AXComboBox`, `AXSearchField` (unless forced), a selection,
    IME composition (`marked_len > 0`), app disabled by the user, app disabled by default in
-   the compat DB (unless the user enabled it or forced), agent-prompt-only app whose caret
-   line is not an agent prompt, single-line field narrower than 260 pt, more than 8
-   non-space characters after the caret on the line, fewer than 2 characters typed, a
-   partial word longer than 30 characters.
+   the compat DB (unless the user enabled it, forced, or the field's label matches the
+   rule's `allow_fields`, e.g. a code editor's chat input), agent-prompt-only app whose
+   caret line is not an agent prompt, single-line field narrower than 260 pt, more than 8
+   non-space characters after the caret on the line (lifted when `mid_line` is on and the
+   model has FIM tokens), fewer than 2 characters typed, a partial word longer than 30
+   characters.
 5. Agent-prompt apps (terminals): `text_before` is replaced by the prompt's own text.
 6. Recorder (`observe`) when personalization is on.
 7. Dismissed for exactly this text (unless forced) → hide (`dismissed`).
 8. **Type-through**: the text extends the shown suggestion's base by a prefix of the
    suggestion, or backspaces up to 24 characters into it → emit the rest (`typeThrough`),
    no inference.
-9. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
-   prefetch → emit (`cache`).
-10. Build the prompt (personal examples are chosen once per field and cached) and enqueue a
+9. **Typing aids** (no model): an `:name` emoji shortcode at a word start → the best
+   gemoji match as a replacement (`emoji`; no match → hide, `shortcode`); a misspelled word
+   just finished (`spell_word`/`spell_correction` from the shell) → its correction as a
+   replacement (`autocorrect`), unless it is capitalized mid-sentence, an acronym, has
+   digits, or is one of the user's own words; a partial word the shell's spell checker says
+   can't become a word (`spell_fragment: "typo"`) → hide (`typo`), unless capitalized, with
+   digits, shorter than 3 letters or a prefix of the user's own words.
+10. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
+   prefetch → emit (`cache`). Skipped mid-line (the key doesn't hold the text after the
+   caret).
+11. Build the prompt (personal examples are chosen once per field and cached) and enqueue a
     `Complete` job; emit an empty `pending` event so the shell hides the stale ghost.
 
 `warm` enqueues a zero-token prefill of a field's prompt only if nothing is queued.
@@ -125,6 +135,17 @@ In order; the first rule that applies decides:
   allowed (logit masking over the detokenized vocabulary). Mid-word completion therefore
   works even when the fragment is not a token boundary, and the prompt prefix stays
   identical for a whole word.
+- **Fill-in-the-middle** (mid-line): a prompt with a `suffix` becomes `[BOS] <fim_prefix>
+  prefix <fim_suffix> rest of line <fim_middle>` on models whose vocabulary has FIM tokens
+  (Qwen3 does, Gemma 4 doesn't); the suggestion is capped at 3 words and cut where it
+  starts repeating the rest of the line. Without FIM tokens a mid-line prompt returns
+  nothing (`noFim`).
+- **Phrase beam search** (`beam_width` > 1, truncating models): beams live in sequences
+  1..16 of a unified KV cache (copying a sequence only tags cells; sequence 0 keeps the
+  prompt, so nothing is rolled back), one batched decode per step, the `beam_width` best
+  children by summed log-probability survive, the same healing, bias and stops as greedy
+  (`stop_before`), and the finished phrase with the best mean log-probability wins (its
+  first word may differ from greedy's). Recurrent models stay greedy.
 - **Greedy decoding** with stops: newline; the next word would exceed `max_words`; a
   sentence end before a new word (`stop_at_sentence_end`); end-of-generation token; a
   deadline (`deadline_ms`, default 300 ms, counted from the end of prefill); token budget
@@ -185,6 +206,13 @@ fragment = " no"                                 ← typed partial word + its le
 - Everything that changes rarely (screen text, examples, header) comes first; everything
   that changes per keystroke comes last.
 
+### Emoji (`emoji.rs`, `core/data/emoji.tsv`)
+
+1,913 gemoji shortcodes (MIT, Unicode ≤ 15.0). `typed_shortcode` accepts a colon at a word
+start (after whitespace, an opening bracket or nothing) followed by 2+ of `a-z0-9_+-`, so
+times (`10:30`) and URLs don't trigger. `lookup` ranks an exact name, then a list of
+common names, then the shortest, then Unicode order.
+
 ### Session (`session.rs`)
 
 Holds the shown suggestion (`base`, `suggestion`) for one field, a 64-entry cache and a
@@ -195,6 +223,10 @@ dismissal marker.
 - `accept(NextWord | All)`: returns `(insert, remaining)` and advances `base`, so a second
   Tab before the host reports the edit still inserts the following word.
 - `dismiss`: suppresses suggestions until the text changes.
+- **Replacements** (`set_replacement`): an emoji or a correction stands for text just
+  before the caret (`replace`). Accepting either key returns `Accepted { insert, remaining:
+  "", replace }` and the shell deletes `replace` (Backspace per character) before
+  inserting; replacements are never typed through or cached.
 - `remember`: cache-only insert used by the prefetch.
 
 ### Compatibility database (`compat/apps.json`, `policy.rs`)
@@ -232,17 +264,20 @@ The file is compiled into the core (`include_str!`).
   boundary; chosen on the field's first prompt.
 - **Strength**: gentle 1.0, balanced 2.0, strong 4.0 logits at full weight.
 
-### HTTP backends (`backend.rs`)
+### HTTP and shell backends (`backend.rs`)
 
-| | `llama-server` | OpenAI-compatible |
-|---|---|---|
-| Endpoint | `POST /completion`, streamed | `POST /v1/completions`, streamed |
-| Prompt | prefix | prefix (without the partial word) |
-| Healing | GBNF grammar `root ::= "<fragment>" [^\n]*` | reply used only if it starts with the fragment; otherwise a second request with prefix + fragment |
-| Caching | `cache_prompt: true`, zero-token warm | last `(prefix, reply)` reused for every keystroke in a word |
-| Bias | none | none |
+| | `llama-server` | OpenAI-compatible | `shell` (Apple on-device model) |
+|---|---|---|---|
+| Endpoint | `POST /completion`, streamed | `POST /v1/completions`, streamed | `ft_engine_set_completer` callback, `{"prefix","max_words"}` in, text out |
+| Prompt | prefix | prefix (without the partial word) | as OpenAI |
+| Healing | GBNF grammar `root ::= "<fragment>" [^\n]*` | reply used only if it starts with the fragment; otherwise a second request with prefix + fragment | as OpenAI (replies are whole, so the last word is kept) |
+| Caching | `cache_prompt: true`, zero-token warm | last `(prefix, reply)` reused for every keystroke in a word | as OpenAI |
+| Bias | `logit_bias` for the user's single-token words (found once per profile with `/tokenize`, up to 400) | none | none |
 
-Responses are read line by line, so a new keystroke abandons a request between chunks.
+Responses are read line by line, so a new keystroke abandons a request between chunks. The
+shell completer blocks the engine thread; on macOS `AppleModel.complete` runs Foundation
+Models with a fresh session per request (greedy, 3 s timeout) and adds the leading space
+the instruction-tuned model leaves out. FoundationModels is weak-linked (macOS 26+).
 
 ### Model catalog (`models.rs`)
 
@@ -261,38 +296,43 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_free(engine)` | Stop the worker, free the model |
 | `ft_engine_submit(engine, snapshot_json)` | Field changed |
 | `ft_engine_warm(engine, snapshot_json)` | Prefill a newly focused field |
-| `ft_engine_accept(engine, mode)` | 0 next word, 1 all → `{"insert","remaining"}` or NULL |
+| `ft_engine_accept(engine, mode)` | 0 next word, 1 all → `{"insert","remaining","replace"}` or NULL (delete `replace` before the caret first) |
 | `ft_engine_dismiss(engine, field_key, text_before)` | Esc |
 | `ft_engine_configure(engine, settings_json)` | Replace settings |
+| `ft_engine_set_completer(engine, callback, ctx)` | Completer for the `shell` backend (request JSON in, malloc'd text out) |
 | `ft_engine_compat_rule(engine, bundle_id)` | Rule JSON for an app |
 | `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization |
 | `ft_model_catalog(ram_gb)` | Model list (no engine needed) |
 
 **CoreConfig** (`ft_engine_new`): `model_path`, `n_ctx` (2048), `n_gpu_layers` (999),
 `n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`
-(`local`|`llama-server`|`openai`), `backend_url`, `backend_model`, `backend_api_key`.
+(`local`|`llama-server`|`openai`|`shell`), `backend_url`, `backend_model`, `backend_api_key`.
 
 **Settings** (`ft_engine_configure`): `enabled`, `length_words` (4), `stop_at_sentence_end`,
 `instructions`, `app_instructions` {bundle: text}, `disabled_apps`, `enabled_apps`,
 `only_apps`, `deadline_ms` (300), `max_body_chars` (1600), `unload_after_s` (300),
 `debounce_ms` (0), `prefetch` (true), `personalize` (false), `personalize_strength` (1),
-`personal_examples` (true).
+`personal_examples` (true), `emoji` (true), `autocorrect` (true), `typo_gate` (true),
+`mid_line` (false), `beam_width` (1).
 
 **Snapshot** (`submit`/`warm`): `revision`, `field_key`, `bundle_id`, `app_name`,
-`window_title`, `url`, `role`, `subrole`, `role_description`, `text_before`, `text_after`
-(rest of the caret line), `screen_context`, `selection_len`, `marked_len`, `secure_input`,
-`field_width`, `field_height`, `force`.
+`window_title`, `url`, `role`, `subrole`, `role_description`, `description` (label or
+placeholder), `text_before`, `text_after` (rest of the caret line), `screen_context`,
+`selection_len`, `marked_len`, `secure_input`, `field_width`, `field_height`, `force`,
+`spell_fragment` (`word`|`prefix`|`typo`|empty), `spell_word`, `spell_correction`.
 
 **Events** (callback):
 
 ```json
 {"type":"suggestion","revision":42,"text":" going next week","source":"model","ms":71.2,"prefilled":1,"stop":"words"}
 {"type":"suggestion","revision":43,"text":"","source":"policy","reason":"secureField"}
+{"type":"suggestion","revision":44,"text":"🎉","source":"emoji","replace":":ta","label":":tada:"}
 {"type":"status","state":"ready","detail":"loaded in 846 ms"}
 ```
 
-`source`: `model`, `typeThrough`, `cache`, `pending`, `policy`, `dismissed`, `error`. An
-empty `text` means hide. The shell must ignore events whose `revision` is not its latest.
+`source`: `model`, `typeThrough`, `cache`, `pending`, `policy`, `dismissed`, `error`,
+`emoji`, `autocorrect`. An empty `text` means hide. `replace` (with `label`) marks a
+replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace` on accept. The shell must ignore events whose `revision` is not its latest.
 
 ## macOS shell
 
@@ -316,7 +356,11 @@ empty `text` means hide. The shell must ignore events whose `revision` is not it
   before the caret through `AXStringForRange` in a window of 3,000 UTF-16 units whose start
   is aligned to 1,024 (falling back to `AXValue`), the rest of the line (≤160), role,
   subrole, frame, marked range (`AXTextInputMarkedRange`, only length > 0 counts), window
-  title and frame (on focus). `field_key = pid << 32 ^ CFHash(element)`. Primes Chromium
+  title and frame (on focus), and once per element its label/placeholder
+  (`description`) and page URL (nearest `AXWebArea` with an http(s) `AXURL`). When
+  `AXSelectedTextRange` is missing (some contenteditable editors) it reads through text
+  markers instead (`AX.viaTextMarkers`; `FORETYPE_TEXT_MARKERS=1` forces it).
+  `field_key = pid << 32 ^ CFHash(element)`. Primes Chromium
   (`AXEnhancedUserInterface`) and Electron (`AXManualAccessibility`) apps per the compat
   DB and restores the flags on quit. Chrome turns on web content only after the flag has
   stayed set for 2 s (a clear inside that window cancels it), so the flag is set once per
@@ -324,6 +368,13 @@ empty `text` means hide. The shell must ignore events whose `revision` is not it
   activates) and while the app shows no focused element, and set again only when it reads
   `false`. With `FORETYPE_ONLY_APPS` (bundle IDs or pids), other apps are never read or
   primed.
+- **`Speller.swift`**: on the AX thread, asks `NSSpellChecker` (language left to the
+  checker, so it follows the user's languages and learned words) whether the partial word
+  is a word, can still become one (`completions`), or is a typo, and for a word just
+  finished with a space whether it is misspelled and its correction. Verdicts are cached;
+  secure fields are never checked. The core applies the policy.
+- **`AppleModel.swift`**: Foundation Models as the `shell` backend's completer (offered
+  in "Use a Server Instead…" when Apple Intelligence is available).
 - **`Caret.swift`**: `CaretResolver` reads both the zero-length `AXBoundsForRange` and the
   previous character's trailing edge, validates each (origin zero, zero or huge height,
   equal to the field frame, outside the field, off-screen, too wide for one character) and
@@ -336,7 +387,9 @@ empty `text` means hide. The shell must ignore events whose `revision` is not it
   `.statusBar` level, on all Spaces, excluded from Accessibility. Draws the words that fit
   before the field's right edge in the host font, gray. Without a caret rect it shows a
   "mirror card" (⇥ suggestion) above the field. `advance` shifts the ghost after an accept
-  until the host reports the new caret.
+  until the host reports the new caret. Mid-line suggestions show as a card just under the
+  caret (inline ghost text would overlap the rest of the line); `showHint` shows a tip card
+  for 8 s without turning on the key tap.
 - **`KeyTap.swift`**: a permanent listen-only session tap (notices typing) and a consuming
   head-inserted session tap that is enabled only while a suggestion is visible (disabled 50
   ms after it hides, so the last synthetic key drains). Consumes Tab (next word), the key
@@ -348,11 +401,14 @@ empty `text` means hide. The shell must ignore events whose `revision` is not it
   newlines. Paste: snapshot the pasteboard, write the text plus nspasteboard.org transient
   markers, Cmd-V on the layout's V key, restore after 250 ms unless the user copied
   meanwhile; only if `NSPasteboard.accessBehavior == .alwaysAllow` (macOS 15.4+).
+  `deleteBackward(n)` sends Backspace `n` times (replacements: emoji, autocorrect).
 - **`Controller.swift`**: wires everything. On the AX thread it adds the cached screen text
-  to each snapshot, applies force (per field and line) and snooze, submits, and asks the
-  screen provider for a refresh. On the main thread it drops events whose revision is
+  to each snapshot, applies force (per field and line) and snooze, adds the speller's
+  verdicts, shows one-time hints (Google Docs without screen-reader support; Arc and Dia
+  without Text Metrics), submits, and asks the screen provider for a refresh. On the main thread it drops events whose revision is
   stale, shows or hides the panel, toggles the consuming tap, and performs key actions. If
-  an accept finds no suggestion (it went stale), it gives the key back. The engine can be
+  an accept finds no suggestion (it went stale), it gives the key back; a replacement's text
+  is deleted before the insert. The engine can be
   swapped at runtime (`replaceEngine`) when the model or server changes.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
   every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
