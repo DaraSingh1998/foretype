@@ -474,6 +474,8 @@ final class PixelCaretProvider {
         var lineStart: Int
         var lineText: String
         var font: NSFont?
+        /// The AX caret rejected only for lying outside the field frame, to confirm.
+        var edgeOutsideFrame: CGRect?
     }
 
     struct Estimate {
@@ -520,7 +522,8 @@ final class PixelCaretProvider {
         }
         let dx = PixelCaretProvider.advance(from: est.lineText, to: t.lineText, font: font(t, est)) * est.widthScale
         let x = est.x + dx
-        let field = t.fieldFrame.flatMap { f in f.insetBy(dx: -4, dy: -4).contains(CGPoint(x: est.x, y: est.y + est.height / 2)) ? f : nil }
+        // The field's horizontal extent bounds the line (LibreOffice's frames are only off vertically).
+        let field = t.fieldFrame.flatMap { f in est.x >= f.minX - 4 && est.x <= f.maxX + 4 ? f : nil }
         let right = (field ?? t.windowFrame)?.maxX ?? .greatestFiniteMagnitude
         let left = (field ?? t.windowFrame)?.minX ?? -.greatestFiniteMagnitude
         guard x < right - 1, x > left else { return nil }
@@ -570,6 +573,11 @@ final class PixelCaretProvider {
     }
 
     private func region(_ t: Target, wholeWindow: Bool) -> CGRect? {
+        if !wholeWindow, let e = t.edgeOutsideFrame {
+            // Where AX says the caret is (to confirm it): that line, across the field.
+            let xs = t.fieldFrame.map { ($0.minX - 6, $0.width + 12) } ?? (e.minX - 300, 600)
+            return CGRect(x: xs.0, y: e.minY - e.height, width: xs.1, height: e.height * 3)
+        }
         if !wholeWindow, let f = t.fieldFrame, f.width >= 20, f.height >= 8 {
             return f.insetBy(dx: -6, dy: -6)
         }
@@ -641,6 +649,14 @@ final class PixelCaretProvider {
         lock.unlock()
         Log.debug(String(format: "pixel caret (%@): %.0f,%.0f h%.0f in %d frames %.0f ms, width scale %.2f",
                          how, hit.rect.minX, hit.rect.minY, hit.rect.height, hit.frames, hit.ms, scale))
+        // An AX character rect that only the frame check rejected, where the caret really is:
+        // after two such matches the app's rects are trusted and AX places the caret again.
+        if let e = t.edgeOutsideFrame {
+            let agreed = abs(e.minX - hit.rect.minX) <= 1.5 && abs(e.midY - hit.rect.midY) <= max(3, hit.rect.height * 0.25)
+            if CaretResolver.notePixelCheck(t.bundleId, agreed: agreed) {
+                Log.debug("pixel caret: \(t.bundleId)'s character rects match the screen outside the field frame; using them")
+            }
+        }
         onUpdate?(t.fieldKey)
     }
 }

@@ -120,6 +120,17 @@ enum PixelCaretSelfTest {
         let advanceOK = abs(typedW - FontMatcher.width(" notes", f)) < 0.01 && abs(backW + FontMatcher.width("tes", f)) < 0.5
         print(String(format: "advance: +%.2f / %.2f pt %@", typedW, backW, advanceOK ? "ok" : "FAILED"))
         ok = ok && advanceOK
+        // CPU cost of one blink step on a field-sized and a window-sized region (2×).
+        for (name, w, h) in [("field 656x384 pt", 1312, 768), ("window 1492x875 pt", 2984, 1750)] {
+            let blank = PixelFrame(width: w, height: h, bytes: [UInt8](repeating: 255, count: w * h * 4), origin: .zero, scale: 2)
+            var acc = PixelCaret.BlinkAccumulator(blank)
+            let t0 = CFAbsoluteTimeGetCurrent()
+            _ = acc.add(blank)
+            let t1 = CFAbsoluteTimeGetCurrent()
+            _ = acc.bar(hint: nil)
+            let t2 = CFAbsoluteTimeGetCurrent()
+            print(String(format: "cost, %@: add a frame %.1f ms, search %.1f ms", name, (t1 - t0) * 1000, (t2 - t1) * 1000))
+        }
         print(String(format: "%d cases, worst error %.2f pt", cases, worst))
         print(ok ? "caret self-test passed" : "caret self-test FAILED")
         return ok
@@ -134,6 +145,8 @@ enum PixelCaretSelfTest {
 enum CaretBench {
     struct Row {
         var pos: Int
+        /// Which text element (apps with one element per paragraph); printed as field × 1000 + pos.
+        var field: Int
         var kind: String
         var ax: CGRect?
         var axStrategy: String
@@ -182,46 +195,68 @@ enum CaretBench {
             }
             return true
         }
-        guard guardFront(), let win = AX.element(AX.copy(app, kAXFocusedWindowAttribute)),
-              let el = AX.element(AX.copy(app, kAXFocusedUIElementAttribute)),
-              let orig = AX.range(AX.copy(el, kAXSelectedTextRangeAttribute)) else {
-            say("no focused text element")
+        guard guardFront(), let win = AX.element(AX.copy(app, kAXFocusedWindowAttribute)) else { return false }
+        struct Field { var el: AXUIElement; var value: NSString; var frame: CGRect? }
+        var fields: [Field] = []
+        var orig: CFRange?
+        if let el = AX.element(AX.copy(app, kAXFocusedUIElementAttribute)),
+           let sel = AX.range(AX.copy(el, kAXSelectedTextRangeAttribute)) {
+            orig = sel
+            fields = [Field(el: el, value: (AX.string(el, kAXValueAttribute) ?? "") as NSString, frame: AX.frame(el))]
+        } else {
+            // No focused element, e.g. LibreOffice right after opening a document: one text
+            // element per paragraph; use the window's, top to bottom.
+            func walk(_ e: AXUIElement, _ depth: Int) {
+                if AX.string(e, kAXRoleAttribute) == "AXTextArea", let v = AX.string(e, kAXValueAttribute), v.count >= 16 {
+                    fields.append(Field(el: e, value: v as NSString, frame: AX.frame(e)))
+                }
+                guard depth < 12 else { return }
+                for c in (AX.copy(e, kAXChildrenAttribute) as? [AXUIElement]) ?? [] { walk(c, depth + 1) }
+            }
+            walk(win, 0)
+            fields.sort { ($0.frame?.minY ?? 0) < ($1.frame?.minY ?? 0) }
+            say("no focused element: \(fields.count) paragraph elements in the window")
+        }
+        guard !fields.isEmpty else {
+            say("no text element")
             return false
         }
-        let role = AX.string(el, kAXRoleAttribute) ?? ""
-        let value = (AX.string(el, kAXValueAttribute) ?? "") as NSString
-        let fieldFrame = AX.frame(el)
         let windowFrame = AX.frame(win)
-        say("\(bundle) pid \(pid) role \(role) chars \(value.length) field \(fieldFrame.map { "\($0)" } ?? "none") window \(windowFrame.map { "\($0)" } ?? "none")")
+        say("\(bundle) pid \(pid) role \(AX.string(fields[0].el, kAXRoleAttribute) ?? "") chars \(fields[0].value.length) " +
+            "field \(fields[0].frame.map { "\($0)" } ?? "none") window \(windowFrame.map { "\($0)" } ?? "none")")
 
         // Line ends and mid-line word boundaries of the first lines with some text.
-        var targets: [(Int, String, Int)] = []   // (position, kind, line end)
-        var start = 0
-        while start < value.length, targets.count < wanted {
-            var end = value.range(of: "\n", range: NSRange(location: start, length: value.length - start)).location
-            if end == NSNotFound { end = value.length }
-            if end - start >= 16 {
-                let mid = value.range(of: " ", range: NSRange(location: start + (end - start) * 2 / 5, length: (end - start) * 3 / 5)).location
-                if mid != NSNotFound, mid < end - 4 { targets.append((mid, "mid", end)) }
-                targets.append((end, "end", end))
+        var targets: [(Int, String, Int)] = []   // (position, kind, field)
+        for (fi, field) in fields.enumerated() {
+            let value = field.value
+            var start = 0
+            while start < value.length, targets.count < wanted {
+                var end = value.range(of: "\n", range: NSRange(location: start, length: value.length - start)).location
+                if end == NSNotFound { end = value.length }
+                if end - start >= 16 {
+                    let mid = value.range(of: " ", range: NSRange(location: start + (end - start) * 2 / 5, length: (end - start) * 3 / 5)).location
+                    if mid != NSNotFound, mid < end - 4 { targets.append((mid, "mid", fi)) }
+                    targets.append((end, "end", fi))
+                }
+                start = end + 1
             }
-            start = end + 1
         }
-        let font = CaretResolver.font(el, caret: targets.first?.0 ?? 1, length: value.length)
+        let font = CaretResolver.font(fields[0].el, caret: targets.first?.0 ?? 1, length: fields[0].value.length)
         say("font \(font.map { "\($0.fontName) \($0.pointSize)" } ?? "none (system font fallback)")")
 
-        func move(_ pos: Int) {
+        func move(_ fi: Int, _ pos: Int) {
             var r = CFRange(location: pos, length: 0)
-            AX.set(el, kAXSelectedTextRangeAttribute, AXValueCreate(.cfRange, &r)!)
+            AX.set(fields[fi].el, kAXSelectedTextRangeAttribute, AXValueCreate(.cfRange, &r)!)
         }
-        func searchRegion(whole: Bool) -> CGRect? {
-            if !whole, let f = fieldFrame, f.width >= 20, f.height >= 8 { return f.insetBy(dx: -6, dy: -6) }
+        func restore() { move(0, orig?.location ?? 0) }
+        func searchRegion(_ fi: Int, whole: Bool) -> CGRect? {
+            if !whole, let f = fields[fi].frame, f.width >= 20, f.height >= 8 { return f.insetBy(dx: -6, dy: -6) }
             return windowFrame
         }
 
         // Raw capture cost of the field region.
         var captureMs: [Double] = []
-        if let region = searchRegion(whole: false) {
+        if let region = searchRegion(0, whole: false) {
             for _ in 0..<8 {
                 let t0 = CFAbsoluteTimeGetCurrent()
                 if PixelCaret.capture(pid: pid, windowFrame: windowFrame, region: region) != nil {
@@ -232,30 +267,31 @@ enum CaretBench {
 
         var rows: [Row] = []
         var wholeWindow = false
-        var prevMid: (pos: Int, hit: PixelCaretHit)?
+        var prevMid: (pos: Int, field: Int, hit: PixelCaretHit)?
         var widthScale: CGFloat = 1
-        for (pos, kind, _) in targets {
-            guard guardFront() else { move(orig.location); return false }
-            move(pos)
+        for (pos, kind, fi) in targets {
+            guard guardFront() else { restore(); return false }
+            let el = fields[fi].el
+            move(fi, pos)
             usleep(120_000)
-            let ax = CaretResolver.resolve(el, caret: pos, frame: fieldFrame, bundleId: bundle)
+            let ax = CaretResolver.resolve(el, caret: pos, frame: fields[fi].frame, bundleId: bundle)
             let raw = pos > 0 ? AX.bounds(el, pos - 1, 1) : nil
-            var row = Row(pos: pos, kind: kind, ax: ax?.rect, axStrategy: ax?.strategy ?? "none", raw: raw)
+            var row = Row(pos: pos, field: fi, kind: kind, ax: ax?.rect, axStrategy: ax?.strategy ?? "none", raw: raw)
             for whole in wholeWindow ? [true] : [false, true] {
-                guard let region = searchRegion(whole: whole) else { continue }
+                guard let region = searchRegion(fi, whole: whole) else { continue }
                 row.blink = PixelCaret.blink(pid: pid, windowFrame: windowFrame, region: region, hint: nil)
                 if row.blink != nil { wholeWindow = whole; break }
             }
             if let hit = row.blink {
                 // As after typing: arrive from elsewhere (restarts the blink, caret solid), one
                 // capture 60 ms later, prediction 6 pt off.
-                guard guardFront() else { move(orig.location); return false }
-                move(max(0, pos - 1)); usleep(30_000); move(pos); usleep(60_000)
+                guard guardFront() else { restore(); return false }
+                move(fi, max(0, pos - 1)); usleep(30_000); move(fi, pos); usleep(60_000)
                 let near = CGPoint(x: (ax?.rect.minX ?? hit.rect.minX) + 6, y: hit.rect.midY)
                 row.verify = PixelCaret.verify(pid: pid, windowFrame: windowFrame, near: near, look: hit.look, radius: 24)
-                if kind == "end", let m = prevMid {
+                if kind == "end", let m = prevMid, m.field == fi {
                     let fallback = NSFont.systemFont(ofSize: max(11, m.hit.rect.height * 0.78))
-                    let typed = value.substring(with: NSRange(location: m.pos, length: pos - m.pos))
+                    let typed = fields[fi].value.substring(with: NSRange(location: m.pos, length: pos - m.pos))
                     row.advance = m.hit.rect.minX + FontMatcher.width(typed, font ?? fallback)
                     let measured = FontMatcher.width(typed, fallback)
                     row.generic = m.hit.rect.minX + measured
@@ -263,18 +299,18 @@ enum CaretBench {
                     let ratio = (hit.rect.minX - m.hit.rect.minX) / measured
                     if measured >= 30, ratio > 0.6, ratio < 1.6 { widthScale = (widthScale + ratio) / 2 }
                 }
-                prevMid = kind == "mid" ? (pos, hit) : nil
+                prevMid = kind == "mid" ? (pos, fi, hit) : nil
             } else {
                 prevMid = nil
             }
             rows.append(row)
         }
-        move(orig.location)
+        restore()
 
         func f(_ v: CGFloat?) -> String { v.map { String(format: "%7.1f", $0) } ?? "      -" }
         say("pos  kind  AX x / y / h (strategy)            raw prev-char x / y      pixel x / y / h  frames  ms     verify x   ms   advance x")
         for r in rows {
-            say("\(String(format: "%4d", r.pos)) \(r.kind.padding(toLength: 4, withPad: " ", startingAt: 0)) " +
+            say("\(String(format: "%4d", r.pos + 1000 * r.field)) \(r.kind.padding(toLength: 4, withPad: " ", startingAt: 0)) " +
                 "\(f(r.ax?.minX))\(f(r.ax?.minY))\(f(r.ax?.height)) \(r.axStrategy.padding(toLength: 18, withPad: " ", startingAt: 0)) " +
                 "\(f(r.raw?.maxX))\(f(r.raw?.minY))   \(f(r.blink?.rect.minX))\(f(r.blink?.rect.minY))\(f(r.blink?.rect.height)) " +
                 "\(String(format: "%5d", r.blink?.frames ?? 0)) \(f(r.blink.map { CGFloat($0.ms) }))  \(f(r.verify?.rect.minX)) " +

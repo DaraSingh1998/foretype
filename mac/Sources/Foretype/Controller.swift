@@ -128,11 +128,13 @@ final class Controller {
         guard settings.useScreenContext, s.fieldKey & 0xFFFF_FFFF != 0, !s.textBefore.isEmpty,
               s.selectionLength == 0, s.markedLength == 0, screenContextAllowed(s),
               ScreenContextProvider.hasPermission else { return nil }
-        let mode = rule(s.bundleId)["caret"] as? String
+        // FORETYPE_CARET=pixel|ax overrides the app's rule (testing).
+        let mode = ProcessInfo.processInfo.environment["FORETYPE_CARET"] ?? rule(s.bundleId)["caret"] as? String
         guard mode != "ax", s.caret == nil || mode == "pixel" else { return nil }
         let line = s.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
         return .init(fieldKey: s.fieldKey, pid: s.pid, bundleId: s.bundleId, windowFrame: s.windowFrame, fieldFrame: s.frame,
-                     lineStart: s.caretIndex - line.utf16.count, lineText: line, font: s.font)
+                     lineStart: s.caretIndex - line.utf16.count, lineText: line, font: s.font,
+                     edgeOutsideFrame: s.edgeOutsideFrame)
     }
 
     /// Caret queue: the locator found or corrected the caret; move a visible suggestion.
@@ -154,11 +156,11 @@ final class Controller {
         }
     }
 
-    /// The field frame bounds the ghost text, unless a pixel-located caret lies outside it
-    /// (LibreOffice reports a frame elsewhere); then the window does.
+    /// The field frame's right edge bounds the ghost text, unless the caret lies left or right
+    /// of the field (a frame reported elsewhere); then the window's does. LibreOffice's
+    /// paragraph frames are about 100 pt too high but horizontally right.
     private func panelFrame(_ s: FieldSnapshot) -> CGRect? {
-        guard let c = s.caret, c.strategy.hasPrefix("pixel"), let f = s.frame,
-              !f.insetBy(dx: -4, dy: -4).contains(CGPoint(x: c.rect.minX, y: c.rect.midY)) else { return s.frame }
+        guard let c = s.caret, let f = s.frame, c.rect.minX < f.minX - 4 || c.rect.minX > f.maxX + 4 else { return s.frame }
         return s.windowFrame
     }
 

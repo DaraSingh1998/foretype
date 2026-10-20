@@ -16,6 +16,38 @@ enum CaretResolver {
     /// Vertical correction learned per app when the two strategies disagreed by a line.
     private static var zeroLengthOffset: [String: CGFloat] = [:]
 
+    /// Apps whose character rects the pixel caret locator found on screen although they lie
+    /// outside the element's frame (LibreOffice reports paragraph frames about 100 pt off).
+    /// Their rects skip the frame check. Written from the caret queue, read on the AX thread.
+    private static let trustLock = NSLock()
+    private static var outsideFrameMatches: [String: Int] = [:]
+
+    static func trustsOutsideFrame(_ bundleId: String) -> Bool {
+        trustLock.lock(); defer { trustLock.unlock() }
+        return (outsideFrameMatches[bundleId] ?? 0) >= 2
+    }
+
+    /// The pixel caret agreed (`true`) or disagreed with a character rect that only the frame
+    /// check rejected. Two agreements in a row make the app's rects trusted.
+    @discardableResult
+    static func notePixelCheck(_ bundleId: String, agreed: Bool) -> Bool {
+        trustLock.lock(); defer { trustLock.unlock() }
+        let wasTrusted = (outsideFrameMatches[bundleId] ?? 0) >= 2
+        outsideFrameMatches[bundleId] = agreed ? (outsideFrameMatches[bundleId] ?? 0) + 1 : 0
+        return !wasTrusted && (outsideFrameMatches[bundleId] ?? 0) >= 2
+    }
+
+    /// The previous character's trailing edge when it passes every check except lying inside
+    /// `frame`; nil otherwise. For the pixel locator to confirm.
+    static func edgeOutsideFrame(_ el: AXUIElement, caret: Int, frame: CGRect?) -> CGRect? {
+        guard caret > 0, frame != nil,
+              let prevText = AX.string(el, range: caret - 1, 1),
+              !["\n", "\r", "\u{2028}", "\u{2029}"].contains(prevText),
+              let p = AX.bounds(el, caret - 1, 1),
+              !plausible(p, frame: frame, singleChar: true), plausible(p, frame: nil, singleChar: true) else { return nil }
+        return CGRect(x: p.maxX, y: p.minY, width: 0, height: p.height)
+    }
+
     static func plausible(_ r: CGRect?, frame: CGRect?, singleChar: Bool) -> Bool {
         guard let r else { return false }
         if r.origin == .zero || r.height <= 0 || r.height > 200 { return false }
@@ -35,7 +67,8 @@ enum CaretResolver {
         return true
     }
 
-    static func resolve(_ el: AXUIElement, caret: Int, frame: CGRect?, bundleId: String) -> CaretInfo? {
+    static func resolve(_ el: AXUIElement, caret: Int, frame fieldFrame: CGRect?, bundleId: String) -> CaretInfo? {
+        let frame = trustsOutsideFrame(bundleId) ? nil : fieldFrame
         let zero = AX.bounds(el, caret, 0)
         let zeroOK = plausible(zero, frame: frame, singleChar: false)
 
@@ -77,9 +110,29 @@ enum CaretResolver {
         return nil
     }
 
+    /// The host field's font as drawn: the reported font, scaled when the document is zoomed.
+    static func font(_ el: AXUIElement, caret: Int, length: Int) -> NSFont? {
+        reportedFont(el, caret: caret, length: length).map { zoomed($0, el, caret: caret) }
+    }
+
+    /// LibreOffice reports the document's font size, not the zoomed one on screen (12 pt for
+    /// text drawn with a 29 pt line). When the last few characters are more than 25% wider or
+    /// narrower on screen than in the font, scale it to match.
+    static func zoomed(_ font: NSFont, _ el: AXUIElement, caret: Int) -> NSFont {
+        let k = min(caret, 24)
+        guard k >= 6, let text = AX.string(el, range: caret - k, k), !text.contains(where: \.isNewline),
+              let r = AX.bounds(el, caret - k, k), r.width > 0 else { return font }
+        let w = FontMatcher.width(text, font)
+        guard w > 0 else { return font }
+        let zoom = r.width / w
+        guard zoom > 1.25 || zoom < 0.8, zoom > 0.3, zoom < 4,
+              r.height < font.pointSize * zoom * 2.2 else { return font }  // one line only
+        return NSFont(descriptor: font.fontDescriptor, size: (font.pointSize * zoom).rounded()) ?? font
+    }
+
     /// The host field's font, from `AXAttributedStringForRange` around the caret. Chrome
     /// reports only a size; that falls back to the system font at that size.
-    static func font(_ el: AXUIElement, caret: Int, length: Int) -> NSFont? {
+    private static func reportedFont(_ el: AXUIElement, caret: Int, length: Int) -> NSFont? {
         let loc = caret > 0 ? caret - 1 : (length > 0 ? 0 : -1)
         guard loc >= 0,
               let raw = AX.copyParam(el, "AXAttributedStringForRange", AX.makeRange(loc, 1)),

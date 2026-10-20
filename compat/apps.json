@@ -127,8 +127,7 @@
       "note": "Teams returns empty caret rects; the pixel caret locator is the fallback (untested in Teams)."
     },
     "org.libreoffice.script": {
-      "caret": "pixel",
-      "note": "LibreOffice: the zero-length caret rect is a sentinel and the field frame and character rects disagree; caret found from pixels."
+      "note": "LibreOffice: one AX element per paragraph; the zero-length caret rect is a sentinel and paragraph frames are about 100 pt above the text, while character rects are right. The pixel caret confirms the character rects, then they are used; reports the unzoomed font size."
     },
     "com.apple.TextEdit": {
       "note": "TextKit: zero-length caret rect is one line high; marked range always present (zero length)."

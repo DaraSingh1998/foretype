@@ -177,14 +177,18 @@ mod tests {
 
     #[test]
     fn caret_rule() {
+        // Apps without AX geometry (Teams) or with rects the pixel caret confirms (LibreOffice)
+        // need no rule: the pixel caret is the fallback.
         let db = CompatDb::bundled();
-        assert_eq!(db.rule("org.libreoffice.script").caret.as_deref(), Some("pixel"));
-        assert_eq!(db.rule("com.microsoft.teams2").caret, None); // no AX rect at all: fallback
-        assert_eq!(db.rule("com.apple.TextEdit").caret, None);
+        assert_eq!(db.rule("org.libreoffice.script").caret, None);
+        assert_eq!(db.rule("com.microsoft.teams2").caret, None);
+        let db: CompatDb = serde_json::from_str(r#"{"apps": {"a.b": {"caret": "pixel"}, "c.d": {"caret": "ax"}}}"#).unwrap();
+        assert_eq!(db.rule("a.b").caret.as_deref(), Some("pixel"));
+        assert_eq!(db.rule("c.d").caret.as_deref(), Some("ax"));
         // The shell reads the rule as JSON: the key appears only when set.
-        let json = serde_json::to_string(&db.rule("org.libreoffice.script")).unwrap();
+        let json = serde_json::to_string(&db.rule("a.b")).unwrap();
         assert!(json.contains("\"caret\":\"pixel\""), "{json}");
-        assert!(!serde_json::to_string(&db.rule("com.apple.TextEdit")).unwrap().contains("\"caret\":"));
+        assert!(!serde_json::to_string(&db.rule("x.y")).unwrap().contains("\"caret\":"));
         let r: AppRule = serde_json::from_str(r#"{"disabled": true}"#).unwrap();
         assert!(r.disabled && r.caret.is_none());
     }
