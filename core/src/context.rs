@@ -26,8 +26,8 @@ pub struct Prompt {
     pub prefix: String,
     /// Partial word (with its leading space) that generation must start with.
     pub fragment: String,
-    /// Rest of the caret's line when completing mid-line (fill-in-the-middle); empty at
-    /// the end of a line.
+    /// Rest of the caret's line when completing mid-line (the suggestion is cut where it
+    /// starts repeating it); empty at the end of a line.
     pub suffix: String,
 }
 

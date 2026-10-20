@@ -158,8 +158,6 @@ pub struct Engine {
     vocab_bias: Vocabulary,
     rollback: Rollback,
     snapshots: VecDeque<StateSnapshot>,
-    /// Fill-in-the-middle tokens (prefix, suffix, middle) when the vocabulary has them.
-    fim: Option<[LlamaToken; 3]>,
     /// The context has room for beam-search sequences (truncating models only).
     beams: bool,
 }
@@ -231,8 +229,7 @@ impl Engine {
             pieces.push(if control { Vec::new() } else { vocab.token_to_piece(t, false, None) });
         }
         let add_bos = vocab.should_add_bos();
-        let fim = [vocab.fim_pre(), vocab.fim_suf(), vocab.fim_mid()];
-        let fim = fim.iter().all(|t| t.0 >= 0 && (t.0 as usize) < n_vocab).then_some(fim);
+
         Ok(Self {
             backend: backend_ptr,
             model: model_ptr,
@@ -247,7 +244,6 @@ impl Engine {
             vocab_bias: Vocabulary::default(),
             rollback,
             snapshots: VecDeque::new(),
-            fim,
             beams,
         })
     }
@@ -261,29 +257,7 @@ impl Engine {
         self.rollback
     }
 
-    /// True if the model can complete in the middle of a line (it has FIM tokens).
-    pub fn supports_fim(&self) -> bool {
-        self.fim.is_some()
-    }
 
-    /// The prompt's tokens: plain continuation, or fill-in-the-middle around the rest of
-    /// the line. `None` for a mid-line prompt on a model without FIM tokens.
-    fn prompt_tokens(&self, prompt: &Prompt) -> Option<Vec<LlamaToken>> {
-        if prompt.suffix.is_empty() {
-            return Some(self.tokenize(&prompt.prefix));
-        }
-        let [pre, suf, mid] = self.fim?;
-        let mut t = Vec::new();
-        if self.add_bos {
-            t.push(self.model().vocab().bos());
-        }
-        t.push(pre);
-        t.extend(self.tokenize_piece(&prompt.prefix));
-        t.push(suf);
-        t.extend(self.tokenize_piece(&prompt.suffix));
-        t.push(mid);
-        Some(t)
-    }
 
     /// Bytes held by recurrent-state snapshots (0 for truncating models).
     pub fn snapshot_bytes(&self) -> usize {
@@ -718,9 +692,9 @@ impl Engine {
         cancel: &dyn Fn() -> bool,
     ) -> Result<Completion, GenError> {
         let t0 = Instant::now();
-        let Some(tokens) = self.prompt_tokens(prompt) else {
-            return Ok(Completion { stop: "noFim", ..Completion::default() });
-        };
+        // Mid-line prompts are plain continuations too: Qwen3's FIM tokens produced noise
+        // on prose (docs/MEASUREMENTS.md), so the rest of the line only trims the result.
+        let tokens = self.tokenize(&prompt.prefix);
         let prefilled = self.sync(&tokens, cancel)?;
         let prefill_ms = ms(t0);
         // The wall-clock cap applies to generation: a cold prefill (first keystroke in a

@@ -111,8 +111,8 @@ pub struct Settings {
     pub autocorrect: bool,
     /// No suggestion while the partial word can't become a real word (Cotypist's rule).
     pub typo_gate: bool,
-    /// Suggest in the middle of a line too, filling in before the rest of it (models with
-    /// fill-in-the-middle tokens only; at most 3 words).
+    /// Suggest in the middle of a line too (built-in engine; at most 3 words, cut where the
+    /// suggestion would repeat the rest of the line).
     pub mid_line: bool,
     /// Phrase beam search width (1 = greedy).
     pub beam_width: usize,
@@ -285,8 +285,8 @@ struct Shared {
     track: Mutex<Option<FieldTrack>>,
     /// Personal examples chosen once per field, so the prompt header stays stable.
     examples: Mutex<HashMap<u64, Vec<String>>>,
-    /// The loaded model can fill in the middle of a line (set by the worker).
-    fim: AtomicBool,
+    /// The built-in engine is loaded: it can trim mid-line suggestions (set by the worker).
+    mid_line_ok: AtomicBool,
     /// The shell's completer for the "shell" backend.
     completer: backend::CompleterSlot,
 }
@@ -324,7 +324,7 @@ impl Core {
             profile_gen: AtomicU64::new(1),
             track: Mutex::new(None),
             examples: Mutex::new(HashMap::new()),
-            fim: AtomicBool::new(false),
+            mid_line_ok: AtomicBool::new(false),
             completer: backend::CompleterSlot::default(),
         });
         let engine_cfg = EngineConfig {
@@ -517,7 +517,7 @@ impl Core {
         }
         let disabled: HashSet<String> = settings.disabled_apps.iter().cloned().collect();
         let enabled: HashSet<String> = settings.enabled_apps.iter().cloned().collect();
-        let mid_line = settings.mid_line && self.shared.fim.load(Ordering::SeqCst);
+        let mid_line = settings.mid_line && self.shared.mid_line_ok.load(Ordering::SeqCst);
         if let Some(reason) = policy::evaluate(&snap, &self.shared.compat, &disabled, &enabled, mid_line) {
             self.shared.session.lock().unwrap().clear();
             if settings.personalize {
@@ -808,7 +808,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
         let t = Instant::now();
         match Engine::load(&cfg) {
             Ok(e) => {
-                shared.fim.store(e.supports_fim(), Ordering::SeqCst);
+                shared.mid_line_ok.store(true, Ordering::SeqCst);
                 (shared.sink)(&Event::Status {
                     state: "ready",
                     detail: format!("loaded in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0),

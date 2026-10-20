@@ -16,9 +16,8 @@
 //!       documents as the user's writing history, with and without personalization.
 //!   ft-replay MODEL --corpus CORPUS.jsonl --mid-line-eval [--typed N]
 //!       mid-line check: at word starts in the middle of lines, with the next word's first N
-//!       letters typed (default 1), asks for a suggestion with fill-in-the-middle (the rest
-//!       of the line as suffix) and without it, and counts how often the first suggested
-//!       word is the word that was there.
+//!       letters typed (default 1) and the rest of the line after the caret, counts how often
+//!       the first suggested word is the word that was there.
 //!   ft-replay MODEL --corpus CORPUS.jsonl --check-cache [--docs N] [--chars N] [--long]
 //!       cache-reuse check: types each document (with a burst of backspaces every 9
 //!       keystrokes) through an engine that reuses its cache and through one reset before
@@ -368,13 +367,9 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
 
 fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
     let mut e = Engine::load(&EngineConfig { model_path: model.to_string(), ..EngineConfig::default() }).expect("load model");
-    if !e.supports_fim() {
-        println!("mid-line-eval: this model has no fill-in-the-middle tokens");
-        return;
-    }
     let opts = GenOptions { max_words: 3, ..GenOptions::default() };
     let never = || false;
-    let (mut n, mut fim_ok, mut plain_ok, mut fim_empty, mut fim_ms) = (0usize, 0usize, 0usize, 0usize, Vec::new());
+    let (mut n, mut right, mut empty, mut ms) = (0usize, 0usize, 0usize, Vec::new());
     for d in docs {
         let app = app_of(&d.header);
         for line_start in std::iter::once(0).chain(d.text.match_indices('\n').map(|(i, _)| i + 1)) {
@@ -393,41 +388,34 @@ fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
                 }
                 let typed_part: String = word.chars().take(typed).collect();
                 let before = format!("{}{}", &d.text[..line_start + ws], typed_part);
-                let suffix = &line[we..];
                 let mut prompt = context::build(
                     &ContextInput { app_name: &app, window_title: "", url: "", instructions: "", screen_context: "", examples: &[], text_before: &before },
                     1600,
                 );
+                prompt.suffix = line[we..].chars().take(200).collect();
                 let rest_of_word = &word[typed_part.len()..];
-                let first = |s: &str| s.split_whitespace().next().unwrap_or("").trim_matches(|c: char| !c.is_alphanumeric()).to_string();
-                let plain = e.complete(&prompt, &opts, &never).expect("plain");
-                prompt.suffix = suffix.to_string();
-                let fim = e.complete(&prompt, &opts, &never).expect("fim");
+                let c = e.complete(&prompt, &opts, &never).expect("complete");
                 n += 1;
-                fim_ms.push(fim.total_ms);
-                // The suggestion continues the typed letters: its first "word" ends the word.
-                if first(&fim.text) == rest_of_word {
-                    fim_ok += 1;
+                ms.push(c.total_ms);
+                let first = c.text.split_whitespace().next().unwrap_or("").trim_matches(|ch: char| !ch.is_alphanumeric());
+                if first == rest_of_word {
+                    right += 1;
                 }
-                if first(&plain.text) == rest_of_word {
-                    plain_ok += 1;
-                }
-                if fim.text.trim().is_empty() {
-                    fim_empty += 1;
+                if c.text.trim().is_empty() {
+                    empty += 1;
                 }
                 if std::env::args().any(|a| a == "-v") {
-                    eprintln!("  {}|{} ⟨{suffix}⟩  fim {:?}  plain {:?}", typed_part, rest_of_word, fim.text, plain.text);
+                    eprintln!("  {typed_part}|{rest_of_word} -> {:?}", c.text);
                 }
             }
         }
     }
     let pct = |x: usize| 100.0 * x as f64 / n.max(1) as f64;
     println!(
-        "mid-line-eval: {n} positions, {typed} letter(s) typed: word right with FIM {:.1}%, without {:.1}%; FIM empty {:.1}%; FIM p50 {:.0} ms",
-        pct(fim_ok),
-        pct(plain_ok),
-        pct(fim_empty),
-        crate::pct(&fim_ms, 0.5)
+        "mid-line-eval: {n} positions, {typed} letter(s) typed: word right {:.1}%, empty {:.1}%, p50 {:.0} ms",
+        pct(right),
+        pct(empty),
+        crate::pct(&ms, 0.5)
     );
 }
 

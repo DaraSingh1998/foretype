@@ -84,7 +84,7 @@ In order; the first rule that applies decides:
    rule's `allow_fields`, e.g. a code editor's chat input), agent-prompt-only app whose
    caret line is not an agent prompt, single-line field narrower than 260 pt, more than 8
    non-space characters after the caret on the line (lifted when `mid_line` is on and the
-   model has FIM tokens), fewer than 2 characters typed, a partial word longer than 30
+   built-in engine is loaded), fewer than 2 characters typed, a partial word longer than 30
    characters.
 5. Agent-prompt apps (terminals): `text_before` is replaced by the prompt's own text.
 6. Recorder (`observe`) when personalization is on.
@@ -135,11 +135,10 @@ In order; the first rule that applies decides:
   allowed (logit masking over the detokenized vocabulary). Mid-word completion therefore
   works even when the fragment is not a token boundary, and the prompt prefix stays
   identical for a whole word.
-- **Fill-in-the-middle** (mid-line): a prompt with a `suffix` becomes `[BOS] <fim_prefix>
-  prefix <fim_suffix> rest of line <fim_middle>` on models whose vocabulary has FIM tokens
-  (Qwen3 does, Gemma 4 doesn't); the suggestion is capped at 3 words and cut where it
-  starts repeating the rest of the line. Without FIM tokens a mid-line prompt returns
-  nothing (`noFim`).
+- **Mid-line**: a prompt with a `suffix` (the rest of the caret's line) is still a plain
+  continuation; the suggestion is capped at 3 words and cut where it starts repeating the
+  rest of the line. Qwen3's fill-in-the-middle tokens were tried and produced noise on
+  prose (`docs/MEASUREMENTS.md`).
 - **Phrase beam search** (`beam_width` > 1, truncating models): beams live in sequences
   1..16 of a unified KV cache (copying a sequence only tags cells; sequence 0 keeps the
   prompt, so nothing is rolled back), one batched decode per step, the `beam_width` best
