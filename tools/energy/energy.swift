@@ -6,12 +6,14 @@
 //
 //   swift tools/energy/energy.swift [--idle SECONDS] -- COMMAND [ARGS...]
 //
-// --idle defaults to 20 s; 0 skips the baseline. On macOS 27 the CPU, ANE and DRAM counters
-// read zero unless the meter runs as root (sudo); the GPU counter is readable by anyone, and
-// inference runs on the GPU. Output, on stderr after the command's own:
-//   energy: cpu 12.34 J, gpu 5.67 J, ane 0.00 J, dram 1.23 J, total 19.24 J over 41.2 s
-//   idle:   total 4.10 J over 20.0 s (0.199 W)
-//   net:    11.04 J (total minus idle power over the run)
+// --idle defaults to 20 s; 0 skips the baseline. On macOS 27 (M3 Pro, not root) only the GPU
+// counter updates steadily (about once a second); the CPU, ANE and DRAM counters stayed at
+// zero through 150 s of 2.5 s samples and then showed large jumps across a whole run, so they
+// are printed but not trusted. Inference runs on the GPU; for CPU and DRAM use
+// `sudo powermetrics`. Output, on stderr after the command's own:
+//   idle:   gpu 0.02 J over 15.0 s (0.001 W)
+//   energy: cpu 12.34 J, gpu 5.67 J, ane 0.00 J, dram 1.23 J over 41.2 s (cpu/ane/dram unreliable)
+//   net gpu: 5.65 J (gpu minus idle gpu power over the run)
 import Foundation
 
 typealias CopyChannelsInGroup = @convention(c) (CFString?, CFString?, UInt64, UInt64, UInt64) -> Unmanaged<CFDictionary>?
@@ -104,9 +106,8 @@ if idleSeconds > 0 {
     let a = meter.sample()
     Thread.sleep(forTimeInterval: idleSeconds)
     let s = summary(meter.joules(from: a, to: meter.sample()))
-    let total = s.cpu + s.gpu + s.ane + s.dram
-    idleWatts = total / idleSeconds
-    err(String(format: "idle:   total %.2f J over %.1f s (%.3f W)", total, idleSeconds, idleWatts))
+    idleWatts = s.gpu / idleSeconds
+    err(String(format: "idle:   gpu %.2f J over %.1f s (%.3f W)", s.gpu, idleSeconds, idleWatts))
 }
 
 let p = Process()
@@ -119,13 +120,7 @@ p.waitUntilExit()
 let after = meter.sample()
 let secs = Date().timeIntervalSince(t0)
 let s = summary(meter.joules(from: before, to: after))
-let total = s.cpu + s.gpu + s.ane + s.dram
-err(String(format: "energy: cpu %.2f J, gpu %.2f J, ane %.2f J, dram %.2f J, total %.2f J over %.1f s",
-           s.cpu, s.gpu, s.ane, s.dram, total, secs))
-if idleSeconds > 0 {
-    err(String(format: "net:    %.2f J (total minus idle power over the run)", total - idleWatts * secs))
-}
-if s.cpu == 0 && getuid() != 0 {
-    err("note:   CPU/ANE/DRAM counters read 0 without root on this macOS; run with sudo to include them")
-}
+err(String(format: "energy: cpu %.2f J, gpu %.2f J, ane %.2f J, dram %.2f J over %.1f s (cpu/ane/dram unreliable)",
+           s.cpu, s.gpu, s.ane, s.dram, secs))
+err(String(format: "net gpu: %.2f J (gpu minus idle gpu power over the run)", s.gpu - idleWatts * secs))
 exit(p.terminationStatus)

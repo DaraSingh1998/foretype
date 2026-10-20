@@ -5,7 +5,8 @@
 #
 #   scripts/bench-mac.sh [--only PREFIX]       (default: the full 53-document corpus)
 #   FORETYPE_MODELS_DIR                        (default ~/Library/Application Support/Foretype/Models)
-#   ENERGY=1                                   also measure GPU energy per suggestion (tools/energy)
+#   ENERGY=1                                   also measure GPU energy per suggestion (tools/energy;
+#                                              CPU and DRAM need sudo powermetrics)
 #
 # Run on mains power with other GPU-heavy apps closed. Takes 5-20 minutes per model.
 set -euo pipefail
@@ -41,8 +42,8 @@ while IFS= read -r f; do
   echo "$f: ${line:-failed}"
   if [[ "${ENERGY:-0}" == 1 ]]; then
     calls="$(sed -n 's/.*"model": \([0-9]*\).*/\1/p' <<<"$line")"
-    net="$(sed -n 's/^net: *\([-0-9.]*\) J.*/\1/p' <<<"$out")"
-    grep -E '^(idle|energy|net|note):' <<<"$out" | sed 's/^/    /'
-    [[ -n "$calls" && -n "$net" ]] && python3 -c "import sys; n,c=float(sys.argv[1]),int(sys.argv[2]); print(f'    {1000*n/c:.1f} mJ per model suggestion ({c} suggestions)')" "$net" "$calls"
+    net="$(sed -n 's/^net gpu: *\([-0-9.]*\) J.*/\1/p' <<<"$out")"
+    grep -E '^(idle|energy|net gpu):' <<<"$out" | sed 's/^/    /'
+    [[ -n "$calls" && -n "$net" ]] && python3 -c "import sys; n,c=float(sys.argv[1]),int(sys.argv[2]); print(f'    {1000*n/c:.1f} mJ of GPU energy per model suggestion ({c} suggestions)')" "$net" "$calls"
   fi
 done <<<"$files"
