@@ -86,6 +86,11 @@ enum Inserter {
         flush()
     }
 
+    /// Deletes `count` characters before the caret (Backspace, one per character).
+    static func deleteBackward(_ count: Int) {
+        for _ in 0..<count { post(key: 51) }
+    }
+
     /// Re-sends a plain key press (used to give back a key the tap swallowed).
     static func press(key: CGKeyCode) {
         post(key: key)

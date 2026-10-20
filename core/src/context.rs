@@ -26,6 +26,9 @@ pub struct Prompt {
     pub prefix: String,
     /// Partial word (with its leading space) that generation must start with.
     pub fragment: String,
+    /// Rest of the caret's line when completing mid-line (fill-in-the-middle); empty at
+    /// the end of a line.
+    pub suffix: String,
 }
 
 /// Quantum by which the front of a long text window moves, so the prompt start stays fixed
@@ -126,7 +129,7 @@ pub fn build(input: &ContextInput, max_body_chars: usize) -> Prompt {
     let start = window_start(input.text_before, max_body_chars);
     let body = &input.text_before[start..];
     let (committed, fragment) = words::split_fragment(body);
-    Prompt { prefix: format!("{}{}", header(input), committed), fragment: fragment.to_string() }
+    Prompt { prefix: format!("{}{}", header(input), committed), fragment: fragment.to_string(), suffix: String::new() }
 }
 
 fn truncate_chars(s: &str, n: usize) -> &str {

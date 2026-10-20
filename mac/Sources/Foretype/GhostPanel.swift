@@ -29,7 +29,8 @@ private final class GhostView: NSView {
 
 /// Draws the suggestion as gray "ghost" text right after the caret, matching the host
 /// field's font. When the caret position is unknown it falls back to a small "mirror"
-/// card above the field, as Cotypist does for Firefox.
+/// card above the field, as Cotypist does for Firefox. Mid-line suggestions (text follows
+/// the caret, so inline ghost text would overlap it) use a card just below the caret.
 final class GhostPanel {
     private let panel: NSPanel
     private let view = GhostView()
@@ -78,9 +79,12 @@ final class GhostPanel {
         return fit
     }
 
-    func show(text: String, caret: CaretInfo?, frame: CGRect?, font: NSFont?) {
+    func show(text: String, caret: CaretInfo?, frame: CGRect?, font: NSFont?, midLine: Bool = false) {
         let caretRect = caret?.rect
         let baseFont = font ?? NSFont.systemFont(ofSize: max(11, (caretRect?.height ?? 16) * 0.78))
+        if midLine, let caretRect {
+            return showCard(text, font: baseFont, below: caretRect)
+        }
         if let caretRect {
             let x = caretRect.minX + caretRect.width
             let limit = (frame.map { $0.maxX } ?? (displayBounds().first { $0.contains(caretRect.origin) }?.maxX ?? x + 600)) - 4
@@ -105,6 +109,22 @@ final class GhostPanel {
         let h = ceil(size.height) + view.padding.height * 2
         var axRect = CGRect(x: anchorRect.minX, y: anchorRect.minY - h - 4, width: w, height: h)
         if axRect.minY < 0 { axRect.origin.y = anchorRect.maxY + 4 }
+        view.card = true
+        view.text = attr
+        anchor = nil
+        place(GhostPanel.cocoaRect(fromAX: axRect))
+    }
+
+    /// A card under the caret line, starting at the caret (above it near the screen bottom).
+    private func showCard(_ text: String, font: NSFont, below caretRect: CGRect) {
+        let cardFont = NSFont.systemFont(ofSize: min(max(font.pointSize, 12), 15))
+        let attr = GhostPanel.attributed("\u{21E5} " + text.trimmingCharacters(in: .whitespaces), font: cardFont, card: true)
+        let size = attr.size()
+        let w = ceil(size.width) + view.padding.width * 2
+        let h = ceil(size.height) + view.padding.height * 2
+        var axRect = CGRect(x: caretRect.minX, y: caretRect.maxY + 3, width: w, height: h)
+        let screenBottom = displayBounds().first { $0.contains(caretRect.origin) }?.maxY ?? .greatestFiniteMagnitude
+        if axRect.maxY > screenBottom { axRect.origin.y = caretRect.minY - h - 3 }
         view.card = true
         view.text = attr
         anchor = nil

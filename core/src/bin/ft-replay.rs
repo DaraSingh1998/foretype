@@ -4,7 +4,8 @@
 //! The simulated user types one character at a time and presses Tab (accept next word)
 //! whenever the visible suggestion's next word is exactly what they were about to type.
 //!
-//! --cpu runs without Metal offload.
+//! --cpu runs without Metal offload. --beam N searches N phrases at once (default 1, greedy). --spell FILE replays the typo gate and autocorrect with
+//! the macOS spell checker's verdicts (from tools/spell-map); without it neither fires.
 //! usage (MODEL may be "-" with --backend llama-server|openai --url URL [--remote-model NAME]):
 //!   ft-replay MODEL TEXT_FILE [--prime N] [--chars N] [--words N] [--app NAME] [--screen FILE] [-v]
 //!   ft-replay MODEL --corpus CORPUS.jsonl [--words N] [--no-prefetch] [--only PREFIX] [--think MS]
@@ -13,6 +14,11 @@
 //!   ft-replay MODEL --corpus CORPUS.jsonl --personal-loo [--only sw-] [--strength 0|1|2] [--no-examples]
 //!       leave-one-out personalization: each document is replayed with the other selected
 //!       documents as the user's writing history, with and without personalization.
+//!   ft-replay MODEL --corpus CORPUS.jsonl --mid-line-eval [--typed N]
+//!       mid-line check: at word starts in the middle of lines, with the next word's first N
+//!       letters typed (default 1), asks for a suggestion with fill-in-the-middle (the rest
+//!       of the line as suffix) and without it, and counts how often the first suggested
+//!       word is the word that was there.
 //!   ft-replay MODEL --corpus CORPUS.jsonl --check-cache [--docs N] [--chars N] [--long]
 //!       cache-reuse check: types each document (with a burst of backspaces every 9
 //!       keystrokes) through an engine that reuses its cache and through one reset before
@@ -86,6 +92,36 @@ struct Replayer {
     rev: u64,
     verbose: bool,
     think: Duration,
+    spell: Option<SpellMap>,
+}
+
+/// Spell checker verdicts precomputed by tools/spell-map (the app's own Speller).
+#[derive(serde::Deserialize, Default)]
+struct SpellMap {
+    fragments: std::collections::HashMap<String, String>,
+    corrections: std::collections::HashMap<String, String>,
+}
+
+impl SpellMap {
+    /// Fills the snapshot's spell fields the way Speller.annotate does.
+    fn annotate(&self, s: &mut Snapshot) {
+        let text = s.text_before.as_str();
+        let frag_start = text.char_indices().rev().take_while(|(_, c)| words::is_word_char(*c)).last().map_or(text.len(), |(i, _)| i);
+        let fragment = &text[frag_start..];
+        if fragment.chars().count() >= 3 && fragment.chars().all(char::is_alphabetic) {
+            s.spell_fragment = self.fragments.get(fragment).cloned().unwrap_or_default();
+        } else if fragment.is_empty() && text.ends_with(' ') {
+            let trimmed = text.trim_end_matches(' ');
+            let w_start = trimmed.char_indices().rev().take_while(|(_, c)| words::is_word_char(*c)).last().map_or(trimmed.len(), |(i, _)| i);
+            let word = &trimmed[w_start..];
+            if text.len() - trimmed.len() <= 2 && word.chars().count() >= 2 && word.chars().all(char::is_alphabetic) {
+                if let Some(fix) = self.corrections.get(word) {
+                    s.spell_word = word.to_string();
+                    s.spell_correction = fix.clone();
+                }
+            }
+        }
+    }
 }
 
 impl Replayer {
@@ -120,7 +156,8 @@ impl Replayer {
                 _ => {}
             }
         }
-        Self { core, rx, rev: 0, verbose, think: Duration::ZERO }
+        let spell = arg("--spell").map(|p| serde_json::from_str(&std::fs::read_to_string(p).expect("read spell map")).expect("spell map json"));
+        Self { core, rx, rev: 0, verbose, think: Duration::ZERO, spell }
     }
 
     /// Types `text[prime..prime+max]` after `text[..prime]` in field `field_key`.
@@ -129,7 +166,14 @@ impl Replayer {
         let prime = prime.min(chars.len());
         let end = (prime + max).min(chars.len());
         let mut typed: String = chars[..prime].iter().collect();
-        let snap = |rev: u64, before: &str| Snapshot { revision: rev, text_before: before.to_string(), ..base.clone() };
+        let spell = self.spell.take();
+        let snap = |rev: u64, before: &str| {
+            let mut s = Snapshot { revision: rev, text_before: before.to_string(), ..base.clone() };
+            if let Some(m) = &spell {
+                m.annotate(&mut s);
+            }
+            s
+        };
         if prime > 0 {
             self.rev += 1;
             self.core.warm(snap(self.rev, &typed));
@@ -144,11 +188,17 @@ impl Replayer {
             let mut suggestion = String::new();
             loop {
                 match self.rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, .. }) if revision == rev => {
+                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, reason, replace, .. }) if revision == rev => {
                         if source == "pending" {
                             continue;
                         }
-                        *st.sources.entry(source).or_default() += 1;
+                        let key = if reason.as_deref() == Some("typo") { "policy:typo" } else { source };
+                        *st.sources.entry(key).or_default() += 1;
+                        if replace.is_some() {
+                            // An emoji or a correction: the simulated user, who types clean
+                            // text, never takes one.
+                            break;
+                        }
                         if source == "model" {
                             st.model_ms.push(ms.unwrap_or(0.0));
                             st.prefills.push(prefilled.unwrap_or(0) as f64);
@@ -169,7 +219,7 @@ impl Replayer {
             let upcoming: String = chars[i..end].iter().collect();
             let next = words::take_words(&suggestion, 1);
             if !next.is_empty() && upcoming.starts_with(next) {
-                if let Some((insert, _)) = self.core.accept(AcceptMode::NextWord) {
+                if let Some(insert) = self.core.accept(AcceptMode::NextWord).map(|a| a.insert) {
                     if self.verbose {
                         eprintln!("  TAB {:?}  (showing {:?})", insert, suggestion);
                     }
@@ -188,6 +238,7 @@ impl Replayer {
         // Let a trailing prefetch finish so it doesn't bleed into the next document.
         std::thread::sleep(Duration::from_millis(150));
         while self.rx.try_recv().is_ok() {}
+        self.spell = spell;
         st
     }
 }
@@ -315,6 +366,71 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
     );
 }
 
+fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
+    let mut e = Engine::load(&EngineConfig { model_path: model.to_string(), ..EngineConfig::default() }).expect("load model");
+    if !e.supports_fim() {
+        println!("mid-line-eval: this model has no fill-in-the-middle tokens");
+        return;
+    }
+    let opts = GenOptions { max_words: 3, ..GenOptions::default() };
+    let never = || false;
+    let (mut n, mut fim_ok, mut plain_ok, mut fim_empty, mut fim_ms) = (0usize, 0usize, 0usize, 0usize, Vec::new());
+    for d in docs {
+        let app = app_of(&d.header);
+        for line_start in std::iter::once(0).chain(d.text.match_indices('\n').map(|(i, _)| i + 1)) {
+            let line_end = d.text[line_start..].find('\n').map_or(d.text.len(), |i| line_start + i);
+            let line = &d.text[line_start..line_end];
+            // Word starts with at least 3 words before them and 2 after on the line, every 5th.
+            let starts: Vec<usize> = line.match_indices(' ').map(|(i, _)| i + 1).collect();
+            for (k, &ws) in starts.iter().enumerate() {
+                if k < 2 || k + 2 >= starts.len() || k % 5 != 0 {
+                    continue;
+                }
+                let we = line[ws..].find(' ').map_or(line.len(), |i| ws + i);
+                let word = &line[ws..we];
+                if word.chars().count() <= typed || !word.chars().all(char::is_alphabetic) {
+                    continue;
+                }
+                let typed_part: String = word.chars().take(typed).collect();
+                let before = format!("{}{}", &d.text[..line_start + ws], typed_part);
+                let suffix = &line[we..];
+                let mut prompt = context::build(
+                    &ContextInput { app_name: &app, window_title: "", url: "", instructions: "", screen_context: "", examples: &[], text_before: &before },
+                    1600,
+                );
+                let rest_of_word = &word[typed_part.len()..];
+                let first = |s: &str| s.split_whitespace().next().unwrap_or("").trim_matches(|c: char| !c.is_alphanumeric()).to_string();
+                let plain = e.complete(&prompt, &opts, &never).expect("plain");
+                prompt.suffix = suffix.to_string();
+                let fim = e.complete(&prompt, &opts, &never).expect("fim");
+                n += 1;
+                fim_ms.push(fim.total_ms);
+                // The suggestion continues the typed letters: its first "word" ends the word.
+                if first(&fim.text) == rest_of_word {
+                    fim_ok += 1;
+                }
+                if first(&plain.text) == rest_of_word {
+                    plain_ok += 1;
+                }
+                if fim.text.trim().is_empty() {
+                    fim_empty += 1;
+                }
+                if std::env::args().any(|a| a == "-v") {
+                    eprintln!("  {}|{} ⟨{suffix}⟩  fim {:?}  plain {:?}", typed_part, rest_of_word, fim.text, plain.text);
+                }
+            }
+        }
+    }
+    let pct = |x: usize| 100.0 * x as f64 / n.max(1) as f64;
+    println!(
+        "mid-line-eval: {n} positions, {typed} letter(s) typed: word right with FIM {:.1}%, without {:.1}%; FIM empty {:.1}%; FIM p50 {:.0} ms",
+        pct(fim_ok),
+        pct(plain_ok),
+        pct(fim_empty),
+        crate::pct(&fim_ms, 0.5)
+    );
+}
+
 #[derive(serde::Deserialize, Clone)]
 struct Doc {
     id: String,
@@ -343,7 +459,8 @@ fn main() {
     let has = |name: &str| args.iter().any(|a| a == name);
     let model = args[1].clone();
     let length_words: usize = flag("--words").and_then(|s| s.parse().ok()).unwrap_or(4);
-    let settings = Settings { length_words, prefetch: !has("--no-prefetch"), ..Settings::default() };
+    let beam_width: usize = flag("--beam").and_then(|s| s.parse().ok()).unwrap_or(1);
+    let settings = Settings { length_words, beam_width, prefetch: !has("--no-prefetch"), ..Settings::default() };
 
     if let Some(corpus) = flag("--corpus") {
         let only = flag("--only").unwrap_or_default();
@@ -354,6 +471,10 @@ fn main() {
             .map(|l| serde_json::from_str(l).expect("corpus line"))
             .filter(|d: &Doc| d.id.starts_with(&only))
             .collect();
+        if has("--mid-line-eval") {
+            let typed = flag("--typed").and_then(|s| s.parse().ok()).unwrap_or(1);
+            return mid_line_eval(&model, &docs, typed);
+        }
         if has("--check-cache") {
             let n_docs = flag("--docs").and_then(|s| s.parse().ok()).unwrap_or(6);
             let n_chars = flag("--chars").and_then(|s| s.parse().ok()).unwrap_or(250);

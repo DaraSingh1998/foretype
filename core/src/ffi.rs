@@ -87,7 +87,8 @@ pub unsafe extern "C" fn ft_engine_warm(engine: *mut FtEngine, snapshot_json: *c
 }
 
 /// Accepts the next word (`mode` 0) or the whole suggestion (`mode` 1). Returns
-/// `{"insert": "...", "remaining": "..."}`, or null when nothing is showing.
+/// `{"insert": "...", "remaining": "...", "replace": "..."}` (delete `replace` before the
+/// caret first; empty for a continuation), or null when nothing is showing.
 ///
 /// # Safety
 /// `engine` must be live.
@@ -96,7 +97,7 @@ pub unsafe extern "C" fn ft_engine_accept(engine: *mut FtEngine, mode: i32) -> *
     let Some(e) = engine.as_ref() else { return ptr::null_mut() };
     let mode = if mode == 1 { AcceptMode::All } else { AcceptMode::NextWord };
     match e.core.accept(mode) {
-        Some((insert, remaining)) => to_c(serde_json::json!({ "insert": insert, "remaining": remaining }).to_string()),
+        Some(a) => to_c(serde_json::json!({ "insert": a.insert, "remaining": a.remaining, "replace": a.replace }).to_string()),
         None => ptr::null_mut(),
     }
 }

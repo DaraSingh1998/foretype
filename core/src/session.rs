@@ -1,5 +1,7 @@
 //! Suggestion state that lets most keystrokes skip inference: typing through a visible
 //! suggestion, backspacing inside it, accepting word by word, and a small exact-match cache.
+//! A suggestion can also *replace* text before the caret (an emoji for a typed `:name`, a
+//! correction for a misspelled word); those are accepted whole and never typed through.
 
 use std::collections::VecDeque;
 
@@ -15,12 +17,23 @@ pub enum AcceptMode {
     All,
 }
 
+/// What an accept inserts. `replace` is the text just before the caret to delete first
+/// (empty for an ordinary continuation).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Accepted {
+    pub insert: String,
+    pub remaining: String,
+    pub replace: String,
+}
+
 #[derive(Debug, Default)]
 pub struct Session {
     field_key: u64,
     /// Text before the caret that the current suggestion continues.
     base: String,
     suggestion: String,
+    /// Non-empty when `suggestion` replaces this text at the end of `base`.
+    replace: String,
     cache: VecDeque<(u64, String, String)>,
     /// Text the user dismissed a suggestion for; no new suggestion until it changes.
     dismissed: Option<(u64, String)>,
@@ -31,6 +44,7 @@ impl Session {
         self.field_key = field_key;
         self.base = base.to_string();
         self.suggestion = suggestion.to_string();
+        self.replace.clear();
         if !suggestion.is_empty() {
             self.cache.retain(|(k, b, _)| !(*k == field_key && b == base));
             self.cache.push_back((field_key, base.to_string(), suggestion.to_string()));
@@ -38,6 +52,15 @@ impl Session {
                 self.cache.pop_front();
             }
         }
+    }
+
+    /// Shows a suggestion without caching it (mid-line: it depends on the text after the
+    /// caret too, which the cache key doesn't hold).
+    pub fn set_uncached(&mut self, field_key: u64, base: &str, suggestion: &str) {
+        self.field_key = field_key;
+        self.base = base.to_string();
+        self.suggestion = suggestion.to_string();
+        self.replace.clear();
     }
 
     /// Caches a suggestion for `base` without showing it (prefetch).
@@ -52,9 +75,19 @@ impl Session {
         }
     }
 
+    /// Shows `text` in place of `replace`, the end of `base` (not cached: it depends on
+    /// exactly what was typed).
+    pub fn set_replacement(&mut self, field_key: u64, base: &str, replace: &str, text: &str) {
+        self.field_key = field_key;
+        self.base = base.to_string();
+        self.suggestion = text.to_string();
+        self.replace = replace.to_string();
+    }
+
     pub fn clear(&mut self) {
         self.suggestion.clear();
         self.base.clear();
+        self.replace.clear();
     }
 
     pub fn dismiss(&mut self, field_key: u64, text_before: &str) {
@@ -81,7 +114,7 @@ impl Session {
     /// the suggestion typed (or a few characters backspaced). Returns what is still left to
     /// show and re-bases the session on the new text.
     pub fn type_through(&mut self, field_key: u64, text_before: &str) -> Option<String> {
-        if field_key != self.field_key || self.suggestion.is_empty() {
+        if field_key != self.field_key || self.suggestion.is_empty() || !self.replace.is_empty() {
             return None;
         }
         let remaining = if let Some(typed) = text_before.strip_prefix(self.base.as_str()) {
@@ -112,10 +145,19 @@ impl Session {
     }
 
     /// Text to insert for an accept, advancing the session past it so a second Tab pressed
-    /// before the host app reports the edit still inserts the following word.
-    pub fn accept(&mut self, mode: AcceptMode) -> Option<(String, String)> {
+    /// before the host app reports the edit still inserts the following word. A replacement
+    /// is accepted whole whatever the mode.
+    pub fn accept(&mut self, mode: AcceptMode) -> Option<Accepted> {
         if self.suggestion.is_empty() {
             return None;
+        }
+        if !self.replace.is_empty() {
+            let replace = std::mem::take(&mut self.replace);
+            let insert = std::mem::take(&mut self.suggestion);
+            let kept = self.base.len().saturating_sub(replace.len());
+            self.base.truncate(kept);
+            self.base.push_str(&insert);
+            return Some(Accepted { insert, remaining: String::new(), replace });
         }
         let insert = match mode {
             AcceptMode::NextWord => words::take_words(&self.suggestion, 1).to_string(),
@@ -124,7 +166,7 @@ impl Session {
         let remaining = self.suggestion[insert.len()..].to_string();
         self.base.push_str(&insert);
         self.suggestion = if remaining.trim().is_empty() { String::new() } else { remaining.clone() };
-        Some((insert, self.suggestion.clone()))
+        Some(Accepted { insert, remaining: self.suggestion.clone(), replace: String::new() })
     }
 }
 
@@ -154,12 +196,28 @@ mod tests {
     fn accept_word_by_word() {
         let mut s = Session::default();
         s.set(1, "Thanks for the no", "tes from Tuesday.");
-        assert_eq!(s.accept(AcceptMode::NextWord), Some(("tes".into(), " from Tuesday.".into())));
-        assert_eq!(s.accept(AcceptMode::NextWord), Some((" from".into(), " Tuesday.".into())));
+        assert_eq!(s.accept(AcceptMode::NextWord), Some(ok("tes", " from Tuesday.")));
+        assert_eq!(s.accept(AcceptMode::NextWord), Some(ok(" from", " Tuesday.")));
         // Host app reports the inserted text: the rest stays visible without inference.
         assert_eq!(s.type_through(1, "Thanks for the notes from").as_deref(), Some(" Tuesday."));
-        assert_eq!(s.accept(AcceptMode::All), Some((" Tuesday.".into(), String::new())));
+        assert_eq!(s.accept(AcceptMode::All), Some(ok(" Tuesday.", "")));
         assert_eq!(s.accept(AcceptMode::All), None);
+    }
+
+    fn ok(insert: &str, remaining: &str) -> Accepted {
+        Accepted { insert: insert.into(), remaining: remaining.into(), replace: String::new() }
+    }
+
+    #[test]
+    fn replacement_is_accepted_whole_and_not_typed_through() {
+        let mut s = Session::default();
+        s.set_replacement(1, "Great news :ta", ":ta", "\u{1F389}");
+        assert_eq!(s.type_through(1, "Great news :tad"), None);
+        let a = s.accept(AcceptMode::NextWord).unwrap();
+        assert_eq!((a.insert.as_str(), a.replace.as_str(), a.remaining.as_str()), ("\u{1F389}", ":ta", ""));
+        assert_eq!(s.accept(AcceptMode::All), None);
+        s.set(1, "Hi", " there");
+        assert_eq!(s.accept(AcceptMode::All).unwrap().replace, "");
     }
 
     #[test]

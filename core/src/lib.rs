@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod context;
+pub mod emoji;
 pub mod engine;
 pub mod ffi;
 pub mod history;
@@ -31,7 +32,7 @@ use crate::engine::{Engine, EngineConfig, GenError, GenOptions};
 use crate::history::{History, Record};
 use crate::policy::CompatDb;
 use crate::profile::Profile;
-use crate::session::{AcceptMode, Session};
+use crate::session::{AcceptMode, Accepted, Session};
 
 /// One read of the focused field, sent by the shell on every change.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -62,6 +63,13 @@ pub struct Snapshot {
     pub field_height: f64,
     /// The user explicitly asked for suggestions here (overrides soft policy rules).
     pub force: bool,
+    /// The platform spell checker's verdict on the partial word at the caret: "word" (a
+    /// word already), "prefix" (can still become one), "typo" (can't), or "" (not checked).
+    pub spell_fragment: String,
+    /// The word just finished (the text before the caret ends with it and spaces) when the
+    /// spell checker flags it, and its correction; both empty otherwise.
+    pub spell_word: String,
+    pub spell_correction: String,
 }
 
 /// User-facing settings, sent as JSON through `ft_engine_configure`.
@@ -95,6 +103,17 @@ pub struct Settings {
     /// 0 gentle, 1 balanced, 2 strong.
     pub personalize_strength: u8,
     pub personal_examples: bool,
+    /// Offer an emoji for a typed `:name` (accepting replaces the shortcode).
+    pub emoji: bool,
+    /// Offer the spell checker's correction for a misspelled word just finished.
+    pub autocorrect: bool,
+    /// No suggestion while the partial word can't become a real word (Cotypist's rule).
+    pub typo_gate: bool,
+    /// Suggest in the middle of a line too, filling in before the rest of it (models with
+    /// fill-in-the-middle tokens only; at most 3 words).
+    pub mid_line: bool,
+    /// Phrase beam search width (1 = greedy).
+    pub beam_width: usize,
 }
 
 impl Settings {
@@ -138,6 +157,11 @@ impl Default for Settings {
             personalize: false,
             personalize_strength: 1,
             personal_examples: true,
+            emoji: true,
+            autocorrect: true,
+            typo_gate: true,
+            mid_line: false,
+            beam_width: 1,
         }
     }
 }
@@ -191,7 +215,7 @@ pub enum Event {
     Suggestion {
         revision: u64,
         text: String,
-        /// model | typeThrough | cache | pending | policy | dismissed | error
+        /// model | typeThrough | cache | pending | policy | dismissed | error | emoji | autocorrect
         source: &'static str,
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
@@ -201,6 +225,12 @@ pub enum Event {
         prefilled: Option<usize>,
         #[serde(skip_serializing_if = "Option::is_none")]
         stop: Option<&'static str>,
+        /// Text just before the caret that accepting deletes first (emoji, autocorrect).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        replace: Option<String>,
+        /// What a replacement stands for, for display (`:tada:`, the misspelled word).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
     },
     /// Engine lifecycle: loading | ready | error.
     Status { state: &'static str, detail: String },
@@ -252,6 +282,8 @@ struct Shared {
     track: Mutex<Option<FieldTrack>>,
     /// Personal examples chosen once per field, so the prompt header stays stable.
     examples: Mutex<HashMap<u64, Vec<String>>>,
+    /// The loaded model can fill in the middle of a line (set by the worker).
+    fim: AtomicBool,
 }
 
 fn debug() -> bool {
@@ -287,6 +319,7 @@ impl Core {
             profile_gen: AtomicU64::new(1),
             track: Mutex::new(None),
             examples: Mutex::new(HashMap::new()),
+            fim: AtomicBool::new(false),
         });
         let engine_cfg = EngineConfig {
             model_path: config.model_path.clone(),
@@ -429,7 +462,33 @@ impl Core {
     }
 
     fn emit_suggestion(&self, revision: u64, text: String, source: &'static str, reason: Option<String>) {
-        (self.shared.sink)(&Event::Suggestion { revision, text, source, reason, ms: None, prefilled: None, stop: None });
+        (self.shared.sink)(&Event::Suggestion {
+            revision,
+            text,
+            source,
+            reason,
+            ms: None,
+            prefilled: None,
+            stop: None,
+            replace: None,
+            label: None,
+        });
+    }
+
+    /// Shows `text` in place of `replace` at the end of the text before the caret.
+    fn emit_replacement(&self, snap: &Snapshot, replace: &str, text: &str, source: &'static str, label: String) {
+        self.shared.session.lock().unwrap().set_replacement(snap.field_key, &snap.text_before, replace, text);
+        (self.shared.sink)(&Event::Suggestion {
+            revision: snap.revision,
+            text: text.to_string(),
+            source,
+            reason: None,
+            ms: None,
+            prefilled: None,
+            stop: None,
+            replace: Some(replace.to_string()),
+            label: Some(label),
+        });
     }
 
     /// Handles a field change. Returns synchronously for policy decisions and reused
@@ -446,7 +505,8 @@ impl Core {
         }
         let disabled: HashSet<String> = settings.disabled_apps.iter().cloned().collect();
         let enabled: HashSet<String> = settings.enabled_apps.iter().cloned().collect();
-        if let Some(reason) = policy::evaluate(&snap, &self.shared.compat, &disabled, &enabled) {
+        let mid_line = settings.mid_line && self.shared.fim.load(Ordering::SeqCst);
+        if let Some(reason) = policy::evaluate(&snap, &self.shared.compat, &disabled, &enabled, mid_line) {
             self.shared.session.lock().unwrap().clear();
             if settings.personalize {
                 self.observe(&snap, &snap.text_before, false);
@@ -472,7 +532,13 @@ impl Core {
                 drop(session);
                 return self.emit_suggestion(rev, rest, "typeThrough", None);
             }
-            if let Some(hit) = session.cached(snap.field_key, &snap.text_before) {
+            drop(session);
+            if let Some(handled) = self.typing_aids(&snap, &settings) {
+                return handled;
+            }
+            let mut session = self.shared.session.lock().unwrap();
+            let hit = if line_suffix(&snap).is_empty() { session.cached(snap.field_key, &snap.text_before) } else { None };
+            if let Some(hit) = hit {
                 session.set(snap.field_key, &snap.text_before, &hit);
                 drop(session);
                 return self.emit_suggestion(rev, hit, "cache", None);
@@ -491,6 +557,76 @@ impl Core {
             snapshot: snap,
         });
         self.emit_suggestion(rev, String::new(), "pending", None);
+    }
+
+    /// Emoji shortcodes, autocorrect and the typo gate, which answer without the model.
+    /// `Some(())` means an event was emitted.
+    fn typing_aids(&self, snap: &Snapshot, settings: &Settings) -> Option<()> {
+        if settings.emoji {
+            if let Some(typed) = emoji::typed_shortcode(&snap.text_before) {
+                match emoji::lookup(&typed[1..]) {
+                    Some((name, e)) => self.emit_replacement(snap, typed, e, "emoji", format!(":{name}:")),
+                    // A shortcode with no match: the model has nothing useful to add either.
+                    None => self.emit_suggestion(snap.revision, String::new(), "policy", Some("shortcode".into())),
+                }
+                return Some(());
+            }
+        }
+        if settings.autocorrect {
+            if let Some((replace, text)) = self.correction(snap) {
+                self.emit_replacement(snap, &replace, &text, "autocorrect", snap.spell_word.clone());
+                return Some(());
+            }
+        }
+        if settings.typo_gate && snap.spell_fragment == "typo" && !snap.force {
+            let (_, fragment) = words::split_fragment(&snap.text_before);
+            if !self.plausible_word(words::fragment_word(fragment)) {
+                self.emit_suggestion(snap.revision, String::new(), "policy", Some("typo".into()));
+                return Some(());
+            }
+        }
+        None
+    }
+
+    /// A fragment the spell checker doesn't know may still be a real word: names and
+    /// brands (capitalized), acronyms and codes (digits, all caps), very short fragments,
+    /// and the user's own vocabulary.
+    fn plausible_word(&self, w: &str) -> bool {
+        let mut chars = w.chars();
+        let Some(first) = chars.next() else { return true };
+        if w.chars().count() < 3 || first.is_uppercase() || w.chars().any(|c| c.is_ascii_digit()) {
+            return true;
+        }
+        self.shared.profile.lock().unwrap().has_prefix(&w.to_lowercase())
+    }
+
+    /// `(replace, insert)` for the misspelled word just finished, when it should be fixed:
+    /// not a name in mid-sentence, not an acronym or code, not one of the user's own words.
+    fn correction(&self, snap: &Snapshot) -> Option<(String, String)> {
+        let (word, fix) = (snap.spell_word.as_str(), snap.spell_correction.as_str());
+        if word.is_empty() || fix.is_empty() || word == fix {
+            return None;
+        }
+        let trimmed = snap.text_before.trim_end_matches(' ');
+        let spaces = &snap.text_before[trimmed.len()..];
+        if spaces.is_empty() || spaces.len() > 2 || !trimmed.ends_with(word) {
+            return None;
+        }
+        let pre = &trimmed[..trimmed.len() - word.len()];
+        if pre.chars().next_back().is_some_and(words::is_word_char) {
+            return None; // `word` is the tail of a longer word
+        }
+        let before = pre.trim_end();
+        let sentence_start = before.is_empty() || words::ends_sentence(before) || pre.trim_end_matches([' ', '\t']).ends_with('\n');
+        let capitalized = word.chars().next().is_some_and(char::is_uppercase);
+        if (capitalized && !sentence_start)
+            || word.chars().any(|c| c.is_ascii_digit())
+            || word.chars().filter(|c| c.is_alphabetic()).all(char::is_uppercase)
+            || self.shared.profile.lock().unwrap().knows(&word.to_lowercase())
+        {
+            return None;
+        }
+        Some((format!("{word}{spaces}"), format!("{fix}{spaces}")))
     }
 
     /// Prefills the context for a newly focused field so the first suggestion is fast.
@@ -537,8 +673,8 @@ impl Core {
         ex
     }
 
-    /// Returns `(insert, remaining)` for Tab (next word) or accept-all.
-    pub fn accept(&self, mode: AcceptMode) -> Option<(String, String)> {
+    /// What Tab (next word) or accept-all inserts, and what it replaces.
+    pub fn accept(&self, mode: AcceptMode) -> Option<Accepted> {
         let r = self.shared.session.lock().unwrap().accept(mode);
         if r.is_some() {
             if let Some(t) = self.shared.track.lock().unwrap().as_mut() {
@@ -569,9 +705,22 @@ impl Drop for Core {
     }
 }
 
+/// The rest of the caret's line when the caret is mid-line (more than spaces follow it).
+fn line_suffix(snap: &Snapshot) -> &str {
+    let line = snap.text_after.split('\n').next().unwrap_or("");
+    if line.trim().is_empty() {
+        ""
+    } else {
+        line
+    }
+}
+
+/// Most of the line after the caret a mid-line prompt carries.
+const MAX_SUFFIX_CHARS: usize = 200;
+
 fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String]) -> Prompt {
     let instructions = settings.instructions_for(&snap.bundle_id);
-    context::build(
+    let mut prompt = context::build(
         &ContextInput {
             app_name: &snap.app_name,
             window_title: &snap.window_title,
@@ -582,7 +731,11 @@ fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String]) -> Pr
             text_before: &snap.text_before,
         },
         settings.max_body_chars,
-    )
+    );
+    if settings.mid_line {
+        prompt.suffix = line_suffix(snap).chars().take(MAX_SUFFIX_CHARS).collect();
+    }
+    prompt
 }
 
 struct RemoteConfig {
@@ -614,8 +767,9 @@ impl Runner {
     }
 
     fn set_vocabulary(&mut self, words: &[(String, f32)]) {
-        if let Runner::Local(e) = self {
-            e.set_vocabulary(words);
+        match self {
+            Runner::Local(e) => e.set_vocabulary(words),
+            Runner::Remote(b) => b.set_vocabulary(words),
         }
     }
 
@@ -642,6 +796,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
         let t = Instant::now();
         match Engine::load(&cfg) {
             Ok(e) => {
+                shared.fim.store(e.supports_fim(), Ordering::SeqCst);
                 (shared.sink)(&Event::Status {
                     state: "ready",
                     detail: format!("loaded in {:.0} ms", t.elapsed().as_secs_f64() * 1000.0),
@@ -728,11 +883,13 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                         continue;
                     }
                 }
+                let mid_line = !job.prompt.suffix.is_empty();
                 let opts = GenOptions {
-                    max_words: settings.length_words.max(1),
+                    max_words: if mid_line { settings.length_words.clamp(1, 3) } else { settings.length_words.max(1) },
                     deadline: Duration::from_millis(settings.deadline_ms),
                     stop_at_sentence_end: settings.stop_at_sentence_end,
                     personal_strength: settings.personal_strength(),
+                    beam_width: settings.beam_width,
                 };
                 match engine.complete(&job.prompt, &opts, &cancel) {
                     Ok(c) => {
@@ -746,7 +903,11 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                         if cancel() {
                             continue;
                         }
-                        shared.session.lock().unwrap().set(job.field_key, &job.text_before, &c.text);
+                        if mid_line {
+                            shared.session.lock().unwrap().set_uncached(job.field_key, &job.text_before, &c.text);
+                        } else {
+                            shared.session.lock().unwrap().set(job.field_key, &job.text_before, &c.text);
+                        }
                         let shown = c.text.clone();
                         (shared.sink)(&Event::Suggestion {
                             revision: rev,
@@ -756,10 +917,12 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             ms: Some(queue_ms),
                             prefilled: Some(c.prefilled_tokens),
                             stop: Some(c.stop),
+                            replace: None,
+                            label: None,
                         });
                         // Prefetch what follows the suggestion while the user reads it; any new
                         // request cancels this between decode steps.
-                        if settings.prefetch && !shown.trim().is_empty() {
+                        if settings.prefetch && !mid_line && !shown.trim().is_empty() {
                             let mut next = job.snapshot.clone();
                             next.text_before = format!("{}{}", job.text_before, shown);
                             let examples = shared.examples.lock().unwrap().get(&job.field_key).cloned().unwrap_or_default();
@@ -790,6 +953,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             ms: None,
                             prefilled: None,
                             stop: None,
+                            replace: None,
+                            label: None,
                         });
                     }
                 }
@@ -850,6 +1015,83 @@ mod tests {
         c.submit(snap(7, "ok thanks"));
         c.submit(snap(8, ""));
         assert_eq!(c.history_stats().0, 1);
+    }
+
+    fn core_with_events() -> (Core, std::sync::mpsc::Receiver<Event>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let core = Core::new(
+            CoreConfig { model_path: "/nonexistent.gguf".into(), ..CoreConfig::default() },
+            Box::new(move |e| {
+                let _ = tx.lock().unwrap().send(e.clone());
+            }),
+        );
+        (core, rx)
+    }
+
+    /// The suggestion event for `rev`, skipping status events.
+    fn suggestion_for(rx: &std::sync::mpsc::Receiver<Event>, rev: u64) -> (String, &'static str, Option<String>, Option<String>) {
+        loop {
+            match rx.recv_timeout(Duration::from_secs(2)).expect("event") {
+                Event::Suggestion { revision, text, source, reason, replace, .. } if revision == rev => {
+                    return (text, source, replace, reason)
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn emoji_shortcode_becomes_a_replacement() {
+        let (c, rx) = core_with_events();
+        c.submit(Snapshot { revision: 1, ..snap(1, "Great news :ta") });
+        let (text, source, replace, _) = suggestion_for(&rx, 1);
+        assert_eq!((text.as_str(), source, replace.as_deref()), ("\u{1F389}", "emoji", Some(":ta")));
+        let a = c.accept(AcceptMode::NextWord).unwrap();
+        assert_eq!((a.insert.as_str(), a.replace.as_str()), ("\u{1F389}", ":ta"));
+        c.submit(Snapshot { revision: 2, ..snap(1, "Great news :zzqqx") });
+        assert_eq!(suggestion_for(&rx, 2).3.as_deref(), Some("shortcode"));
+    }
+
+    #[test]
+    fn autocorrect_replaces_the_finished_word() {
+        let (c, rx) = core_with_events();
+        let fix = |rev, text: &str, word: &str, correction: &str| Snapshot {
+            revision: rev,
+            spell_word: word.into(),
+            spell_correction: correction.into(),
+            ..snap(1, text)
+        };
+        c.submit(fix(1, "I will recieve ", "recieve", "receive"));
+        let (text, source, replace, _) = suggestion_for(&rx, 1);
+        assert_eq!((text.as_str(), source, replace.as_deref()), ("receive ", "autocorrect", Some("recieve ")));
+        c.submit(fix(2, "Teh ", "Teh", "The"));
+        assert_eq!(suggestion_for(&rx, 2).1, "autocorrect", "capitalized at a sentence start");
+        c.submit(fix(3, "Hello.\nTeh ", "Teh", "The"));
+        assert_eq!(suggestion_for(&rx, 3).1, "autocorrect", "capitalized after a newline");
+        c.submit(fix(4, "I met Priyaa ", "Priyaa", "Priya"));
+        assert_ne!(suggestion_for(&rx, 4).1, "autocorrect", "a name in mid-sentence");
+        c.submit(fix(5, "see the NASAA ", "NASAA", "NASA"));
+        assert_ne!(suggestion_for(&rx, 5).1, "autocorrect", "all caps");
+        c.submit(fix(6, "I will recieve", "recieve", "receive"));
+        assert_ne!(suggestion_for(&rx, 6).1, "autocorrect", "no space yet: still typing");
+        c.configure(Settings { autocorrect: false, ..Settings::default() });
+        c.submit(fix(7, "I will recieve ", "recieve", "receive"));
+        assert_ne!(suggestion_for(&rx, 7).1, "autocorrect", "turned off");
+    }
+
+    #[test]
+    fn typo_gate_blocks_impossible_words_but_not_names() {
+        let (c, rx) = core_with_events();
+        let typo = |rev, text: &str| Snapshot { revision: rev, spell_fragment: "typo".into(), ..snap(1, text) };
+        c.submit(typo(1, "I will recie"));
+        assert_eq!(suggestion_for(&rx, 1).3.as_deref(), Some("typo"));
+        c.submit(typo(2, "I met Priyan"));
+        assert_eq!(suggestion_for(&rx, 2).1, "pending", "capitalized: maybe a name");
+        c.submit(typo(3, "build v2b"));
+        assert_eq!(suggestion_for(&rx, 3).1, "pending", "contains digits");
+        c.submit(Snapshot { revision: 4, ..snap(1, "I will recie") });
+        assert_eq!(suggestion_for(&rx, 4).1, "pending", "not checked: no gate");
     }
 
     #[test]

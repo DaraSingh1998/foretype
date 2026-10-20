@@ -9,7 +9,10 @@
 //! only if it starts with what the user typed. That prompt is the same for every keystroke
 //! inside a word, so one reply is cached and filtered locally until the word ends. When the
 //! typed letters leave that guess, a second request sends the partial word itself.
-//! The personal-vocabulary bias needs logits and is only available in-process.
+//! Personal vocabulary: llama-server gets the whole-word part of the in-process bias as
+//! `logit_bias` (the user's words whose " word" is one token on that server, found once per
+//! profile through `/tokenize`); OpenAI-style endpoints get none, since token ids differ by
+//! model and there is no tokenizer endpoint.
 
 use std::io::{BufRead, BufReader};
 use std::sync::Mutex;
@@ -35,7 +38,12 @@ pub struct HttpBackend {
     agent: ureq::Agent,
     /// OpenAI-style: last (prompt, raw continuation), reused while the prompt is unchanged.
     last: Mutex<Option<(String, String)>>,
+    /// llama-server: (token id, weight in (0, 1]) for the user's single-token words.
+    bias: Mutex<Vec<(i64, f32)>>,
 }
+
+/// Most of the user's words sent as `logit_bias` (keeps requests small).
+const MAX_BIAS_WORDS: usize = 400;
 
 /// A GBNF string literal for `s`.
 fn gbnf_literal(s: &str) -> String {
@@ -69,7 +77,15 @@ impl HttpBackend {
             .timeout_connect(Duration::from_secs(2))
             .timeout_read(Duration::from_secs(15))
             .build();
-        Ok(Self { kind, base, model: model.to_string(), api_key: api_key.to_string(), agent, last: Mutex::new(None) })
+        Ok(Self {
+            kind,
+            base,
+            model: model.to_string(),
+            api_key: api_key.to_string(),
+            agent,
+            last: Mutex::new(None),
+            bias: Mutex::new(Vec::new()),
+        })
     }
 
     pub fn describe(&self) -> String {
@@ -85,6 +101,39 @@ impl HttpBackend {
             req = req.set("Authorization", &format!("Bearer {}", self.api_key));
         }
         req.send_string(&body.to_string()).map_err(|e| e.to_string())
+    }
+
+    /// Token ids of `text` on the server, without BOS.
+    fn tokenize(&self, text: &str) -> Result<Vec<i64>, String> {
+        let resp = self.post("/tokenize", json!({ "content": text, "add_special": false }))?;
+        let v: Value = serde_json::from_str(&resp.into_string().map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        Ok(v["tokens"].as_array().map(|a| a.iter().filter_map(Value::as_i64).collect()).unwrap_or_default())
+    }
+
+    /// Installs the user's vocabulary (llama-server only): one `/tokenize` call for all the
+    /// words, one per line, split back at the newline token.
+    pub fn set_vocabulary(&self, words: &[(String, f32)]) {
+        if self.kind != Kind::LlamaServer {
+            return;
+        }
+        let words = &words[..words.len().min(MAX_BIAS_WORDS)];
+        let result = (|| -> Result<Vec<(i64, f32)>, String> {
+            let newline = match self.tokenize("\n")?.as_slice() {
+                [t] => *t,
+                _ => return Err("newline is not one token".into()),
+            };
+            let joined = words.iter().map(|(w, _)| format!(" {w}")).collect::<Vec<_>>().join("\n");
+            let tokens = self.tokenize(&joined)?;
+            let groups: Vec<&[i64]> = tokens.split(|t| *t == newline).collect();
+            if groups.len() != words.len() {
+                return Err(format!("{} words came back as {} groups", words.len(), groups.len()));
+            }
+            Ok(groups.iter().zip(words).filter(|(g, _)| g.len() == 1).map(|(g, (_, w))| (g[0], *w)).collect())
+        })();
+        match result {
+            Ok(b) => *self.bias.lock().unwrap() = b,
+            Err(e) => eprintln!("[foretype] llama-server vocabulary bias unavailable: {e}"),
+        }
     }
 
     /// Prefills the prompt on llama-server (zero-token request); a no-op elsewhere.
@@ -127,6 +176,10 @@ impl HttpBackend {
                 });
                 if !prompt.fragment.is_empty() {
                     b["grammar"] = json!(format!("root ::= {} [^\\n]*", gbnf_literal(&prompt.fragment)));
+                }
+                let bias = self.bias.lock().unwrap();
+                if opts.personal_strength > 0.0 && !bias.is_empty() {
+                    b["logit_bias"] = json!(bias.iter().map(|(t, w)| json!([t, w * opts.personal_strength])).collect::<Vec<_>>());
                 }
                 ("/completion", b)
             }

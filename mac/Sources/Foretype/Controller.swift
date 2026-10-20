@@ -15,6 +15,7 @@ final class Controller {
     let keys = KeyTap()
     let panel = GhostPanel()
     let screen = ScreenContextProvider()
+    let speller = Speller()
     let hotkeys = Hotkeys()
     let power = PowerMonitor()
     var onStatus: ((String, String) -> Void)?
@@ -107,6 +108,8 @@ final class Controller {
             DispatchQueue.main.async { [weak self] in self?.hide() }
             return
         }
+        // Never hand a secure field's text to the spell checker.
+        if !s.secureInput, s.subrole != "AXSecureTextField" { speller.annotate(&s) }
         engine.submit(s)
         screen.note(.init(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame),
                     skip: !screenContextAllowed(s))
@@ -135,13 +138,18 @@ final class Controller {
 
     private func handle(_ event: EngineEvent) {
         switch event {
-        case let .suggestion(revision, text, source, ms):
+        case let .suggestion(revision, text, source, ms, replace, label):
             let snap = latestSnapshot
             guard revision == snap.revision else { return }
             if text.isEmpty {
                 hide()
             } else {
-                panel.show(text: text, caret: snap.caret, frame: snap.frame, font: snap.font)
+                // A replacement shows what Tab turns the typed text into.
+                let shown = replace.isEmpty ? text
+                    : source == "emoji" ? " \(text) \(label)" : " → \(text.trimmingCharacters(in: .whitespaces))"
+                let midLine = !(snap.textAfter.split(separator: "\n", omittingEmptySubsequences: false).first ?? "")
+                    .trimmingCharacters(in: .whitespaces).isEmpty
+                panel.show(text: shown, caret: snap.caret, frame: snap.frame, font: snap.font, midLine: midLine && replace.isEmpty)
                 keys.setSuggestionVisible(panel.isVisible)
             }
             if Log.enabled, source != "pending" {
@@ -169,6 +177,7 @@ final class Controller {
                 return
             }
             let strategy = insertionStrategy(for: latestSnapshot.bundleId)
+            if !r.replace.isEmpty { Inserter.deleteBackward(r.replace.count) }
             Inserter.insert(r.insert, strategy: strategy)
             Log.debug("accept \(action == .acceptAll ? "all" : "word") via \(strategy.rawValue) \(r.insert.debugDescription)")
             if r.remaining.isEmpty {

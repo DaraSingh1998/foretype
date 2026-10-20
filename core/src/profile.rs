@@ -57,6 +57,16 @@ impl Profile {
         self.words.len()
     }
 
+    /// True if the user has written this (lowercased) word.
+    pub fn knows(&self, lower: &str) -> bool {
+        self.words.contains_key(lower)
+    }
+
+    /// True if one of the user's (lowercased) words starts with `lower_prefix`.
+    pub fn has_prefix(&self, lower_prefix: &str) -> bool {
+        self.words.keys().any(|w| w.starts_with(lower_prefix))
+    }
+
     /// Words used at least `min_count` times with a weight in (0, 1]: log-scaled by count.
     pub fn weighted_words(&self, limit: usize, min_count: u32) -> Vec<(String, f32)> {
         let mut v: Vec<(&String, u32)> = self

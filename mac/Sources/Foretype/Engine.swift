@@ -2,7 +2,9 @@ import CForetypeCore
 import Foundation
 
 enum EngineEvent {
-    case suggestion(revision: UInt64, text: String, source: String, ms: Double?)
+    /// `replace`: text before the caret an accept deletes first (emoji, autocorrect), with
+    /// `label` saying what it stands for.
+    case suggestion(revision: UInt64, text: String, source: String, ms: Double?, replace: String, label: String)
     case status(state: String, detail: String)
 }
 
@@ -42,7 +44,9 @@ final class EngineBridge {
             onEvent?(.suggestion(revision: (o["revision"] as? NSNumber)?.uint64Value ?? 0,
                                  text: o["text"] as? String ?? "",
                                  source: o["source"] as? String ?? "",
-                                 ms: (o["ms"] as? NSNumber)?.doubleValue))
+                                 ms: (o["ms"] as? NSNumber)?.doubleValue,
+                                 replace: o["replace"] as? String ?? "",
+                                 label: o["label"] as? String ?? ""))
         case "status":
             onEvent?(.status(state: o["state"] as? String ?? "", detail: o["detail"] as? String ?? ""))
         default:
@@ -60,13 +64,13 @@ final class EngineBridge {
         ft_engine_warm(handle, snap.coreJSON())
     }
 
-    /// `(insert, remaining)` for next-word or whole-suggestion accept.
-    func accept(all: Bool) -> (insert: String, remaining: String)? {
+    /// What a next-word or whole-suggestion accept inserts; delete `replace` first.
+    func accept(all: Bool) -> (insert: String, remaining: String, replace: String)? {
         guard let handle, let raw = ft_engine_accept(handle, all ? 1 : 0) else { return nil }
         defer { ft_string_free(raw) }
         guard let data = String(cString: raw).data(using: .utf8),
               let o = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
-        return (o["insert"] ?? "", o["remaining"] ?? "")
+        return (o["insert"] ?? "", o["remaining"] ?? "", o["replace"] ?? "")
     }
 
     func dismiss(fieldKey: UInt64, textBefore: String) {

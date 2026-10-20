@@ -27,6 +27,10 @@ struct FieldSnapshot {
     var screenContext = ""
     /// The user asked for suggestions here with the force hotkey.
     var force = false
+    /// Spell checker verdicts, filled in by the controller (`Speller`).
+    var spellFragment = ""
+    var spellWord = ""
+    var spellCorrection = ""
 
     /// The JSON shape the core's `Snapshot` expects.
     func coreJSON() -> String {
@@ -37,6 +41,7 @@ struct FieldSnapshot {
             "selection_len": selectionLength, "marked_len": markedLength, "secure_input": secureInput,
             "field_width": Double(frame?.width ?? 0), "field_height": Double(frame?.height ?? 0),
             "screen_context": screenContext, "force": force,
+            "spell_fragment": spellFragment, "spell_word": spellWord, "spell_correction": spellCorrection,
         ]
         let data = try! JSONSerialization.data(withJSONObject: o)
         return String(data: data, encoding: .utf8)!

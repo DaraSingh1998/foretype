@@ -89,12 +89,14 @@ const MAX_LINE_SUFFIX: usize = 8;
 /// fields), where Tab must keep moving focus.
 const MIN_SINGLE_LINE_WIDTH: f64 = 260.0;
 
-/// Why the gate said no. `None` means suggest.
+/// Why the gate said no. `None` means suggest. `allow_mid_line` lifts the rule against text
+/// after the caret (the engine can fill in the middle and the user turned it on).
 pub fn evaluate(
     snap: &Snapshot,
     compat: &CompatDb,
     user_disabled: &HashSet<String>,
     user_enabled: &HashSet<String>,
+    allow_mid_line: bool,
 ) -> Option<&'static str> {
     if snap.secure_input {
         return Some("secureInput");
@@ -134,7 +136,7 @@ pub fn evaluate(
         return Some("smallField");
     }
     let suffix = snap.text_after.split('\n').next().unwrap_or("");
-    if suffix.trim().chars().count() > MAX_LINE_SUFFIX {
+    if !allow_mid_line && suffix.trim().chars().count() > MAX_LINE_SUFFIX {
         return Some("midLine");
     }
     if snap.text_before.trim().chars().count() < 2 {
@@ -185,33 +187,36 @@ mod tests {
     fn gate() {
         let db = CompatDb::bundled();
         let none = HashSet::new();
-        assert_eq!(evaluate(&snap("Hello there, I"), &db, &none, &none), None);
+        assert_eq!(evaluate(&snap("Hello there, I"), &db, &none, &none, false), None);
         let mut s = snap("Hello there");
         s.marked_len = 2;
-        assert_eq!(evaluate(&s, &db, &none, &none), Some("composing"));
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("composing"));
         let mut s = snap("Hello there");
         s.marked_len = 0; // TextEdit always reports a zero-length marked range
-        assert_eq!(evaluate(&s, &db, &none, &none), None);
+        assert_eq!(evaluate(&s, &db, &none, &none, false), None);
         let mut s = snap("Hello there");
         s.text_after = " and some more text here\nnext".into();
-        assert_eq!(evaluate(&s, &db, &none, &none), Some("midLine"));
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("midLine"));
         let mut s = snap("Hello there");
         s.text_after = ".\nnext line".into();
-        assert_eq!(evaluate(&s, &db, &none, &none), None);
+        assert_eq!(evaluate(&s, &db, &none, &none, false), None);
+        let mut s = snap("Hello there");
+        s.text_after = " and some more text here\nnext".into();
+        assert_eq!(evaluate(&s, &db, &none, &none, true), None, "mid-line allowed");
         let mut s = snap("ls -la");
         s.bundle_id = "dev.warp.Warp-Stable".into();
-        assert_eq!(evaluate(&s, &db, &none, &none), Some("appDisabledByDefault"));
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("appDisabledByDefault"));
         let mut s = snap("Last login: Mon\n$ ls -la");
         s.bundle_id = "com.apple.Terminal".into();
-        assert_eq!(evaluate(&s, &db, &none, &none), Some("notAgentPrompt"));
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("notAgentPrompt"));
         s.text_before = "Welcome to Claude Code\n\u{2502} > fix the failing te".into();
-        assert_eq!(evaluate(&s, &db, &none, &none), None);
+        assert_eq!(evaluate(&s, &db, &none, &none, false), None);
         let mut s = snap("secret");
         s.subrole = "AXSecureTextField".into();
-        assert_eq!(evaluate(&s, &db, &none, &none), Some("secureField"));
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("secureField"));
         let mut s = snap("query text");
         s.role = "AXTextField".into();
         s.field_width = 180.0;
-        assert_eq!(evaluate(&s, &db, &none, &none), Some("smallField"));
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("smallField"));
     }
 }

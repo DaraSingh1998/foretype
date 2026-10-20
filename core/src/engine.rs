@@ -59,12 +59,39 @@ pub struct GenOptions {
     pub stop_at_sentence_end: bool,
     /// Logit boost for the user's own words at full weight (0 = off).
     pub personal_strength: f32,
+    /// Phrases searched at once (1 = greedy). Truncating models only; others stay greedy.
+    pub beam_width: usize,
 }
 
 impl Default for GenOptions {
     fn default() -> Self {
-        Self { max_words: 4, deadline: Duration::from_millis(300), stop_at_sentence_end: true, personal_strength: 0.0 }
+        Self {
+            max_words: 4,
+            deadline: Duration::from_millis(300),
+            stop_at_sentence_end: true,
+            personal_strength: 0.0,
+            beam_width: 1,
+        }
     }
+}
+
+/// Most beams a context is set up for: beams live in sequences 1..=2*MAX_BEAMS (two banks,
+/// swapped every step), sequence 0 holds the prompt.
+pub const MAX_BEAMS: usize = 8;
+
+/// One phrase being searched.
+struct Beam {
+    /// Generated tokens; the last one is not in the KV cache yet.
+    tokens: Vec<LlamaToken>,
+    out: Vec<u8>,
+    /// Sum of log-probabilities.
+    score: f32,
+    seq: i32,
+}
+
+/// Average log-probability per token: compares phrases of different lengths fairly.
+fn mean_score(score: f32, n: usize) -> f32 {
+    score / n.max(1) as f32
 }
 
 /// The user's vocabulary prepared for biasing.
@@ -131,6 +158,10 @@ pub struct Engine {
     vocab_bias: Vocabulary,
     rollback: Rollback,
     snapshots: VecDeque<StateSnapshot>,
+    /// Fill-in-the-middle tokens (prefix, suffix, middle) when the vocabulary has them.
+    fim: Option<[LlamaToken; 3]>,
+    /// The context has room for beam-search sequences (truncating models only).
+    beams: bool,
 }
 
 fn ms(since: Instant) -> f64 {
@@ -165,11 +196,15 @@ impl Engine {
         let model_ptr = Box::into_raw(Box::new(model));
         // SAFETY: freed only in Drop, after the context that borrows it.
         let model: &'static LlamaModel = unsafe { &*model_ptr };
+        // Beam search keeps extra sequences in one shared (unified) cache, where copying a
+        // sequence only tags cells; recurrent state can't be shared that way.
+        let beams = rollback == Rollback::Truncate;
         let cparams = LlamaContextParams::default()
             .with_n_ctx(NonZeroU32::new(cfg.n_ctx))
             .with_n_batch(cfg.n_batch)
             .with_n_ubatch(cfg.n_batch)
-            .with_n_seq_max(1)
+            .with_n_seq_max(if beams { 1 + 2 * MAX_BEAMS as u32 } else { 1 })
+            .with_kv_unified(true)
             // Sliding-window layers normally overwrite cells that left the window, which
             // makes rolling back impossible; at a 2,048-token context the full-size cache
             // costs little.
@@ -196,11 +231,13 @@ impl Engine {
             pieces.push(if control { Vec::new() } else { vocab.token_to_piece(t, false, None) });
         }
         let add_bos = vocab.should_add_bos();
+        let fim = [vocab.fim_pre(), vocab.fim_suf(), vocab.fim_mid()];
+        let fim = fim.iter().all(|t| t.0 >= 0 && (t.0 as usize) < n_vocab).then_some(fim);
         Ok(Self {
             backend: backend_ptr,
             model: model_ptr,
             ctx: ManuallyDrop::new(ctx),
-            batch: LlamaBatch::new(cfg.n_batch as usize, 1),
+            batch: LlamaBatch::new((cfg.n_batch as usize).max(MAX_BEAMS), 1),
             cached: Vec::new(),
             pieces,
             eog,
@@ -210,6 +247,8 @@ impl Engine {
             vocab_bias: Vocabulary::default(),
             rollback,
             snapshots: VecDeque::new(),
+            fim,
+            beams,
         })
     }
 
@@ -220,6 +259,30 @@ impl Engine {
 
     pub fn rollback(&self) -> Rollback {
         self.rollback
+    }
+
+    /// True if the model can complete in the middle of a line (it has FIM tokens).
+    pub fn supports_fim(&self) -> bool {
+        self.fim.is_some()
+    }
+
+    /// The prompt's tokens: plain continuation, or fill-in-the-middle around the rest of
+    /// the line. `None` for a mid-line prompt on a model without FIM tokens.
+    fn prompt_tokens(&self, prompt: &Prompt) -> Option<Vec<LlamaToken>> {
+        if prompt.suffix.is_empty() {
+            return Some(self.tokenize(&prompt.prefix));
+        }
+        let [pre, suf, mid] = self.fim?;
+        let mut t = Vec::new();
+        if self.add_bos {
+            t.push(self.model().vocab().bos());
+        }
+        t.push(pre);
+        t.extend(self.tokenize_piece(&prompt.prefix));
+        t.push(suf);
+        t.extend(self.tokenize_piece(&prompt.suffix));
+        t.push(mid);
+        Some(t)
     }
 
     /// Bytes held by recurrent-state snapshots (0 for truncating models).
@@ -464,6 +527,190 @@ impl Engine {
         best.map(|(id, _)| LlamaToken(id as i32))
     }
 
+    /// Whether generating token `id` after `out` ends the suggestion, and how many of its
+    /// bytes to keep (a newline keeps what comes before it). Shared by greedy and beam search.
+    fn stop_before(&self, id: usize, out: &[u8], fragment: &[u8], opts: &GenOptions) -> Option<(&'static str, usize)> {
+        if self.eog[id] {
+            return Some(("eog", 0));
+        }
+        if out.len() < fragment.len() {
+            return None;
+        }
+        let piece = &self.pieces[id];
+        if let Some(nl) = piece.iter().position(|&b| b == b'\n') {
+            return Some(("newline", nl));
+        }
+        // Starting a new word past the limit (or after a sentence end) ends the suggestion.
+        let starts_word = piece.first().is_some_and(|b| b.is_ascii_whitespace());
+        if starts_word {
+            let shown = String::from_utf8_lossy(&out[fragment.len()..]);
+            if words::count_words(&shown) >= opts.max_words {
+                return Some(("words", 0));
+            }
+            if opts.stop_at_sentence_end && words::ends_sentence(&shown) {
+                return Some(("sentence", 0));
+            }
+        }
+        None
+    }
+
+    /// The `k` best allowed next tokens after `out` with their log-probabilities (the
+    /// personal bias included, normalized over the whole vocabulary).
+    fn top_k(&self, logits: &[f32], out: &[u8], prompt: &Prompt, opts: &GenOptions, k: usize) -> Vec<(LlamaToken, f32)> {
+        let fragment = prompt.fragment.as_bytes();
+        let remaining: &[u8] = if out.len() < fragment.len() { &fragment[out.len()..] } else { &[] };
+        let bias: HashMap<usize, f32> = if opts.personal_strength > 0.0 {
+            let full = if out.len() < fragment.len() { prompt.fragment.as_str() } else { std::str::from_utf8(out).unwrap_or("") };
+            let mut m = HashMap::new();
+            for (t, b) in self.step_bias(full, out.len(), opts.personal_strength) {
+                let e = m.entry(t).or_insert(0.0f32);
+                *e = e.max(b);
+            }
+            m
+        } else {
+            HashMap::new()
+        };
+        let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let lse = max + logits.iter().map(|l| (l - max).exp()).sum::<f32>().ln();
+        let mut best: Vec<(usize, f32)> = Vec::with_capacity(k + 1);
+        for (id, &l) in logits.iter().enumerate() {
+            let v = l + bias.get(&id).copied().unwrap_or(0.0);
+            if best.len() == k && best.last().is_some_and(|(_, b)| v <= *b) {
+                continue;
+            }
+            if !self.allowed(id, remaining) {
+                continue;
+            }
+            let at = best.partition_point(|(_, b)| *b >= v);
+            best.insert(at, (id, v));
+            best.truncate(k);
+        }
+        best.into_iter().map(|(id, v)| (LlamaToken(id as i32), v - lse)).collect()
+    }
+
+    /// Phrase beam search (TabType reports Cotypist uses a 9-wide one): keeps the
+    /// `beam_width` most likely continuations, decoded together in one batch per step, and
+    /// returns the phrase with the best average log-probability. The first word may differ
+    /// from the greedy one. The prompt's sequence 0 is never written, so nothing needs
+    /// rolling back. Returns (bytes generated, stop reason, decode steps).
+    fn beam_search(
+        &mut self,
+        prompt: &Prompt,
+        prompt_len: usize,
+        opts: &GenOptions,
+        cancel: &dyn Fn() -> bool,
+        t_gen: Instant,
+    ) -> Result<(Vec<u8>, &'static str, usize), GenError> {
+        let width = opts.beam_width.clamp(1, MAX_BEAMS);
+        let fragment = prompt.fragment.as_bytes();
+        let max_tokens = opts.max_words * 3 + 8 + fragment.len();
+        let mut finished: Vec<(Vec<u8>, f32, usize, &'static str)> = Vec::new();
+        let mut bank = 0usize;
+        let seq_of = |bank: usize, i: usize| (1 + bank * MAX_BEAMS + i) as i32;
+        // First step: children of the prompt's last token (its logits are fresh from sync).
+        let first = self.top_k(self.ctx.get_logits_ith(self.logits_index()), &[], prompt, opts, width);
+        let mut beams: Vec<Beam> = Vec::new();
+        for (tok, lp) in first {
+            if let Some((reason, keep)) = self.stop_before(tok.0 as usize, &[], fragment, opts) {
+                finished.push((self.pieces[tok.0 as usize][..keep].to_vec(), lp, 1, reason));
+                continue;
+            }
+            let seq = seq_of(bank, beams.len());
+            self.ctx.copy_kv_cache_seq(0, seq, None, None).map_err(|e| GenError::Failed(format!("seq copy: {e}")))?;
+            beams.push(Beam { tokens: vec![tok], out: self.pieces[tok.0 as usize].clone(), score: lp, seq });
+        }
+        let mut steps = 1usize;
+        let mut stop = "maxTokens";
+        let result = loop {
+            if beams.is_empty() {
+                stop = "beams";
+                break Ok(());
+            }
+            if steps >= max_tokens {
+                break Ok(());
+            }
+            if cancel() {
+                break Err(GenError::Cancelled);
+            }
+            if t_gen.elapsed() > opts.deadline {
+                stop = "deadline";
+                break Ok(());
+            }
+            self.batch.clear();
+            let mut added = Ok(());
+            for b in &beams {
+                let pos = prompt_len + b.tokens.len() - 1;
+                added = added.and_then(|_| self.batch.add(*b.tokens.last().unwrap(), pos as i32, &[b.seq], true));
+            }
+            if let Err(e) = added {
+                break Err(GenError::Failed(format!("batch: {e}")));
+            }
+            if let Err(e) = self.ctx.decode(&mut self.batch) {
+                break Err(GenError::Failed(format!("decode: {e}")));
+            }
+            steps += 1;
+            // Children of every beam, best first.
+            let mut children: Vec<(usize, LlamaToken, f32)> = Vec::new();
+            for (i, b) in beams.iter().enumerate() {
+                for (tok, lp) in self.top_k(self.ctx.get_logits_ith(i as i32), &b.out, prompt, opts, width) {
+                    children.push((i, tok, b.score + lp));
+                }
+            }
+            children.sort_by(|a, b| b.2.total_cmp(&a.2));
+            let next_bank = 1 - bank;
+            let mut next: Vec<Beam> = Vec::new();
+            for (parent, tok, score) in children {
+                if next.len() >= width {
+                    break;
+                }
+                let p = &beams[parent];
+                let id = tok.0 as usize;
+                if let Some((reason, keep)) = self.stop_before(id, &p.out, fragment, opts) {
+                    let mut out = p.out.clone();
+                    out.extend_from_slice(&self.pieces[id][..keep]);
+                    let n = p.tokens.len() + usize::from(keep > 0);
+                    finished.push((out, if keep > 0 { score } else { p.score }, n, reason));
+                    continue;
+                }
+                let seq = seq_of(next_bank, next.len());
+                self.ctx.clear_kv_cache_seq(Some(seq as u32), None, None).map_err(|e| GenError::Failed(format!("seq clear: {e}")))?;
+                self.ctx.copy_kv_cache_seq(p.seq, seq, None, None).map_err(|e| GenError::Failed(format!("seq copy: {e}")))?;
+                let mut tokens = p.tokens.clone();
+                tokens.push(tok);
+                let mut out = p.out.clone();
+                out.extend_from_slice(&self.pieces[id]);
+                next.push(Beam { tokens, out, score, seq });
+            }
+            for b in &beams {
+                let _ = self.ctx.clear_kv_cache_seq(Some(b.seq as u32), None, None);
+            }
+            beams = next;
+            bank = next_bank;
+            // Stop early when no live beam can still catch the best finished phrase: adding
+            // tokens only lowers a sum of log-probabilities (a cautious test, since the final
+            // choice compares means).
+            let best_done = finished.iter().map(|(_, s, _, _)| *s).fold(f32::NEG_INFINITY, f32::max);
+            if beams.iter().all(|b| b.score < best_done) {
+                stop = "beams";
+                break Ok(());
+            }
+        };
+        // Unfinished beams compete too (cut to whole words by the caller).
+        for b in &beams {
+            finished.push((b.out.clone(), b.score, b.tokens.len(), stop));
+            let _ = self.ctx.clear_kv_cache_seq(Some(b.seq as u32), None, None);
+        }
+        result?;
+        let best = finished
+            .into_iter()
+            .filter(|(out, _, _, _)| out.len() >= fragment.len())
+            .max_by(|a, b| mean_score(a.1, a.2).total_cmp(&mean_score(b.1, b.2)));
+        Ok(match best {
+            Some((out, _, _, reason)) => (out, reason, steps),
+            None => (Vec::new(), "noCandidate", steps),
+        })
+    }
+
     pub fn complete(
         &mut self,
         prompt: &Prompt,
@@ -471,7 +718,9 @@ impl Engine {
         cancel: &dyn Fn() -> bool,
     ) -> Result<Completion, GenError> {
         let t0 = Instant::now();
-        let tokens = self.tokenize(&prompt.prefix);
+        let Some(tokens) = self.prompt_tokens(prompt) else {
+            return Ok(Completion { stop: "noFim", ..Completion::default() });
+        };
         let prefilled = self.sync(&tokens, cancel)?;
         let prefill_ms = ms(t0);
         // The wall-clock cap applies to generation: a cold prefill (first keystroke in a
@@ -486,7 +735,15 @@ impl Engine {
         let mut stop = "maxTokens";
         let mut idx = self.logits_index();
 
-        let result = loop {
+        let result = if opts.beam_width > 1 && self.beams {
+            // Beams live in their own sequences: the cache still holds exactly the prompt.
+            self.beam_search(prompt, tokens.len(), opts, cancel, t_gen).map(|(o, s, n)| {
+                out = o;
+                stop = s;
+                generated = n;
+            })
+        } else {
+            loop {
             if generated >= max_tokens {
                 break Ok(());
             }
@@ -509,32 +766,12 @@ impl Engine {
                 break Ok(());
             };
             let id = tok.0 as usize;
-            if self.eog[id] {
-                stop = "eog";
+            if let Some((reason, keep)) = self.stop_before(id, &out, fragment, opts) {
+                out.extend_from_slice(&self.pieces[id][..keep]);
+                stop = reason;
                 break Ok(());
             }
-            let piece = &self.pieces[id];
-            let healed = out.len() >= fragment.len();
-            if healed {
-                let shown = &out[fragment.len()..];
-                if let Some(nl) = piece.iter().position(|&b| b == b'\n') {
-                    out.extend_from_slice(&piece[..nl]);
-                    stop = "newline";
-                    break Ok(());
-                }
-                // Starting a new word past the limit ends the suggestion.
-                let starts_word = piece.first().is_some_and(|b| b.is_ascii_whitespace());
-                let shown_str = String::from_utf8_lossy(shown);
-                if starts_word && words::count_words(&shown_str) >= opts.max_words {
-                    stop = "words";
-                    break Ok(());
-                }
-                if starts_word && opts.stop_at_sentence_end && words::ends_sentence(&shown_str) {
-                    stop = "sentence";
-                    break Ok(());
-                }
-            }
-            out.extend_from_slice(piece);
+            out.extend_from_slice(&self.pieces[id]);
             generated += 1;
 
             self.batch.clear();
@@ -546,6 +783,7 @@ impl Engine {
             }
             pos += 1;
             idx = 0;
+            }
         };
 
         // Roll the generated tokens back out of the cache so it mirrors the prompt again
@@ -572,6 +810,9 @@ impl Engine {
                 valid
             };
             text = trimmed.trim_end_matches([' ', '\t']).to_string();
+            if !prompt.suffix.is_empty() {
+                text = before_suffix(&text, &prompt.suffix).to_string();
+            }
         }
         Ok(Completion {
             text,
@@ -585,6 +826,20 @@ impl Engine {
     }
 }
 
+/// Cuts a mid-line suggestion where it starts repeating the text after the caret: with the
+/// rest of the line " is great.", "this is great" becomes "this" (and "is great" nothing).
+fn before_suffix<'a>(shown: &'a str, suffix: &str) -> &'a str {
+    let suf = suffix.trim_start();
+    let starts = std::iter::once(0).chain(shown.char_indices().filter(|(_, c)| c.is_whitespace()).map(|(i, _)| i));
+    for k in starts {
+        let rest = shown[k..].trim();
+        if !rest.is_empty() && suf.starts_with(rest) {
+            return shown[..k].trim_end();
+        }
+    }
+    shown
+}
+
 impl Drop for Engine {
     fn drop(&mut self) {
         // SAFETY: context first (it borrows the model), then model, then backend; none of
@@ -594,5 +849,19 @@ impl Drop for Engine {
             drop(Box::from_raw(self.model));
             drop(Box::from_raw(self.backend));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::before_suffix;
+
+    #[test]
+    fn mid_line_suggestion_stops_where_the_line_resumes() {
+        assert_eq!(before_suffix("this is great", " is great."), "this");
+        assert_eq!(before_suffix("is great", " is great."), "");
+        assert_eq!(before_suffix("ould", " split the work"), "ould");
+        assert_eq!(before_suffix("ould split", " split the work"), "ould");
+        assert_eq!(before_suffix("really nice", " day"), "really nice");
     }
 }

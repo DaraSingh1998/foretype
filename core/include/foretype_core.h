@@ -22,7 +22,8 @@ void ft_engine_free(FtEngine *engine);
 void ft_engine_submit(FtEngine *engine, const char *snapshot_json);
 void ft_engine_warm(FtEngine *engine, const char *snapshot_json);
 
-/// mode 0 = next word, 1 = whole suggestion. Returns {"insert","remaining"} or NULL.
+/// mode 0 = next word, 1 = whole suggestion. Returns {"insert","remaining","replace"} or NULL;
+/// a non-empty "replace" is the text just before the caret to delete before inserting.
 char *ft_engine_accept(FtEngine *engine, int32_t mode);
 void ft_engine_dismiss(FtEngine *engine, uint64_t field_key, const char *text_before);
 
