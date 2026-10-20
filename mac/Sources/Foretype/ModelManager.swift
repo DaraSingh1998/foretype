@@ -20,14 +20,31 @@ struct ModelInfo: Decodable, Equatable {
 /// Downloads models from the shared catalog (core/models), verifies them against the pinned
 /// SHA-256, and resumes interrupted downloads. Files land in
 /// ~/Library/Application Support/Foretype/Models; a download is only moved there after it
-/// verifies.
+/// verifies. Also lists what is in that folder, how much disk it uses, and deletes files
+/// from it.
 final class ModelManager: NSObject, URLSessionDownloadDelegate {
     enum State: Equatable {
         case notInstalled
         case downloading(Double)
+        /// Cancelled with resume data kept (in memory: a relaunch starts over).
+        case paused(Double)
         case verifying
         case installed
         case failed(String)
+    }
+
+    /// A file in the models folder.
+    struct LocalFile: Equatable {
+        let path: String
+        /// Allocated size on disk.
+        let bytes: Int64
+        /// The catalog entry when the file is that model, complete.
+        let model: ModelInfo?
+
+        /// A `.part` file: a download that stopped while it was being verified.
+        var incomplete: Bool { path.hasSuffix(".part") }
+        var fileName: String { URL(fileURLWithPath: path).lastPathComponent }
+        var name: String { model?.name ?? fileName }
     }
 
     /// Main thread: a model's state changed.
@@ -38,6 +55,8 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
     private var session: URLSession!
     private var tasks: [String: URLSessionDownloadTask] = [:]
     private var resumeData: [String: Data] = [:]
+    /// Last download fraction per model (shown while paused).
+    private var progress: [String: Double] = [:]
     private var completions: [String: (Result<String, Error>) -> Void] = [:]
 
     static var ramGB: Int { Int(ProcessInfo.processInfo.physicalMemory / 1_073_741_824) }
@@ -89,18 +108,111 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
         task.taskDescription = m.id
         tasks[m.id] = task
         if let completion { completions[m.id] = completion }
-        set(m, .downloading(0))
+        set(m, .downloading(resumeData[m.id] == nil ? 0 : progress[m.id] ?? 0))
         task.resume()
     }
 
+    /// Stops a download. When the server allows resuming, the model is `paused` and the
+    /// next `download` continues where it stopped.
     func cancel(_ m: ModelInfo) {
         tasks[m.id]?.cancel { [weak self] data in
             DispatchQueue.main.async {
-                self?.resumeData[m.id] = data
-                self?.tasks[m.id] = nil
-                self?.set(m, .notInstalled)
+                guard let self else { return }
+                self.resumeData[m.id] = data
+                self.tasks[m.id] = nil
+                self.set(m, data == nil ? .notInstalled : .paused(self.progress[m.id] ?? 0))
             }
         }
+    }
+
+    /// Forgets a paused download and deletes what it had downloaded; the next download starts
+    /// from zero.
+    func discardPaused(_ m: ModelInfo) {
+        if let data = resumeData.removeValue(forKey: m.id), let tmp = ModelManager.resumeTempFile(data) {
+            try? FileManager.default.removeItem(at: tmp)
+        }
+        progress[m.id] = nil
+        if case .paused = states[m.id] ?? .notInstalled { set(m, .notInstalled) }
+    }
+
+    /// At quit: resume data lives in memory only, so the partial downloads it points to
+    /// would otherwise stay in the temporary folder until macOS cleans it.
+    func discardAllResumeData() {
+        for data in resumeData.values {
+            if let tmp = ModelManager.resumeTempFile(data) { try? FileManager.default.removeItem(at: tmp) }
+        }
+        resumeData.removeAll()
+    }
+
+    /// Bytes a paused (or failed, resumable) download has kept, when known.
+    func keptBytes(_ m: ModelInfo) -> Int64? {
+        guard let data = resumeData[m.id], let tmp = ModelManager.resumeTempFile(data),
+              FileManager.default.fileExists(atPath: tmp.path) else { return nil }
+        return ModelManager.sizeOnDisk(tmp.path)
+    }
+
+    /// The temporary file a paused download writes into. URLSession names it inside the
+    /// resume data (an undocumented keyed archive on current macOS, a plain property list
+    /// on older ones); only a `CFNetworkDownload_*` name in this process's temporary folder
+    /// is accepted.
+    static func resumeTempFile(_ data: Data) -> URL? {
+        guard var root = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else { return nil }
+        if let top = (root["$top"] as? [String: Any])?.keys.first, let u = try? NSKeyedUnarchiver(forReadingFrom: data) {
+            u.requiresSecureCoding = false
+            root = u.decodeObject(forKey: top) as? [String: Any] ?? [:]
+            u.finishDecoding()
+        }
+        guard let name = root["NSURLSessionResumeInfoTempFileName"] as? String,
+              name.hasPrefix("CFNetworkDownload_"), !name.contains("/") else { return nil }
+        return URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(name)
+    }
+
+    // MARK: Files
+
+    /// Allocated size of one file (what deleting it frees).
+    static func sizeOnDisk(_ path: String) -> Int64 {
+        let v = try? URL(fileURLWithPath: path).resourceValues(forKeys: [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey])
+        return Int64(v?.totalFileAllocatedSize ?? v?.fileAllocatedSize ?? v?.fileSize ?? 0)
+    }
+
+    /// GGUF files and leftover `.part` files in the models folder: complete catalog models
+    /// first (catalog order), then the rest by name. A `.part` file that is being verified
+    /// right now is left out.
+    func localFiles() -> [LocalFile] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: ModelManager.dir.path)) ?? []
+        var files: [LocalFile] = []
+        for name in names.sorted() where name.hasSuffix(".gguf") || name.hasSuffix(".gguf.part") {
+            if name.hasSuffix(".part"), let m = catalog.first(where: { $0.file + ".part" == name }),
+               states[m.id] == .verifying { continue }
+            let p = ModelManager.dir.appendingPathComponent(name).path
+            files.append(LocalFile(path: p, bytes: ModelManager.sizeOnDisk(p), model: catalog.first { $0.file == name && isInstalled($0) }))
+        }
+        let rank = { (f: LocalFile) in f.model.flatMap { self.catalog.firstIndex(of: $0) } ?? self.catalog.count }
+        return files.enumerated().sorted { (rank($0.element), $0.offset) < (rank($1.element), $1.offset) }.map(\.element)
+    }
+
+    /// Everything in the models folder, as allocated on disk (any file, leftovers included).
+    func diskUsage() -> Int64 {
+        let keys: [URLResourceKey] = [.totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .isRegularFileKey]
+        guard let e = FileManager.default.enumerator(at: ModelManager.dir, includingPropertiesForKeys: keys) else { return 0 }
+        var sum: Int64 = 0
+        for case let url as URL in e {
+            guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+            sum += Int64(v.totalFileAllocatedSize ?? v.fileAllocatedSize ?? 0)
+        }
+        return sum
+    }
+
+    /// Deletes a GGUF or `.part` file directly inside the models folder; anything else is
+    /// refused. The caller checks that it is not the model in use.
+    func delete(path p: String) throws {
+        let url = URL(fileURLWithPath: p).resolvingSymlinksInPath()
+        guard url.deletingLastPathComponent().path == ModelManager.dir.resolvingSymlinksInPath().path,
+              p.hasSuffix(".gguf") || p.hasSuffix(".gguf.part") else {
+            throw NSError(domain: "Foretype", code: 2, userInfo: [NSLocalizedDescriptionKey: "Only model files in the Models folder can be deleted here."])
+        }
+        try FileManager.default.removeItem(atPath: p)
+        for m in catalog where path(m) == p && states[m.id] == .installed { set(m, .notInstalled) }
     }
 
     // MARK: URLSessionDownloadDelegate (main queue)
@@ -109,7 +221,14 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         guard let m = catalog.first(where: { $0.id == downloadTask.taskDescription }) else { return }
         let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : m.bytes
-        set(m, .downloading(Double(totalBytesWritten) / Double(max(total, 1))))
+        let p = Double(totalBytesWritten) / Double(max(total, 1))
+        // This fires for every chunk; tell the UI (which lists the models folder on every
+        // change) only when the progress moved 0.5%.
+        var downloading = false
+        if case .downloading = states[m.id] ?? .notInstalled { downloading = true }
+        let moved = Int((progress[m.id] ?? -1) * 200) != Int(p * 200)
+        progress[m.id] = p
+        if moved || !downloading { set(m, .downloading(p)) }
     }
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
@@ -148,7 +267,8 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         guard let error, let m = catalog.first(where: { $0.id == task.taskDescription }) else { return }
         if (error as NSError).code == NSURLErrorCancelled { return }
-        if let data = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data { resumeData[m.id] = data }
+        // Replaced, not kept: resume data that just failed would fail again on retry.
+        resumeData[m.id] = (error as NSError).userInfo[NSURLSessionDownloadTaskResumeData] as? Data
         finish(m, .failure(error))
     }
 
@@ -157,6 +277,7 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
         switch result {
         case .success:
             resumeData[m.id] = nil
+            progress[m.id] = nil
             set(m, .installed)
         case let .failure(e):
             set(m, .failed(e.localizedDescription))

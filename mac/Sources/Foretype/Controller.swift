@@ -11,6 +11,8 @@ final class Controller {
         return _engine
     }
     let settings: AppSettings
+    /// Words-saved counts, updated on every accept (counts only, no text).
+    let stats: UsageStats
     let tracker = FocusTracker()
     let keys = KeyTap()
     let panel = GhostPanel()
@@ -31,9 +33,10 @@ final class Controller {
     private let lock = NSLock()
     private var latest = FieldSnapshot()
 
-    init(engine: EngineBridge, settings: AppSettings) {
+    init(engine: EngineBridge, settings: AppSettings, stats: UsageStats) {
         _engine = engine
         self.settings = settings
+        self.stats = stats
     }
 
     /// Swaps in a new engine (model or server changed) without restarting capture.
@@ -170,6 +173,7 @@ final class Controller {
             }
             let strategy = insertionStrategy(for: latestSnapshot.bundleId)
             Inserter.insert(r.insert, strategy: strategy)
+            stats.record(inserted: r.insert, all: action == .acceptAll)
             Log.debug("accept \(action == .acceptAll ? "all" : "word") via \(strategy.rawValue) \(r.insert.debugDescription)")
             if r.remaining.isEmpty {
                 hide()

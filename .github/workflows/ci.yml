@@ -30,6 +30,7 @@ jobs:
         run: |
           mac/.build/release/Foretype --font-selftest
           mac/.build/release/Foretype --ocr-selftest
+          mac/.build/release/Foretype --stats-selftest
 
       - name: Cache eval model
         uses: actions/cache@v4
