@@ -39,12 +39,18 @@ enum Snapshot {
     static let systemWide = AXUIElementCreateSystemWide()
 
     static var timeoutMs = 80.0
+    static var targetPid: pid_t = 0
 
     /// Frontmost app as an AX element. Tries the system-wide AXFocusedApplication first, as the
     /// clones do; on macOS 27.0.1 that call fails instantly with cannotComplete for this CLI
     /// while per-app AX works, so fall back to NSWorkspace's frontmost pid. `log.focusSource`
     /// records which path answered.
     static func focusedApp(_ log: CallLog) -> (AXUIElement, pid_t)? {
+        // --pid: read only that process, whichever app is frontmost.
+        if targetPid > 0 {
+            log.focusSource = "pid"
+            return (AXUIElementCreateApplication(targetPid), targetPid)
+        }
         if let app = asElement(log.copy(systemWide, "AXFocusedApplication", label: "AXFocusedApplication(systemWide)")) {
             var pid: pid_t = 0
             AXUIElementGetPid(app, &pid)

@@ -18,7 +18,9 @@
 //!       keystrokes) through an engine that reuses its cache and through one reset before
 //!       every request, and counts the suggestions that differ. --long puts 1,400
 //!       characters of other documents before the text and as screen context, so prompts
-//!       pass 512 tokens (Gemma 4's sliding window).
+//!       pass 512 tokens (Gemma 4's sliding window). --fresh-batch N adds a third pass, fresh
+//!       but prefilled in batches of N: it differs from the first fresh pass only in float
+//!       rounding, which shows how much of a mismatch rate is noise rather than rollback.
 
 use std::collections::BTreeMap;
 use std::sync::mpsc;
@@ -195,7 +197,7 @@ impl Replayer {
 /// decoding makes them equal unless a rollback is wrong; batched and single-token decodes
 /// can still differ in the last bits of a logit, so a dense model's mismatch rate is the
 /// baseline to compare against.
-fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, long: bool) {
+fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, long: bool, fresh_batch: Option<u32>) {
     // Earlier writing and screen text for --long: the last documents of the corpus.
     let lead: String = if long {
         let all: Vec<&str> = docs.iter().rev().map(|d| d.text.as_str()).collect();
@@ -249,8 +251,8 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
     let cfg = EngineConfig { model_path: model.to_string(), ..EngineConfig::default() };
     let opts = GenOptions::default();
     let never = || false;
-    let run = |reset: bool| {
-        let mut e = Engine::load(&cfg).expect("load model");
+    let run = |reset: bool, n_batch: u32| {
+        let mut e = Engine::load(&EngineConfig { n_batch, ..cfg.clone() }).expect("load model");
         if !reset {
             eprintln!("rollback: {:?}", e.rollback());
         }
@@ -272,8 +274,20 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
         }
         out
     };
-    let reuse = run(false);
-    let fresh = run(true);
+    let reuse = run(false, cfg.n_batch);
+    let fresh = run(true, cfg.n_batch);
+    if let Some(nb) = fresh_batch {
+        let small = run(true, nb);
+        let same = |a: &[foretype_core::engine::Completion], b: &[foretype_core::engine::Completion]| {
+            100.0 * a.iter().zip(b).filter(|(x, y)| x.text == y.text).count() as f64 / a.len().max(1) as f64
+        };
+        println!(
+            "fresh, batch {nb} vs batch {}: identical {:.1}%; reuse vs fresh batch {nb}: {:.1}%",
+            cfg.n_batch,
+            same(&fresh, &small),
+            same(&reuse, &small)
+        );
+    }
     let mut same = 0;
     for (k, (a, b)) in reuse.iter().zip(&fresh).enumerate() {
         if a.text == b.text {
@@ -343,7 +357,8 @@ fn main() {
         if has("--check-cache") {
             let n_docs = flag("--docs").and_then(|s| s.parse().ok()).unwrap_or(6);
             let n_chars = flag("--chars").and_then(|s| s.parse().ok()).unwrap_or(250);
-            return check_cache(&model, &docs, n_docs, n_chars, has("--long"));
+            let fresh_batch = flag("--fresh-batch").and_then(|s| s.parse().ok());
+            return check_cache(&model, &docs, n_docs, n_chars, has("--long"), fresh_batch);
         }
         let mut r = Replayer::new(&model, settings.clone(), has("-v"));
         r.think = Duration::from_millis(flag("--think").and_then(|s| s.parse().ok()).unwrap_or(0));

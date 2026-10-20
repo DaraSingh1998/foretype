@@ -12,7 +12,8 @@
 #      (System Settings → Privacy & Security → Accessibility; re-grant after every rebuild).
 #   2. Quit the other Accessibility clients that prime Chromium (Cotypist, Raycast, and
 #      similar); the script lists the ones it sees and stops unless FORCE=1.
-#   3. Leave the keyboard and mouse alone for ~20 seconds. Nothing is typed.
+#   3. Leave the keyboard and mouse alone for ~20 seconds. Nothing is typed, and the probe
+#      reads only the test Chrome's process (--pid), whichever app is in front.
 #
 # Output: results/probe/chrome-unprimed.once.jsonl and chrome-primed.once.jsonl.
 set -euo pipefail
@@ -34,16 +35,22 @@ if [[ ${#others[@]} -gt 0 && "${FORCE:-0}" != 1 ]]; then
   exit 1
 fi
 
+DRIVE="$HERE/../../../build/ftdrive"   # scripts/ftdrive.swift (raise / front-pid)
+[[ -x "$DRIVE" ]] || swiftc -O "$HERE/../../../scripts/ftdrive.swift" -o "$DRIVE"
+BEFORE="$("$DRIVE" front-pid)"
 PROFILE="$(mktemp -d -t foretype-chrome)"
 "$CHROME" --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check --new-window "$PAGE" >/dev/null 2>&1 &
 PID=$!
-cleanup() { kill "$PID" 2>/dev/null || true; sleep 1; rm -rf "$PROFILE"; }
+cleanup() { kill "$PID" 2>/dev/null || true; "$DRIVE" raise "$BEFORE" 2>/dev/null || true; sleep 1; rm -rf "$PROFILE"; }
 trap cleanup EXIT
 sleep "${SETTLE:-4}"
+# Chrome only has a focused element while its window is key; a process started from a shell
+# isn't activated (cooperative activation), so raise it, and give focus back afterwards.
+"$DRIVE" raise "$PID" || echo "warning: could not raise the test Chrome" >&2
+sleep 1
 
-front="$(osascript -l JavaScript -e 'ObjC.import("AppKit"); $.NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier' 2>/dev/null || echo 0)"
-[[ "$front" == "$PID" ]] || echo "warning: the test Chrome (pid $PID) is not frontmost (pid $front); results may describe another app" >&2
-
-"$BIN" --once >"$OUT/chrome-unprimed.once.jsonl" || true
-"$BIN" --once --chromium-ax >"$OUT/chrome-primed.once.jsonl" || true
+# --pid: read only the test Chrome, even if another app is frontmost (never the user's apps).
+"$BIN" --once --pid "$PID" >"$OUT/chrome-unprimed.once.jsonl" || true
+"$BIN" --once --chromium-ax --pid "$PID" >"$OUT/chrome-primed.once.jsonl" || true
+grep -q "\"pid\":$PID" "$OUT/chrome-unprimed.once.jsonl" || { echo "probe did not read the test Chrome" >&2; exit 1; }
 echo "done: $OUT/chrome-unprimed.once.jsonl, $OUT/chrome-primed.once.jsonl"

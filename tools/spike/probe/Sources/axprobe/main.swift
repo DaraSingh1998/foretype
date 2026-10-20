@@ -13,6 +13,7 @@ Modes (default: watch until Ctrl-C):
 Options:
   --chromium-ax           set AXManualAccessibility / AXEnhancedUserInterface on Chromium and
                           Electron apps when they become frontmost (restored on exit)
+  --pid PID               probe this process instead of the frontmost app
   --timeout-ms MS         global AX messaging timeout (default 80)
   --poll-ms MS            watch-mode poll interval (default 200)
   --duration S            exit watch mode after S seconds
@@ -48,6 +49,7 @@ func parseOptions() -> Options {
         case "--once": o.once = true
         case "--bench": o.bench = Int(value(a))
         case "--chromium-ax": o.chromiumAX = true
+        case "--pid": Snapshot.targetPid = pid_t(value(a)) ?? 0
         case "--timeout-ms": o.timeoutMs = Double(value(a)) ?? 80
         case "--poll-ms": o.pollMs = Int(value(a)) ?? 200
         case "--duration": o.duration = Double(value(a))
