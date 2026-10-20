@@ -91,6 +91,7 @@ final class FocusTracker {
     private var fontCache: (key: UInt64, line: Int, font: NSFont?) = (0, -1, nil)
     private var titleCache: (pid: pid_t, title: String, frame: CGRect?) = (0, "", nil)
     private var fieldInfoCache: (key: UInt64, description: String, url: String) = (0, "", "")
+    private static let forceMarkers = ProcessInfo.processInfo.environment["FORETYPE_TEXT_MARKERS"] == "1"
     private var primed: [pid_t: (manual: Bool?, enhanced: Bool?)] = [:]
     private var primedAt: [pid_t: CFAbsoluteTime] = [:]
     private var lastPrimeCheck: CFAbsoluteTime = 0
@@ -341,8 +342,22 @@ final class FocusTracker {
         snap.windowTitle = titleCache.title
         snap.windowFrame = titleCache.frame
         guard ["AXTextArea", "AXTextField", "AXComboBox"].contains(snap.role),
-              snap.subrole != "AXSecureTextField",
-              let sel = AX.range(AX.copy(el, kAXSelectedTextRangeAttribute)) else {
+              snap.subrole != "AXSecureTextField" else {
+            return emit(snap, reason: reason)
+        }
+        // Web fields whose ranges don't work: read through text markers instead
+        // (FORETYPE_TEXT_MARKERS=1 forces this path for testing).
+        let sel = FocusTracker.forceMarkers ? nil : AX.range(AX.copy(el, kAXSelectedTextRangeAttribute))
+        guard let sel else {
+            if let m = AX.viaTextMarkers(el, maxBefore: windowSize) {
+                snap.textBefore = m.before
+                snap.textAfter = m.after
+                snap.caretIndex = m.before.utf16.count
+                snap.selectionLength = m.selection
+                snap.frame = AX.frame(el)
+                snap.caret = m.caret.map { CaretInfo(rect: $0, strategy: "textMarker") }
+                snap.font = nil
+            }
             return emit(snap, reason: reason)
         }
         snap.caretIndex = sel.location

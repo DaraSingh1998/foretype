@@ -78,6 +78,34 @@ enum AX {
         rect(copyParam(el, "AXBoundsForRange", makeRange(location, length)))
     }
 
+    /// Text around the caret through WebKit/Chromium text markers, for web fields whose
+    /// `AXValue` and `AXStringForRange` fail (some contenteditable editors). Returns the text
+    /// before the caret (at most `maxBefore` characters), the rest of the caret's line, the
+    /// selection's length and the caret rect, or nil when the field has no text markers.
+    static func viaTextMarkers(_ el: AXUIElement, maxBefore: Int) -> (before: String, after: String, selection: Int, caret: CGRect?)? {
+        guard let sel = copy(el, "AXSelectedTextMarkerRange"),
+              let caret = copyParam(el, "AXStartTextMarkerForTextMarkerRange", sel),
+              let selEnd = copyParam(el, "AXEndTextMarkerForTextMarkerRange", sel),
+              let field = copyParam(el, "AXTextMarkerRangeForUIElement", el),
+              let start = copyParam(el, "AXStartTextMarkerForTextMarkerRange", field),
+              let end = copyParam(el, "AXEndTextMarkerForTextMarkerRange", field) else { return nil }
+        func text(_ a: CFTypeRef, _ b: CFTypeRef) -> String? {
+            guard let r = copyParam(el, "AXTextMarkerRangeForUnorderedTextMarkers", [a, b] as CFArray) else { return nil }
+            return copyParam(el, "AXStringForTextMarkerRange", r) as? String
+        }
+        guard let before = text(start, caret) else { return nil }
+        let after = text(selEnd, end)?.components(separatedBy: .newlines).first ?? ""
+        let selection = (copyParam(el, "AXLengthForTextMarkerRange", sel) as? Int) ?? 0
+        // The caret is the trailing edge of the character before it.
+        var rect: CGRect?
+        if let prev = copyParam(el, "AXPreviousTextMarkerForTextMarker", caret),
+           let r = copyParam(el, "AXTextMarkerRangeForUnorderedTextMarkers", [prev, caret] as CFArray),
+           let b = self.rect(copyParam(el, "AXBoundsForTextMarkerRange", r)), b.height > 0 {
+            rect = CGRect(x: b.maxX, y: b.minY, width: 1, height: b.height)
+        }
+        return (String(before.suffix(maxBefore)), String(after.prefix(160)), selection, rect)
+    }
+
     static func frame(_ el: AXUIElement) -> CGRect? {
         guard let p = point(copy(el, "AXPosition")), let s = size(copy(el, "AXSize")) else { return nil }
         return CGRect(origin: p, size: s)
