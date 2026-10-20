@@ -9,6 +9,14 @@ use crate::{Core, CoreConfig, Event, Settings, Snapshot};
 
 pub type FtEventCallback = extern "C" fn(ctx: *mut c_void, event_json: *const c_char);
 
+/// The shell's completer for the "shell" backend: request JSON in, continuation out as a
+/// malloc'd string (the core frees it) or null.
+pub type FtCompleteCallback = extern "C" fn(ctx: *mut c_void, request_json: *const c_char) -> *mut c_char;
+
+extern "C" {
+    fn free(p: *mut c_void);
+}
+
 pub struct FtEngine {
     core: Core,
 }
@@ -134,6 +142,30 @@ pub unsafe extern "C" fn ft_engine_configure(engine: *mut FtEngine, settings_jso
 pub unsafe extern "C" fn ft_engine_compat_rule(engine: *mut FtEngine, bundle_id: *const c_char) -> *mut c_char {
     let (Some(e), Some(b)) = (engine.as_ref(), read_str(bundle_id)) else { return ptr::null_mut() };
     to_c(serde_json::to_string(&e.core.compat_rule(b)).unwrap_or_else(|_| "{}".into()))
+}
+
+/// Installs the completer the "shell" backend asks for continuations (on macOS, Apple's
+/// on-device model). Called on the core's engine thread; it may block.
+///
+/// # Safety
+/// `engine` must be live; `callback` must stay callable, and `ctx` valid, until
+/// `ft_engine_free` returns.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_set_completer(engine: *mut FtEngine, callback: FtCompleteCallback, ctx: *mut c_void) {
+    let Some(e) = engine.as_ref() else { return };
+    let cctx = CallbackCtx(ctx);
+    e.core.set_completer(Box::new(move |req: &str| {
+        let cctx = &cctx;
+        let req = CString::new(req).ok()?;
+        let out = callback(cctx.0, req.as_ptr());
+        if out.is_null() {
+            return None;
+        }
+        // SAFETY: the shell returns a malloc'd, NUL-terminated string.
+        let s = CStr::from_ptr(out).to_string_lossy().into_owned();
+        free(out.cast());
+        Some(s)
+    }));
 }
 
 /// # Safety

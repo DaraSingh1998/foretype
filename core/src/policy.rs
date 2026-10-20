@@ -24,6 +24,18 @@ pub struct AppRule {
     pub prime: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// Fields that stay on in an app that is off by default: case-insensitive substrings
+    /// of the field's label or placeholder (a code editor's chat input, say).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_fields: Vec<String>,
+}
+
+impl AppRule {
+    /// True if `description` matches one of `allow_fields`.
+    pub fn allows_field(&self, description: &str) -> bool {
+        let d = description.to_lowercase();
+        !d.is_empty() && self.allow_fields.iter().any(|p| d.contains(&p.to_lowercase()))
+    }
 }
 
 /// How CLI agents draw their input line: an optional border character, then a marker.
@@ -122,7 +134,7 @@ pub fn evaluate(
     }
     let rule = compat.rule(&snap.bundle_id);
     let user_on = user_enabled.contains(&snap.bundle_id);
-    if rule.disabled && !user_on && !snap.force {
+    if rule.disabled && !user_on && !snap.force && !rule.allows_field(&snap.description) {
         return Some("appDisabledByDefault");
     }
     if rule.agent_prompt_only && !user_on && !snap.force && compat.agent_prompt_text(&snap.text_before).is_none() {
@@ -206,6 +218,12 @@ mod tests {
         let mut s = snap("ls -la");
         s.bundle_id = "dev.warp.Warp-Stable".into();
         assert_eq!(evaluate(&s, &db, &none, &none, false), Some("appDisabledByDefault"));
+        let mut s = snap("refactor the parser so that");
+        s.bundle_id = "com.microsoft.VSCode".into();
+        s.description = "Editor content;Press Alt+F1 for Accessibility Options.".into();
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("appDisabledByDefault"), "the code editor stays off");
+        s.description = "Chat Input".into();
+        assert_eq!(evaluate(&s, &db, &none, &none, false), None, "its chat input is on");
         let mut s = snap("Last login: Mon\n$ ls -la");
         s.bundle_id = "com.apple.Terminal".into();
         assert_eq!(evaluate(&s, &db, &none, &none, false), Some("notAgentPrompt"));

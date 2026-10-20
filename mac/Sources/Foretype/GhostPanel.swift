@@ -115,6 +115,30 @@ final class GhostPanel {
         place(GhostPanel.cocoaRect(fromAX: axRect))
     }
 
+    /// Shows a tip card above `rect` (a field or window) for 8 seconds. It doesn't count as
+    /// a suggestion: the key tap stays off, and any suggestion replaces it.
+    func showHint(_ text: String, near rect: CGRect) {
+        let font = NSFont.systemFont(ofSize: 13)
+        let attr = GhostPanel.attributed("\u{24D8} " + text, font: font, card: true)
+        let size = attr.size()
+        let w = ceil(size.width) + view.padding.width * 2
+        let h = ceil(size.height) + view.padding.height * 2
+        var axRect = CGRect(x: rect.minX, y: rect.minY - h - 4, width: w, height: h)
+        if axRect.minY < 0 { axRect.origin.y = rect.minY + 8 }
+        view.card = true
+        view.text = attr
+        anchor = nil
+        place(GhostPanel.cocoaRect(fromAX: axRect))
+        hintGeneration += 1
+        let gen = hintGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            if let self, self.hintGeneration == gen { self.hide() }
+        }
+    }
+
+    /// Bumped by every show, so an expiring hint never hides a newer suggestion.
+    private var hintGeneration = 0
+
     /// A card under the caret line, starting at the caret (above it near the screen bottom).
     private func showCard(_ text: String, font: NSFont, below caretRect: CGRect) {
         let cardFont = NSFont.systemFont(ofSize: min(max(font.pointSize, 12), 15))
@@ -144,6 +168,7 @@ final class GhostPanel {
     }
 
     private func place(_ rect: CGRect) {
+        hintGeneration += 1
         panel.setFrame(rect, display: false)
         view.frame = NSRect(origin: .zero, size: rect.size)
         view.needsDisplay = true

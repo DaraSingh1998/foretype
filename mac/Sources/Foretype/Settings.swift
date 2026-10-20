@@ -60,7 +60,7 @@ final class AppSettings {
         set { d.set(newValue, forKey: "personalizeStrength") }
     }
 
-    /// "local" (built-in llama.cpp), "llama-server" or "openai".
+    /// "local" (built-in llama.cpp), "llama-server", "openai" or "apple" (Foundation Models).
     var backend: String {
         get { d.string(forKey: "backend") ?? "local" }
         set { d.set(newValue, forKey: "backend") }

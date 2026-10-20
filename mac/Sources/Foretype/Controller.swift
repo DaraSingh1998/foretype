@@ -110,9 +110,30 @@ final class Controller {
         }
         // Never hand a secure field's text to the spell checker.
         if !s.secureInput, s.subrole != "AXSecureTextField" { speller.annotate(&s) }
+        hintIfNeeded(s)
         engine.submit(s)
         screen.note(.init(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame),
                     skip: !screenContextAllowed(s))
+    }
+
+    /// One-time tips (per Mac) for places that need a setting changed before Foretype can
+    /// work there. AX thread.
+    private func hintIfNeeded(_ s: FieldSnapshot) {
+        let textRole = ["AXTextArea", "AXTextField", "AXComboBox"].contains(s.role)
+        let hint: (key: String, text: String)?
+        if s.url.contains("docs.google.com/document"), !textRole || s.textBefore.isEmpty {
+            hint = ("googleDocs", "Google Docs hides its text from other apps. Turn on Tools \u{25B8} Accessibility \u{25B8} Screen reader support (\u{2318}\u{2325}Z) to get suggestions.")
+        } else if ["company.thebrowser.Browser", "company.thebrowser.dia"].contains(s.bundleId), textRole, s.caret == nil,
+                  !s.textBefore.isEmpty {
+            hint = ("textMetrics.\(s.bundleId)", "For ghost text at the caret in \(s.appName), open chrome://accessibility and turn on Text Metrics.")
+        } else {
+            hint = nil
+        }
+        guard let hint, !UserDefaults.standard.bool(forKey: "hintShown.\(hint.key)"),
+              let rect = s.frame ?? s.windowFrame else { return }
+        UserDefaults.standard.set(true, forKey: "hintShown.\(hint.key)")
+        Log.debug("hint \(hint.key)")
+        DispatchQueue.main.async { [weak self] in self?.panel.showHint(hint.text, near: rect) }
     }
 
     /// No screen capture for secure fields, non-text focus, or apps where suggestions are off.

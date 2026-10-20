@@ -16,6 +16,10 @@ typedef struct FtEngine FtEngine;
 /// Called on core threads, sometimes synchronously from ft_engine_submit.
 typedef void (*FtEventCallback)(void *ctx, const char *event_json);
 
+/// The "shell" backend's completer: {"prefix","max_words"} JSON in, the raw continuation out
+/// as a malloc'd string (the core frees it) or NULL. Called on the engine thread; may block.
+typedef char *(*FtCompleteCallback)(void *ctx, const char *request_json);
+
 FtEngine *ft_engine_new(const char *config_json, FtEventCallback callback, void *ctx);
 void ft_engine_free(FtEngine *engine);
 
@@ -28,6 +32,9 @@ char *ft_engine_accept(FtEngine *engine, int32_t mode);
 void ft_engine_dismiss(FtEngine *engine, uint64_t field_key, const char *text_before);
 
 bool ft_engine_configure(FtEngine *engine, const char *settings_json);
+
+/// Installs the completer used when the config's backend is "shell".
+void ft_engine_set_completer(FtEngine *engine, FtCompleteCallback callback, void *ctx);
 
 /// Personalization: {"records": n, "words": n}; delete the history; import [{"app","text"}].
 char *ft_engine_history_stats(FtEngine *engine);

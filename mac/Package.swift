@@ -29,7 +29,8 @@ let package = Package(
             dependencies: appDependencies,
             path: "Sources/Foretype",
             linkerSettings: [
-                .unsafeFlags(["-L", coreLibDir] + extraLinker),
+                // FoundationModels exists from macOS 26; weak-link it so macOS 14 and 15 launch.
+                .unsafeFlags(["-L", coreLibDir, "-Xlinker", "-weak_framework", "-Xlinker", "FoundationModels"] + extraLinker),
                 .linkedLibrary("foretype_core"),
                 .linkedLibrary("c++"),
                 .linkedFramework("AppKit"),

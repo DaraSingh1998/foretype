@@ -1,6 +1,7 @@
 //! Bring-your-own inference server: a llama.cpp `llama-server` (`/completion`) or any
 //! OpenAI-compatible completions endpoint (`/v1/completions`: Ollama, LM Studio, vLLM, or a
-//! cloud provider). Responses are streamed so a new keystroke can abandon a request between
+//! cloud provider), or the shell's own completer (`shell`: on macOS, Apple's on-device
+//! Foundation Models), which is treated like an OpenAI-style endpoint without HTTP. Responses are streamed so a new keystroke can abandon a request between
 //! chunks (closing the connection makes llama-server stop generating).
 //!
 //! Token healing: llama-server gets a GBNF grammar that forces the output to start with the
@@ -28,7 +29,15 @@ use crate::words;
 pub enum Kind {
     LlamaServer,
     OpenAi,
+    Shell,
 }
+
+/// The shell's completer: request JSON `{"prefix", "max_words"}` in, raw continuation out.
+pub type Completer = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
+
+/// Where the shell installs its completer; read at request time, so it may arrive after the
+/// engine starts.
+pub type CompleterSlot = std::sync::Arc<std::sync::RwLock<Option<Completer>>>;
 
 pub struct HttpBackend {
     kind: Kind,
@@ -40,6 +49,7 @@ pub struct HttpBackend {
     last: Mutex<Option<(String, String)>>,
     /// llama-server: (token id, weight in (0, 1]) for the user's single-token words.
     bias: Mutex<Vec<(i64, f32)>>,
+    completer: CompleterSlot,
 }
 
 /// Most of the user's words sent as `logit_bias` (keeps requests small).
@@ -64,13 +74,18 @@ fn gbnf_literal(s: &str) -> String {
 
 impl HttpBackend {
     pub fn new(kind: &str, url: &str, model: &str, api_key: &str) -> Result<Self, String> {
+        Self::with_completer(kind, url, model, api_key, CompleterSlot::default())
+    }
+
+    pub fn with_completer(kind: &str, url: &str, model: &str, api_key: &str, completer: CompleterSlot) -> Result<Self, String> {
         let kind = match kind {
             "llama-server" => Kind::LlamaServer,
             "openai" => Kind::OpenAi,
-            other => return Err(format!("unknown backend '{other}' (llama-server | openai)")),
+            "shell" => Kind::Shell,
+            other => return Err(format!("unknown backend '{other}' (llama-server | openai | shell)")),
         };
         let base = url.trim().trim_end_matches('/').to_string();
-        if !(base.starts_with("http://") || base.starts_with("https://")) {
+        if kind != Kind::Shell && !(base.starts_with("http://") || base.starts_with("https://")) {
             return Err(format!("backend URL must start with http:// or https://: {base}"));
         }
         let agent = ureq::AgentBuilder::new()
@@ -85,6 +100,7 @@ impl HttpBackend {
             agent,
             last: Mutex::new(None),
             bias: Mutex::new(Vec::new()),
+            completer,
         })
     }
 
@@ -92,6 +108,7 @@ impl HttpBackend {
         match self.kind {
             Kind::LlamaServer => format!("llama-server at {}", self.base),
             Kind::OpenAi => format!("OpenAI-compatible server at {} ({})", self.base, self.model),
+            Kind::Shell => "the app's own completer".to_string(),
         }
     }
 
@@ -148,24 +165,26 @@ impl HttpBackend {
 
     pub fn complete(&self, prompt: &Prompt, opts: &GenOptions, cancel: &dyn Fn() -> bool) -> Result<Completion, GenError> {
         let t0 = Instant::now();
-        if self.kind == Kind::OpenAi {
+        if self.kind != Kind::LlamaServer {
             let cached = self.last.lock().unwrap().as_ref().filter(|(p, _)| *p == prompt.prefix).map(|(_, raw)| raw.clone());
             let raw = match cached {
                 Some(raw) => raw,
                 None => {
-                    let raw = self.stream_openai(&prompt.prefix, opts, cancel)?;
+                    let raw = self.continuation(&prompt.prefix, opts, cancel)?;
                     *self.last.lock().unwrap() = Some((prompt.prefix.clone(), raw.clone()));
                     raw
                 }
             };
-            let c = Self::filtered(&raw, prompt, opts, "maxTokens", t0);
+            // A streamed reply may stop mid-word; the shell's completer answers whole.
+            let stop = if self.kind == Kind::Shell { "eog" } else { "maxTokens" };
+            let c = Self::filtered(&raw, prompt, opts, stop, t0);
             if !c.text.is_empty() || prompt.fragment.trim().is_empty() {
                 return Ok(c);
             }
             // The guess for this word no longer matches: continue from the typed letters.
-            let tail = self.stream_openai(&format!("{}{}", prompt.prefix, prompt.fragment), opts, cancel)?;
+            let tail = self.continuation(&format!("{}{}", prompt.prefix, prompt.fragment), opts, cancel)?;
             let joined = format!("{}{}", prompt.fragment, tail);
-            return Ok(Self::filtered(&joined, prompt, opts, "maxTokens", t0));
+            return Ok(Self::filtered(&joined, prompt, opts, stop, t0));
         }
         let max_tokens = opts.max_words * 3 + 8 + prompt.fragment.len();
         let (path, body) = match self.kind {
@@ -183,7 +202,7 @@ impl HttpBackend {
                 }
                 ("/completion", b)
             }
-            Kind::OpenAi => (
+            Kind::OpenAi | Kind::Shell => (
                 "/v1/completions",
                 json!({
                     "model": self.model, "prompt": prompt.prefix,
@@ -209,7 +228,7 @@ impl HttpBackend {
             let Ok(v) = serde_json::from_str::<Value>(data) else { continue };
             let piece = match self.kind {
                 Kind::LlamaServer => v["content"].as_str().unwrap_or(""),
-                Kind::OpenAi => v["choices"][0]["text"].as_str().unwrap_or(""),
+                Kind::OpenAi | Kind::Shell => v["choices"][0]["text"].as_str().unwrap_or(""),
             };
             out.push_str(piece);
             chunks += 1;
@@ -239,6 +258,23 @@ impl HttpBackend {
         c.prefilled_tokens = prefilled;
         c.generated_tokens = chunks;
         Ok(c)
+    }
+
+    /// A raw continuation of `text`: streamed from an OpenAI-style server, or asked of the
+    /// shell's completer.
+    fn continuation(&self, text: &str, opts: &GenOptions, cancel: &dyn Fn() -> bool) -> Result<String, GenError> {
+        if self.kind != Kind::Shell {
+            return self.stream_openai(text, opts, cancel);
+        }
+        let slot = self.completer.read().unwrap();
+        let Some(complete) = slot.as_ref() else {
+            return Err(GenError::Failed("no completer installed".into()));
+        };
+        let out = complete(&json!({ "prefix": text, "max_words": opts.max_words }).to_string()).unwrap_or_default();
+        if cancel() {
+            return Err(GenError::Cancelled);
+        }
+        Ok(out)
     }
 
     /// Streams an OpenAI-style completion of `text`, stopping early at a newline or once
@@ -302,5 +338,22 @@ mod tests {
         assert!(HttpBackend::new("llama-server", "localhost:8080", "", "").is_err());
         assert!(HttpBackend::new("grpc", "http://x", "", "").is_err());
         assert!(HttpBackend::new("openai", "http://127.0.0.1:11434/", "qwen3", "").is_ok());
+        assert!(HttpBackend::new("shell", "", "", "").is_ok(), "the shell's completer needs no URL");
+    }
+
+    #[test]
+    fn shell_completer_heals_like_openai() {
+        let slot = CompleterSlot::default();
+        *slot.write().unwrap() = Some(Box::new(|req: &str| {
+            let v: Value = serde_json::from_str(req).unwrap();
+            let prefix = v["prefix"].as_str().unwrap().to_string();
+            // Answers the committed prefix with the whole next word, and the prefix plus the
+            // partial word with its rest.
+            Some(if prefix.ends_with(" no") { "tes from Tuesday".into() } else { " notes from Tuesday".into() })
+        }));
+        let b = HttpBackend::with_completer("shell", "", "", "", slot).unwrap();
+        let p = Prompt { prefix: "Thanks for the".into(), fragment: " no".into(), suffix: String::new() };
+        let c = b.complete(&p, &GenOptions::default(), &|| false).unwrap();
+        assert_eq!(c.text, "tes from Tuesday");
     }
 }

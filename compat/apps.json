@@ -34,17 +34,30 @@
     "com.microsoft.VSCode": {
       "disabled": true,
       "prime": "electron",
-      "note": "Code editor; main buffer off by default."
+      "note": "Code editor; main buffer off by default. Chat inputs on (allow_fields; patterns unverified).",
+      "allow_fields": [
+        "chat",
+        "copilot"
+      ]
     },
     "com.todesktop.230313mzl4w4u92": {
       "disabled": true,
       "prime": "electron",
-      "note": "Cursor; code editor."
+      "note": "Cursor; code editor. Chat/composer inputs on (allow_fields; patterns unverified).",
+      "allow_fields": [
+        "chat",
+        "composer",
+        "agent"
+      ]
     },
     "com.exafunction.windsurf": {
       "disabled": true,
       "prime": "electron",
-      "note": "Windsurf; code editor."
+      "note": "Windsurf; code editor. Cascade/chat inputs on (allow_fields; patterns unverified).",
+      "allow_fields": [
+        "cascade",
+        "chat"
+      ]
     },
     "dev.zed.Zed": {
       "disabled": true,

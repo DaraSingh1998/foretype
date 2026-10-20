@@ -92,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             config["model_path"] = model
             label = URL(fileURLWithPath: model).lastPathComponent
+        } else if settings.backend == "apple" {
+            // The core asks the shell, which asks Foundation Models (AppleModel.swift).
+            config["backend"] = "shell"
+            label = "Apple on-device model"
         } else {
             config["backend"] = settings.backend
             config["backend_url"] = settings.backendURL
@@ -109,6 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             engineDetail = "Engine failed to start"
             return
         }
+        if settings.backend == "apple" { engine.setCompleter(AppleModel.complete) }
         // One system prompt, and only from the bundled app: a bare dev binary started from a
         // terminal would make macOS ask on behalf of the terminal.
         if settings.useScreenContext, Bundle.main.bundleIdentifier != nil,
@@ -347,8 +352,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func configureServer() {
         NSApp.activate(ignoringOtherApps: true)
         let kind = NSPopUpButton()
+        var kinds = ["local", "llama-server", "openai"]
         kind.addItems(withTitles: ["Built-in (on this Mac)", "llama.cpp llama-server", "OpenAI-compatible (Ollama, LM Studio, ...)"])
-        kind.selectItem(at: ["local", "llama-server", "openai"].firstIndex(of: settings.backend) ?? 0)
+        if AppleModel.isAvailable || settings.backend == "apple" {
+            kinds.append("apple")
+            kind.addItem(withTitle: "Apple on-device model (no download; slower)")
+        }
+        kind.selectItem(at: kinds.firstIndex(of: settings.backend) ?? 0)
         let url = NSTextField(string: settings.backendURL)
         url.placeholderString = "http://127.0.0.1:8080"
         let model = NSTextField(string: settings.backendModel)
@@ -363,12 +373,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         stack.frame = NSRect(x: 0, y: 0, width: 340, height: 118)
         let alert = NSAlert()
         alert.messageText = "Where should suggestions come from?"
-        alert.informativeText = "A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers work too, but complete words you have started less well (about half the typing saved). The API key is stored in your Keychain."
+        alert.informativeText = "A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers work too, but complete words you have started less well (about half the typing saved). Apple's on-device model needs no download but takes about 0.7 s per suggestion. The API key is stored in your Keychain."
         alert.accessoryView = stack
         alert.addButton(withTitle: "Save")
         alert.addButton(withTitle: "Cancel")
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        settings.backend = ["local", "llama-server", "openai"][max(0, kind.indexOfSelectedItem)]
+        settings.backend = kinds[max(0, kind.indexOfSelectedItem)]
         settings.backendURL = url.stringValue.trimmingCharacters(in: .whitespaces)
         settings.backendModel = model.stringValue.trimmingCharacters(in: .whitespaces)
         if !key.stringValue.isEmpty { settings.backendAPIKey = key.stringValue }

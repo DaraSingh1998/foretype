@@ -49,6 +49,8 @@ pub struct Snapshot {
     pub role: String,
     pub subrole: String,
     pub role_description: String,
+    /// The field's accessible label or placeholder (aria-label in web and Electron apps).
+    pub description: String,
     /// Text before the caret. Shells should send a window whose start moves in coarse,
     /// aligned steps so the prompt prefix stays stable.
     pub text_before: String,
@@ -179,7 +181,8 @@ pub struct CoreConfig {
     pub history_path: String,
     /// 256-bit key as 64 hex characters, kept by the shell in the platform keystore.
     pub history_key_hex: String,
-    /// "local" (in-process llama.cpp, default), "llama-server" or "openai".
+    /// "local" (in-process llama.cpp, default), "llama-server", "openai", or "shell" (the
+    /// completer the shell installs with `ft_engine_set_completer`).
     pub backend: String,
     pub backend_url: String,
     /// Model name for OpenAI-compatible servers.
@@ -284,6 +287,8 @@ struct Shared {
     examples: Mutex<HashMap<u64, Vec<String>>>,
     /// The loaded model can fill in the middle of a line (set by the worker).
     fim: AtomicBool,
+    /// The shell's completer for the "shell" backend.
+    completer: backend::CompleterSlot,
 }
 
 fn debug() -> bool {
@@ -320,6 +325,7 @@ impl Core {
             track: Mutex::new(None),
             examples: Mutex::new(HashMap::new()),
             fim: AtomicBool::new(false),
+            completer: backend::CompleterSlot::default(),
         });
         let engine_cfg = EngineConfig {
             model_path: config.model_path.clone(),
@@ -340,6 +346,12 @@ impl Core {
             .spawn(move || worker_loop(worker_shared, engine_cfg, remote))
             .expect("spawn engine thread");
         Self { shared, worker: Some(worker) }
+    }
+
+    /// Installs the shell's completer, used by the "shell" backend (Apple Foundation Models
+    /// on macOS). It runs on the engine thread and may block.
+    pub fn set_completer(&self, completer: backend::Completer) {
+        *self.shared.completer.write().unwrap() = Some(completer);
     }
 
     pub fn configure(&self, settings: Settings) {
@@ -781,7 +793,7 @@ impl Runner {
 fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConfig>) {
     let load = |shared: &Shared| -> Option<Runner> {
         if let Some(r) = &remote {
-            return match backend::HttpBackend::new(&r.kind, &r.url, &r.model, &r.api_key) {
+            return match backend::HttpBackend::with_completer(&r.kind, &r.url, &r.model, &r.api_key, shared.completer.clone()) {
                 Ok(b) => {
                     (shared.sink)(&Event::Status { state: "ready", detail: b.describe() });
                     Some(Runner::Remote(b))

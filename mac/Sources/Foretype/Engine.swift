@@ -78,6 +78,22 @@ final class EngineBridge {
         ft_engine_dismiss(handle, fieldKey, textBefore)
     }
 
+    /// Answers the "shell" backend's requests (Apple's on-device model). Called on the core's
+    /// engine thread; may block.
+    private var completer: ((String) -> String?)?
+
+    func setCompleter(_ f: @escaping (String) -> String?) {
+        guard let handle else { return }
+        completer = f
+        let ctx = Unmanaged.passUnretained(self).toOpaque()
+        ft_engine_set_completer(handle, { ctx, json in
+            guard let ctx, let json else { return nil }
+            let me = Unmanaged<EngineBridge>.fromOpaque(ctx).takeUnretainedValue()
+            guard let out = me.completer?(String(cString: json)) else { return nil }
+            return strdup(out)
+        }, ctx)
+    }
+
     @discardableResult
     func configure(_ json: String) -> Bool {
         guard let handle else { return false }

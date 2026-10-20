@@ -10,6 +10,10 @@ struct FieldSnapshot {
     var bundleId = ""
     var appName = ""
     var windowTitle = ""
+    /// The page's URL when the field is in a web view (from the enclosing AXWebArea).
+    var url = ""
+    /// The field's accessible label or placeholder (aria-label in web and Electron apps).
+    var fieldDescription = ""
     var role = ""
     var subrole = ""
     var roleDescription = ""
@@ -36,7 +40,7 @@ struct FieldSnapshot {
     func coreJSON() -> String {
         let o: [String: Any] = [
             "revision": revision, "field_key": fieldKey, "bundle_id": bundleId, "app_name": appName,
-            "window_title": windowTitle, "role": role, "subrole": subrole,
+            "window_title": windowTitle, "url": url, "description": fieldDescription, "role": role, "subrole": subrole,
             "role_description": roleDescription, "text_before": textBefore, "text_after": textAfter,
             "selection_len": selectionLength, "marked_len": markedLength, "secure_input": secureInput,
             "field_width": Double(frame?.width ?? 0), "field_height": Double(frame?.height ?? 0),
@@ -86,6 +90,7 @@ final class FocusTracker {
     private var readPending = false
     private var fontCache: (key: UInt64, line: Int, font: NSFont?) = (0, -1, nil)
     private var titleCache: (pid: pid_t, title: String, frame: CGRect?) = (0, "", nil)
+    private var fieldInfoCache: (key: UInt64, description: String, url: String) = (0, "", "")
     private var primed: [pid_t: (manual: Bool?, enhanced: Bool?)] = [:]
     private var primedAt: [pid_t: CFAbsoluteTime] = [:]
     private var lastPrimeCheck: CFAbsoluteTime = 0
@@ -322,6 +327,19 @@ final class FocusTracker {
         snap.role = AX.string(el, kAXRoleAttribute) ?? ""
         snap.subrole = AX.string(el, kAXSubroleAttribute) ?? ""
         snap.roleDescription = AX.string(el, kAXRoleDescriptionAttribute) ?? ""
+        // Read for every focused element (once each), so hints can spot pages like Google
+        // Docs whose text isn't exposed.
+        if fieldInfoCache.key != snap.fieldKey {
+            fieldInfoCache = (snap.fieldKey, FocusTracker.fieldDescription(el), FocusTracker.pageURL(el))
+        }
+        snap.fieldDescription = fieldInfoCache.description
+        snap.url = fieldInfoCache.url
+        if titleCache.pid != pid || reason == "focus" {
+            let window = AX.element(AX.copy(app, kAXFocusedWindowAttribute))
+            titleCache = (pid, window.flatMap { AX.string($0, kAXTitleAttribute) } ?? "", window.flatMap { AX.frame($0) })
+        }
+        snap.windowTitle = titleCache.title
+        snap.windowFrame = titleCache.frame
         guard ["AXTextArea", "AXTextField", "AXComboBox"].contains(snap.role),
               snap.subrole != "AXSecureTextField",
               let sel = AX.range(AX.copy(el, kAXSelectedTextRangeAttribute)) else {
@@ -356,12 +374,29 @@ final class FocusTracker {
             fontCache = (snap.fieldKey, line, CaretResolver.font(el, caret: caret, length: count))
         }
         snap.font = fontCache.font
-        if titleCache.pid != pid || reason == "focus" {
-            let window = AX.element(AX.copy(app, kAXFocusedWindowAttribute))
-            titleCache = (pid, window.flatMap { AX.string($0, kAXTitleAttribute) } ?? "", window.flatMap { AX.frame($0) })
-        }
-        snap.windowTitle = titleCache.title
-        snap.windowFrame = titleCache.frame
         emit(snap, reason: reason)
+    }
+
+    /// Label, placeholder and title of a field (once per field).
+    private static func fieldDescription(_ el: AXUIElement) -> String {
+        let parts = [kAXDescriptionAttribute, kAXPlaceholderValueAttribute, kAXTitleAttribute]
+            .compactMap { AX.string(el, $0) }.filter { !$0.isEmpty }
+        return String(parts.joined(separator: " | ").prefix(160))
+    }
+
+    /// URL of the web page holding the field: walks up to the nearest AXWebArea with a real
+    /// URL (frames such as `about:blank` are skipped; at most 30 levels, once per field).
+    private static func pageURL(_ el: AXUIElement) -> String {
+        var node: AXUIElement? = el
+        for _ in 0..<30 {
+            guard let n = node else { break }
+            if AX.string(n, kAXRoleAttribute) == "AXWebArea",
+               let u = AX.copy(n, kAXURLAttribute), CFGetTypeID(u) == CFURLGetTypeID() {
+                let s = (u as! URL).absoluteString
+                if s.hasPrefix("http") { return s }
+            }
+            node = AX.element(AX.copy(n, kAXParentAttribute))
+        }
+        return ""
     }
 }
