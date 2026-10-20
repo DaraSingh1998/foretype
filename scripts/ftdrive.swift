@@ -13,9 +13,11 @@
 // for menu-bar apps, which screen-control tools often cannot target):
 //        ftdrive windows BUNDLE_ID            window titles, buttons and texts, plus each
 //                                             window's CGWindowID for `screencapture -l`
-//        ftdrive press BUNDLE_ID TITLE        AXPress the first button or checkbox titled TITLE
+//        ftdrive press BUNDLE_ID TITLE        AXPress the first button, checkbox or radio
+//                                             button (toolbar tab) titled TITLE
 //        ftdrive menu BUNDLE_ID [ITEM ...]    open the app's menu-bar extra: list its items,
-//                                             or walk ITEM (submenus) and press the last one;
+//                                             or walk ITEM (submenus) and press the last one
+//                                             (a last ITEM with a submenu lists that instead);
 //                                             FTDRIVE_HOLD=SECONDS keeps a listed menu open
 import AppKit
 import Carbon
@@ -60,8 +62,10 @@ func axTitle(_ e: AXUIElement) -> String {
 }
 
 /// Titles compare without a trailing ellipsis ("Check for Updates…" == "Check for Updates").
+/// A wanted title ending in `*` matches by prefix (titles with live progress in them).
 func sameTitle(_ a: String, _ b: String) -> Bool {
     let t = { (s: String) in s.trimmingCharacters(in: CharacterSet(charactersIn: ".…").union(.whitespaces)).lowercased() }
+    if b.hasSuffix("*") { return t(a).hasPrefix(t(String(b.dropLast()))) }
     return t(a) == t(b)
 }
 
@@ -72,8 +76,8 @@ func walk(_ e: AXUIElement, depth: Int = 0, _ visit: (AXUIElement, Int) -> Bool)
     return false
 }
 
-func menuItems(_ menuOwner: AXUIElement) -> [AXUIElement] {
-    for _ in 0..<20 {
+func menuItems(_ menuOwner: AXUIElement, tries: Int = 20) -> [AXUIElement] {
+    for _ in 0..<tries {
         if let menu = axChildren(menuOwner).first(where: { axRole($0) == kAXMenuRole }) {
             return axChildren(menu).filter { axRole($0) == kAXMenuItemRole }
         }
@@ -136,7 +140,7 @@ case "windows" where args.count == 3:
         _ = walk(w) { e, d in
             let role = axRole(e)
             let pad = String(repeating: "  ", count: min(d, 6))
-            if role == kAXButtonRole || role == kAXCheckBoxRole || role == kAXPopUpButtonRole {
+            if role == kAXButtonRole || role == kAXCheckBoxRole || role == kAXPopUpButtonRole || role == kAXRadioButtonRole {
                 let state = role == kAXCheckBoxRole ? " [\((axAttr(e, kAXValueAttribute) as? Int) == 1 ? "x" : " ")]" : ""
                 print("\(pad)\(role.dropFirst(2).lowercased()): \(axTitle(e))\(state)")
             } else if role == kAXStaticTextRole, let v = axAttr(e, kAXValueAttribute) as? String, !v.isEmpty {
@@ -158,8 +162,13 @@ case "press" where args.count == 4:
     for w in axAttr(app, kAXWindowsAttribute) as? [AXUIElement] ?? [] where !pressed {
         pressed = walk(w) { e, _ in
             let role = axRole(e)
-            guard role == kAXButtonRole || role == kAXCheckBoxRole, sameTitle(axTitle(e), args[3]) else { return false }
-            return AXUIElementPerformAction(e, kAXPressAction as CFString) == .success
+            guard role == kAXButtonRole || role == kAXCheckBoxRole || role == kAXRadioButtonRole,
+                  sameTitle(axTitle(e), args[3]) else { return false }
+            let r = AXUIElementPerformAction(e, kAXPressAction as CFString)
+            // No reply in time: the button opened a modal alert (runModal blocks the app's
+            // reply). It was pressed; don't go on to press the next button with this title.
+            if r == .cannotComplete { print("pressed; the app is busy (a modal alert?)") }
+            return r == .success || r == .cannotComplete
         }
     }
     if !pressed {
@@ -177,12 +186,16 @@ case "menu" where args.count >= 3:
     var owner = item
     var items = menuItems(owner)
     let path = Array(args.dropFirst(3))
-    if path.isEmpty {
+    func list(_ items: [AXUIElement]) {
         for i in items {
             let t = axTitle(i)
             let mark = (axAttr(i, "AXMenuItemMarkChar") as? String).map { "\($0) " } ?? ""
-            print(t.isEmpty ? "---" : "\(mark)\(t)\(axChildren(i).isEmpty ? "" : " ▸")")
+            let off = (axAttr(i, kAXEnabledAttribute) as? Bool) == false ? " (disabled)" : ""
+            print(t.isEmpty ? "---" : "\(mark)\(t)\(axChildren(i).isEmpty ? "" : " ▸")\(off)")
         }
+    }
+    if path.isEmpty {
+        list(items)
         // FTDRIVE_HOLD=SECONDS keeps the menu open that long (for a screenshot).
         if let hold = ProcessInfo.processInfo.environment["FTDRIVE_HOLD"].flatMap(Double.init) {
             usleep(useconds_t(hold * 1_000_000))
@@ -204,6 +217,11 @@ case "menu" where args.count >= 3:
         if n < path.count - 1 {
             owner = next
             items = menuItems(owner)
+        } else if !axChildren(next).isEmpty {
+            list(menuItems(next, tries: 5))
+            if let menu = axChildren(item).first(where: { axRole($0) == kAXMenuRole }) {
+                AXUIElementPerformAction(menu, kAXCancelAction as CFString)
+            }
         }
     }
 default:
