@@ -120,7 +120,8 @@ enum CaretResolver {
     /// narrower on screen than in the font, scale it to match.
     static func zoomed(_ font: NSFont, _ el: AXUIElement, caret: Int) -> NSFont {
         let k = min(caret, 24)
-        guard k >= 6, let text = AX.string(el, range: caret - k, k), !text.contains(where: \.isNewline),
+        // No tabs: their width depends on where the run starts.
+        guard k >= 6, let text = AX.string(el, range: caret - k, k), !text.contains(where: \.isNewline), !text.contains("\t"),
               let r = AX.bounds(el, caret - k, k), r.width > 0 else { return font }
         let w = FontMatcher.width(text, font)
         guard w > 0 else { return font }
