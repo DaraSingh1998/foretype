@@ -43,6 +43,11 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | Replay quality/latency | `ft-replay` (below) | a model |
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
 | Terminal end-to-end | `FORETYPE_MODEL=... scripts/e2e-terminal.sh` | Accessibility, user idle |
+| Cache rollback | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache [--long]` | a model |
+| Sparkle update | `scripts/sparkle-local-test.sh`, then Check for Updates… in the printed app | nothing (`RELEASING.md`) |
+| Benchmark a Mac | `scripts/bench-mac.sh [--only sw-]`, `ENERGY=1` for mJ per suggestion | the catalog models |
+| GPU energy of a command | `swiftc -O tools/energy/energy.swift -o build/ft-energy && build/ft-energy -- CMD` | nothing (CPU/DRAM: `sudo powermetrics`) |
+| Unprimed Chrome | `tools/spike/probe/run_unprimed_chrome.sh` | AXProbe.app granted Accessibility |
 
 Unit tests cover word splitting, prompt stability, the screen and examples sections,
 session reuse, the policy gate and agent prompts, the compat DB, the encrypted history
@@ -74,6 +79,24 @@ and generation timings.
 
 Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, and
 how many keystrokes were served by `model`, `typeThrough`, `cache` or `policy`.
+
+### Driving Foretype's own windows
+
+Screen-control tools usually can't target menu-bar (`LSUIElement`) apps, so `build/ftdrive`
+(`swiftc -O scripts/ftdrive.swift -o build/ftdrive`) also talks Accessibility:
+
+```bash
+build/ftdrive menu dev.foretype.Foretype                       # list the menu-bar menu
+build/ftdrive menu dev.foretype.Foretype "Custom Instructions…" # press an item (walks submenus)
+build/ftdrive windows dev.foretype.Foretype                    # titles, buttons, texts, CGWindowIDs
+screencapture -x -o -l WINDOW_ID shot.png                      # one window, from that list
+build/ftdrive press dev.foretype.Foretype Cancel               # press a button by title
+FTDRIVE_HOLD=3 build/ftdrive menu dev.foretype.Foretype &      # keep the menu open for a screenshot
+```
+
+A numeric pid works in place of the bundle ID (one process of an app that runs several);
+`ftdrive raise PID` brings a process to the front and `ftdrive front-pid` prints the current
+one.
 
 ### End-to-end scripts
 

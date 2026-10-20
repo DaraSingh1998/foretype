@@ -131,14 +131,16 @@ release builds (menu: Check for Updates…).
 ### Models
 
 The menu's **Model** submenu lists the catalog (`models/catalog.json`, shared by every
-shell): Qwen3 base models in three tiers, each pinned to a SHA-256 and verified after
-download (interrupted downloads resume; a mismatch is discarded).
+shell): Qwen3 base models in three tiers plus Gemma 4 E2B, each pinned to a SHA-256 and
+verified after download (interrupted downloads resume; a mismatch is discarded). Keystrokes
+saved and latency on the 53-document corpus, M3 Pro (`docs/MEASUREMENTS.md`):
 
-| Model | Size | Picked for |
-|---|---|---|
-| Qwen3 0.6B Base Q8_0 | 0.6 GB | under 12 GB of RAM |
-| Qwen3 1.7B Base Q4_K_M | 1.1 GB | 12 GB and up (default) |
-| Qwen3 4B Base Q4_K_M | 2.5 GB | opt-in on 16 GB+ (about twice the latency) |
+| Model | Size | Picked for | Saved | p50 |
+|---|---|---|---:|---:|
+| Qwen3 0.6B Base Q8_0 | 0.6 GB | under 12 GB of RAM | 39.9% | 46 ms |
+| Qwen3 1.7B Base Q4_K_M | 1.1 GB | 12 GB and up (default) | 41.9% | 73 ms |
+| Gemma 4 E2B Q4_K_M | 3.4 GB | opt-in on 16 GB+ | 42.8% | 109 ms |
+| Qwen3 4B Base Q4_K_M | 2.5 GB | opt-in on 16 GB+ (about twice the latency) | 45.0% | 147 ms |
 
 **Use a Server Instead…** points Foretype at your own inference server:
 
@@ -227,15 +229,17 @@ personalization, custom instructions, model and setup.
 
 - Per-app insertion overrides are in place but every app still defaults to keystrokes;
   entries need testing app by app.
-- Screen context has only been tested through the OCR self-test and replays; live window
-  capture needs the Screen Recording grant on `Foretype.app`, which the dev test setup
-  doesn't have.
+- Live screen capture has been checked in the TextEdit end-to-end test (a development
+  build under a parent process with Screen Recording); the bundled app needs its own grant.
 - No autocorrect, emoji or phrase beam search yet.
-- The personalization menu and the Custom Instructions window have not been exercised in
-  the automated tests; the recorder, history and bias are covered by unit tests and replays.
-- Notarization and the Sparkle feed are wired up but have not been exercised: they need a
-  Developer ID certificate, notary credentials and Sparkle keys (`RELEASING.md`). The
-  release workflow is an untested template.
+- The setup window, the menu and the Custom Instructions window have been checked by
+  screenshot (`ftdrive`, 2026-10-20), not by an automated test; saving instructions and the
+  personalization submenu were not exercised. The recorder, history and bias are covered by
+  unit tests and replays.
+- Sparkle updates work end to end with a local feed and a throwaway key
+  (`scripts/sparkle-local-test.sh`). Notarization and a real feed still need a Developer ID
+  certificate, notary credentials and Sparkle keys (`RELEASING.md`). The release workflow
+  is an untested template.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by
   replays against a local llama-server.

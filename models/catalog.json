@@ -1,5 +1,5 @@
 {
-  "comment": "Models Foretype can download. Base (non-instruct) models used as plain text continuers; dense full-attention only until KV state snapshots land. sha256 and sizes verified in the Phase 0 spike (2026-10-18). Tiers: the app recommends 'light' below 12 GB of RAM and 'default' otherwise; 'quality' is opt-in (slower: p50 150 ms for 4 words on an M3 Pro).",
+  "comment": "Models Foretype can download. Base (non-instruct) models used as plain text continuers. Dense, sliding-window (Gemma 4) and hybrid models all roll back (KV snapshots, 2026-10-19). sha256 and sizes verified when added (Qwen3: Phase 0 spike, 2026-10-18; Gemma 4: 2026-10-20). Tiers: the app recommends 'light' below 12 GB of RAM and 'default' otherwise; 'quality' is opt-in (slower: p50 109 ms for Gemma 4 E2B, 150 ms for Qwen3 4B, 4 words on an M3 Pro).",
   "models": [
     {
       "id": "qwen3-0.6b-base-q8",
@@ -31,6 +31,17 @@
       "url": "https://huggingface.co/mradermacher/Qwen3-4B-Base-GGUF/resolve/main/Qwen3-4B-Base.Q4_K_M.gguf",
       "sha256": "a7eb1d92eaf34e116f8b522aeeaf4072e66d69b5b10676e0cb7cd9e11889bed6",
       "bytes": 2497280736,
+      "min_ram_gb": 16,
+      "license": "Apache-2.0"
+    },
+    {
+      "id": "gemma-4-e2b-q4km",
+      "name": "Gemma 4 E2B (Q4_K_M)",
+      "tier": "quality",
+      "file": "gemma-4-E2B.Q4_K_M.gguf",
+      "url": "https://huggingface.co/mradermacher/gemma-4-E2B-GGUF/resolve/main/gemma-4-E2B.Q4_K_M.gguf",
+      "sha256": "389c868898bffed97fd178646f88562cafecc6f60983a636bac53b131fd068a2",
+      "bytes": 3427861984,
       "min_ram_gb": 16,
       "license": "Apache-2.0"
     }

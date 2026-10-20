@@ -4,3 +4,5 @@ build/
 *.gguf
 .DS_Store
 mac/.build-sparkle/
+tools/spike/probe/.build/
+tools/spike/probe/bundle/

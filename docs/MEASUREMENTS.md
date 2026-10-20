@@ -8,8 +8,9 @@ idle in the background. llama.cpp is the version vendored by `llama-cpp-2` 0.1.1
 
 "Keystrokes saved" = 1 − keystrokes / characters, where accepting a word with Tab costs one
 keystroke. The simulated user is ideal (accepts exactly when the next word matches, never
-otherwise), so these are upper bounds for each policy. Base M1/M4 numbers and energy are
-**not measured** yet.
+otherwise), so these are upper bounds for each policy. Base M1/M4 numbers are **not
+measured** yet (`scripts/bench-mac.sh` produces them on any Mac); energy is GPU-only
+without root (see the leftovers section).
 
 ## Phase 0 (2026-10-18/19): feasibility spike
 
@@ -126,6 +127,98 @@ runners will be slower).
 Model download self-test: 640 MB from a localhost server in 0.8 s including SHA-256
 verification; a corrupted file was rejected and removed. DMG: 5.4 MB (llama.cpp linked
 statically, Sparkle embedded).
+
+## Leftovers (2026-10-19/20): KV snapshots, energy, Chrome, by-eye checks
+
+### Cache rollback (`ft-replay --check-cache`)
+
+Each document is typed one character at a time with a burst of 3 backspaces every 9
+keystrokes, through an engine that reuses its cache and through one reset before every
+request; the table counts identical suggestions (4 words, greedy). Short: the first 200
+characters of 4 documents (prompts under 100 tokens). Long (`--long`): 1,400 characters of
+other documents as screen text and as earlier body text, so prompts run 650–700 tokens,
+past Gemma 4's 512-token window.
+
+| Model | Rollback | Prompts | Identical | Prefill per request p50 / p90 | Reuse p50 | Fresh p50 |
+|---|---|---|---:|---:|---:|---:|
+| Qwen3-0.6B Q8_0 | truncate | short | 99.9% (1,418 / 1,420) | 1 / 1 | 39 ms | 49 ms |
+| Qwen3-1.7B Q4_K_M | truncate | long | 99.7% (796 / 798) | 1 / 1 | 56 ms | 581 ms |
+| Qwen3.5-0.8B Q8_0 | snapshot | short | 100% (1,420 / 1,420) | 1 / 2 | 47 ms | 74 ms |
+| Qwen3.5-0.8B Q8_0 | snapshot | long | 100% (798 / 798) | 1 / 2 | 49 ms | 298 ms |
+| Gemma 4 E2B Q4_K_M | truncate (full SWA) | short | 96.9% (1,376 / 1,420) | 1 / 1 | 77 ms | 138 ms |
+| Gemma 4 E2B Q4_K_M | truncate (full SWA) | long | 88.6% (707 / 798) | 1 / 1 | 79 ms | 846 ms |
+
+Gemma 4's lower rate is rounding, not rollback: on 2 long documents (424 requests), two
+fresh contexts that differ only in prefill batch size (16 vs 512 tokens) agreed on 91.7%,
+while the reusing engine agreed with the 16-token fresh pass on 98.1% (91.0% with the
+512-token one). The reusing engine prefills in small steps as the user types, so it lands
+closer to small-batch numerics. Gemma 4 is more sensitive to this than Qwen (near-ties in
+greedy decoding); the suggestions on both sides read as plausible continuations.
+
+### Chrome before priming (`tools/spike/probe/run_unprimed_chrome.sh`)
+
+Chrome 155.0.8059.85, a separate process with a throwaway profile, raised to the front with
+the fixture textarea focused (its focus ring visible on screen), probed by pid:
+
+- `AXEnhancedUserInterface` was `false`: this process had not been primed by anyone, so this
+  is the baseline Phase 0 could not get.
+- The app element answered (native toolbar buttons, window title), but
+  `AXFocusedUIElement` returned `noValue`: no web element, so no text, caret or font.
+- Setting `AXEnhancedUserInterface` succeeded (read back `true` after 100 ms;
+  `AXManualAccessibility` is unsupported, as before), yet the focused element stayed
+  `noValue` in reads at 0.4, 1, 2, 4 and 8 s. Resetting the flag returns `notImplemented`.
+- Walking the window's AX tree first (as an observer-based client does) didn't change it.
+
+So in this setup priming alone doesn't expose Chrome's web content to an outside client.
+The user's long-running Chrome does expose it (Phase 0 and every Chrome test since), so some
+other trigger is involved; until it's found, a freshly started Chrome may get no
+suggestions. Raycast was running during the test.
+
+### By-eye checks (2026-10-20)
+
+Development build with `FORETYPE_ONLY_APPS=com.apple.TextEdit` (e2e script) and the
+bundled Sparkle test build, screenshots through `screencapture` and `ftdrive`:
+
+- Ghost text in TextEdit sits on the caret's baseline in the field's font, gray, after a
+  space and mid-word (`build/e2e/1-suggestion.png`, `4-midword.png` when re-run).
+- Live screen capture: "screen: 92 chars from TextEdit in 295 ms" (Vision OCR of the window).
+- Setup window: the Accessibility, Screen Recording and model rows show their state; buttons
+  for granted or installed items are disabled; Start stays disabled until Accessibility is
+  granted.
+- Menu: all items render; the per-app toggle follows the frontmost app.
+- Custom Instructions: global and per-app fields, Cancel / Save (about 50 pt of empty space
+  under the buttons).
+- Sparkle: 0.0.1 → 0.0.2 from a local feed, "OK: EdDSA signature is correct for update",
+  installed in place and relaunched; the next check said "You're up to date!".
+
+### Models and energy
+
+Full corpus (53 documents, 12,704 characters), built-in engine, Metal, 4 words, prefetch
+on (mains power), instant simulated user, run one after another on 2026-10-20. Energy is
+the GPU counter from `tools/energy` (GPU energy during the run minus idle GPU power, divided
+by model suggestions; prefetch decodes are included, cache and type-through hits cost
+nothing). CPU and DRAM are not included: their counters don't update reliably without root.
+
+| Model | File | Keystrokes saved | Chars per accept | Model p50 / p90 | Model calls | GPU energy per suggestion | Mean GPU power |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Qwen3-0.6B Q8_0 | 0.64 GB | 39.9% | 3.61 | 46 / 61 ms | 3,341 | 0.61 J | 12.3 W |
+| Qwen3.5-0.8B Q8_0 | 0.81 GB | 39.1% | 3.54 | 74 / 93 ms | 3,377 | 0.93 J | 12.1 W |
+| Qwen3-1.7B Q4_K_M | 1.11 GB | 41.9% | 3.68 | 73 / 101 ms | 3,063 | 1.13 J | 14.3 W |
+| Gemma 4 E2B Q4_K_M | 3.43 GB | 42.8% | 3.78 | 109 / 159 ms | 3,156 | 1.52 J | 13.0 W |
+| Qwen3-4B Q4_K_M | 2.50 GB | 45.0% | 3.84 | 147 / 203 ms | 2,889 | 2.47 J | 15.6 W |
+
+- Qwen3-1.7B reproduces Phase 3 exactly (41.9%), so the rollback rework changed nothing for
+  dense models.
+- Qwen3.5-0.8B is worse than Qwen3-0.6B on every column, so it is not in the catalog.
+  Gemma 4 E2B sits between the 1.7B and 4B models on savings and latency, with the largest
+  file; it is in the catalog as an opt-in "quality" model, never picked automatically.
+- Mean GPU power is high because an instant simulated user keeps the GPU busy the whole
+  time; for a person typing, energy per suggestion is the useful figure (about 1 J for the
+  default model, so 1,000 suggestions ≈ 0.3 Wh of GPU energy).
+- Gemma 4 loads in 2.4 s (Qwen3-1.7B: 0.5 s).
+- The `idle` baselines were 0.00–0.37 W; earlier on 2026-10-20 the same meter read ~20 W
+  of GPU "idle" while another replay was still running, so measure with nothing else
+  on the GPU.
 
 ## How to reproduce
 

@@ -167,5 +167,13 @@ recurrent state before each prompt's last token and restore it to roll back.
 keystroke. llama.cpp's own per-token recurrent rollback (`n_rs_seq`) is experimental,
 single-use and sized for speculative decoding; explicit snapshots cover backspaces and
 prefetch. The full SWA cache costs only the window's difference at a 2,048-token context.
-**Cost.** A snapshot copy (a few MB) once per new prompt prefix, i.e. per word, and up to
-4 snapshots in memory. Verified with `ft-replay --check-cache` (`docs/MEASUREMENTS.md`).
+**Cost.** A snapshot copy (about 20 MB for Qwen3.5 0.8B) once per new prompt prefix, i.e.
+per word, and up to 4 snapshots in memory (80.8 MB measured). Verified with `ft-replay --check-cache` (`docs/MEASUREMENTS.md`).
+
+## D22. macOS only for now (user decision, 2026-10-19)
+
+**Decision.** Phases 5 (Windows shell) and 6 (Linux shell) are deferred; work goes into the
+macOS app and the core.
+**Why.** The user wants Foretype for macOS only.
+**Cost.** None today. The core keeps its portability rule (no Mac-only APIs in `core/`), so
+the Windows and Linux plans in `docs/ROADMAP.md` stay valid if the decision changes.

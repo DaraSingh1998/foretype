@@ -59,7 +59,8 @@ mod tests {
         assert!(small.iter().all(|m| m.min_ram_gb <= 8));
         assert_eq!(small.iter().find(|m| m.recommended).unwrap().tier, "light");
         let big = catalog(18);
-        assert_eq!(big.len(), 3);
+        assert_eq!(big.len(), 4);
+        assert!(big.iter().filter(|m| m.tier == "quality").all(|m| !m.recommended));
         assert_eq!(big.iter().find(|m| m.recommended).unwrap().file, "Qwen3-1.7B-Base.Q4_K_M.gguf");
         assert!(big.iter().all(|m| m.sha256.len() == 64 && m.url.starts_with("https://huggingface.co/")));
     }

@@ -142,7 +142,8 @@ In order; the first rule that applies decides:
     2,048-token context this costs little memory.
   - *Snapshot*: recurrent and hybrid models (Qwen3.5's Gated DeltaNet layers). Their
     running state can't be cut back, so `sync` decodes the prompt up to its last token,
-    saves the recurrent state (`state_seq_get` with `PARTIAL_ONLY`, a few MB), then decodes
+    saves the recurrent state (`state_seq_get` with `PARTIAL_ONLY`, about 20 MB for Qwen3.5
+    0.8B), then decodes
     the last token. Rolling back restores the newest snapshot whose tokens are a prefix of
     the target and removes the attention cells after it; generation is undone by returning
     to the prompt's own snapshot. Up to 4 snapshots are kept (most recent first); with none

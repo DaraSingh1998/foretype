@@ -5,6 +5,23 @@ roadmap phase.
 
 ## Unreleased
 
+### macOS leftovers (2026-10-19/20)
+- **Gemma 4 and Qwen3.5 run** in the built-in engine: a full-size sliding-window cache for
+  Gemma 4, recurrent-state snapshots for Qwen3.5's hybrid layers, and a full re-prefill when
+  a KV truncation fails. `ft-replay --check-cache` verifies cache reuse against a fresh
+  context. Gemma 4 E2B (Q4_K_M) is in the model catalog as an opt-in quality model
+  (42.8% keystrokes saved, p50 109 ms); Qwen3.5 0.8B measured worse than Qwen3 0.6B and
+  is not offered.
+- **Fix:** ad-hoc builds with Sparkle embedded crashed at launch (hardened runtime + library
+  validation without a Team ID); the runtime now applies only to Developer ID builds.
+- Sparkle update tested end to end with a local feed (`scripts/sparkle-local-test.sh`).
+- Measurement tools: a sudo-free energy meter (`tools/energy`), `scripts/bench-mac.sh` for
+  the base M1/M4 numbers, an unprimed-Chrome probe; `ftdrive` drives the app's menu and
+  windows over Accessibility.
+- Setup window, menu, Custom Instructions window, ghost-text placement and live screen
+  capture checked by eye.
+- Windows and Linux shells deferred: macOS only for now (D22).
+
 ### Documentation (2026-10-19)
 - `CLAUDE.md`, `docs/` (architecture, decisions, development, measurements, roadmap),
   the Cotypist research report and notes, and the Phase 0 spike (`tools/spike/`) added to

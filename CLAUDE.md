@@ -4,7 +4,8 @@ Foretype is a free, open-source, on-device inline autocomplete for every macOS a
 style of Cotypist: gray "ghost text" after the caret, **Tab** takes the next word, the key
 above Tab takes all of it. A portable **Rust core** (`core/`) does everything except
 platform plumbing; a **Swift macOS shell** (`mac/`) captures the focused field, draws the
-overlay and types accepted text. Windows and Linux shells are planned and will reuse the core.
+overlay and types accepted text. The product is macOS only for now (user decision, 2026-10-19):
+Windows and Linux shells are deferred, but the core stays portable so they remain possible.
 
 Private GitHub repo: `DaraSingh1998/foretype`. Phases 1–4 of the roadmap are done (see
 `docs/ROADMAP.md`).
@@ -41,7 +42,7 @@ downloading any model** (name, size, source).
 
 ## Rules for working on this repo
 
-- **Branch per phase or feature** (`phase5/windows`, `fix/...`, `docs/...`). Merge into
+- **Branch per phase or feature** (`phase3/kv-snapshots`, `fix/...`, `docs/...`). Merge into
   `main` and push only when the user says so. Use the user's configured git identity and
   the commit attribution line the system provides.
 - **CI is manual-only on purpose** (`workflow_dispatch`): macOS runner minutes are billed at

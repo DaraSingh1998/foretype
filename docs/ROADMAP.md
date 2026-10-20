@@ -5,13 +5,13 @@ from Mac MVP to Linux"), adjusted as the work went.
 
 | Phase | Status | Where |
 |---|---|---|
-| 0. Spikes and evaluation harness | Done (2026-10-19) except base M1/M4 benchmarks, energy, an unprimed-Chrome baseline | `tools/spike/` |
+| 0. Spikes and evaluation harness | Done; GPU energy and the unprimed-Chrome baseline measured 2026-10-20; base M1/M4 need those Macs (`scripts/bench-mac.sh`) | `tools/spike/`, `phase0/measurements` |
 | 1. Mac MVP | Done | `0bf074c`, branch history on `main` |
 | 2. Compatibility breadth | Done | `phase2/compat-breadth` |
-| 3. Quality and personalization | Done (beam search, emoji, autocorrect, Gemma 4 deferred) | `phase3/personalization` |
-| 4. Packaging (1.0 groundwork) | Done; notarization and Sparkle feed untested (no Developer ID yet) | `phase4/packaging` |
-| 5. Windows shell | Not started | |
-| 6. Linux shell | Not started | |
+| 3. Quality and personalization | Done; Gemma 4 and Qwen3.5 run since KV snapshots (beam search, emoji, autocorrect deferred) | `phase3/personalization`, `phase3/kv-snapshots` |
+| 4. Packaging (1.0 groundwork) | Done; Sparkle update verified with a local feed (2026-10-20); notarization needs a Developer ID | `phase4/packaging`, `phase4/sparkle-test` |
+| 5. Windows shell | Deferred: macOS only for now (D22) | |
+| 6. Linux shell | Deferred: macOS only for now (D22) | |
 
 ## What each phase delivered
 
@@ -32,7 +32,10 @@ from Mac MVP to Linux"), adjusted as the work went.
   build), DMG, notarization and stapling, appcast item and Homebrew cask; CI (manual) and
   release workflows; license texts.
 
-## Next
+## Deferred: Windows and Linux
+
+The user wants Foretype on macOS only for now (`docs/DECISIONS.md` D22). The plans below
+are kept for if that changes; the core stays portable.
 
 ### Phase 5: Windows
 
@@ -53,30 +56,37 @@ from Mac MVP to Linux"), adjusted as the work went.
 
 ## Backlog (any phase)
 
-- **Models**: KV state snapshots so Gemma 4 (sliding window) and Qwen3.5 (recurrent layers)
-  work; a purpose-tuned small completion model; MLX as an experiment.
+- **Models**: a purpose-tuned small completion model; MLX as an experiment. (KV snapshots
+  for Gemma 4 and Qwen3.5 landed in `phase3/kv-snapshots`.)
 - **Quality**: phrase beam search (Cotypist reportedly uses a 9-wide beam), a dictionary gate
   that knows the user's vocabulary and names (the spike's gate falsely blocked names,
   British spellings, brands), emoji shortcodes, inline autocorrect, mid-line completion.
 - **Compatibility**: pixel caret locator for apps without geometry (Teams, LibreOffice,
   Obsidian/CodeMirror); WebKit/Chromium text-marker reads; app-by-app insertion testing to
   fill `insertion` overrides; VS Code/Cursor chat panels; Google Docs (needs its
-  screen-reader mode); Arc/Dia "Text Metrics" guidance in the UI.
+  screen-reader mode); Arc/Dia "Text Metrics" guidance in the UI; the overlay checked by eye
+  in Safari, Chrome, Mail and Notes.
 - **Personalization**: Cotypist history import; per-app retrieval tuning; logit bias for
   `llama-server` via its `logit_bias` parameter.
 - **Product**: Foundation Models fallback (zero download), localization, a preferences
   window, statistics (words saved), model manager polish (delete models, disk usage).
-- **Measurement**: base M1 and M4 benchmarks, energy per suggestion (`powermetrics` needs
-  sudo), an unprimed-Chrome AX baseline, the release-day corpus numbers.
+- **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
+  DRAM energy (`sudo powermetrics`; GPU energy is measured), why a fresh Chrome exposes no
+  web focus even when primed, the release-day corpus numbers.
 - **Release**: Developer ID certificate, notarization run, Sparkle keys and appcast on
   GitHub Pages, Homebrew tap, first tagged release.
 
 ## Known limitations
 
 - Insertion overrides exist but every app still defaults to keystrokes.
-- Not yet verified by eye: the ghost overlay's on-screen placement, the setup window, menus,
-  the Custom Instructions window, live screen capture (needs Screen Recording on the
-  bundled app).
+- Checked by eye on 2026-10-20: ghost-text placement in TextEdit, the setup window, the
+  menu, the Custom Instructions window, live screen capture (development build). Not yet:
+  the overlay in other apps (Safari, Chrome, Mail, Notes), the bundled app's own Screen
+  Recording grant.
+- A Chrome process that no other Accessibility client has touched exposes no focused web
+  element, even after `AXEnhancedUserInterface` is set (`docs/MEASUREMENTS.md`). In daily
+  use another client has usually primed Chrome already; a fresh Chrome may get no
+  suggestions until that is understood.
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in
   engine (no token healing).
 - Ad-hoc builds lose the Accessibility grant on every update until releases are signed
