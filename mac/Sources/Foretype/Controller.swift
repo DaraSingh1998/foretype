@@ -252,8 +252,10 @@ final class Controller {
     private func coreSettingsJSON() -> String {
         var d = settings.coreDict
         d["debounce_ms"] = power.onBattery ? 80 : 0
-        // Prefetching roughly doubles generated tokens; keep it for mains power.
+        // Prefetching roughly doubles generated tokens; keep it for mains power. So does the
+        // 3-wide phrase beam (+1.1 points of keystrokes saved for +15% GPU energy).
         d["prefetch"] = !power.onBattery
+        d["beam_width"] = power.onBattery ? 1 : 3
         return String(data: try! JSONSerialization.data(withJSONObject: d), encoding: .utf8)!
     }
 
