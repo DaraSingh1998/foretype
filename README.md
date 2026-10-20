@@ -97,6 +97,30 @@ and phrases; real histories repeat more, so treat this as a floor.
 spelling) and one for the app you were last in, appended after it. Both go into the prompt
 header.
 
+### Settings window
+
+**Settings…** in the menu (Cmd-, while the menu or one of Foretype's windows is open)
+shows every setting in five tabs; changes apply at once, the same way as from the menu:
+
+- **General**: suggestions on/off, length (2, 4, 7 or 10 words), stop at the end of a
+  sentence, screen context (with the Screen Recording status), custom instructions.
+- **Personalization**: learn from my writing, strength, what was learned, delete history.
+- **Apps**: every app you switched off (or switched on where it is off by default), with
+  Remove to return it to its default.
+- **Model**: the catalog and every other GGUF in the Models folder, each with its size on
+  disk, Use, Download, Cancel, Resume and Delete; the folder's total disk use; the server
+  settings.
+- **Statistics**: keystrokes saved, words and characters inserted, and suggestions accepted
+  (Tab and accept-all), for today, the last 7 days and all time, with Reset.
+
+### Statistics
+
+Every accept adds to the counts: one suggestion accepted, the words and characters it
+inserted, and the keystrokes it saved (characters inserted minus the one key press the
+accept took). The menu shows "Saved 1,234 keystrokes today · 24,920 in all". Only the
+numbers are stored (UserDefaults `usageStats`: totals plus one bucket per day for the last
+30 days); never the text, and not the app it went to.
+
 ### Latency design
 
 - The prompt ends *before* the partial word. Token healing masks the first decode steps to
@@ -142,6 +166,13 @@ saved and latency on the 53-document corpus, M3 Pro (`docs/MEASUREMENTS.md`):
 | Gemma 4 E2B Q4_K_M | 3.4 GB | opt-in on 16 GB+ | 42.8% | 109 ms |
 | Qwen3 4B Base Q4_K_M | 2.5 GB | opt-in on 16 GB+ (about twice the latency) | 45.0% | 147 ms |
 
+Installed models show their size on disk, and the submenu shows the Models folder's total.
+Other GGUF files in the folder are listed too and can be chosen. **Delete a Model** (and
+Delete… in Settings → Model) removes a model file after a confirmation; the model in use
+can't be deleted (choose another one first). A download can be cancelled; when the server
+allows it, it is paused and resumes where it stopped until Foretype quits. Discarding a
+paused download, or quitting, deletes what it had downloaded.
+
 **Use a Server Instead…** points Foretype at your own inference server:
 
 - a llama.cpp `llama-server`: same suggestions as the built-in engine (token healing via a
@@ -167,8 +198,8 @@ signing, notarization and Sparkle keys.
 
 From source: put a GGUF base model in `~/Library/Application Support/Foretype/Models/` or
 set `FORETYPE_MODEL=/path/to/model.gguf`, open `build/Foretype.app` and grant Accessibility
-when asked. The menu-bar icon has the on/off switch, suggestion length, per-app toggle,
-personalization, custom instructions, model and setup.
+when asked. The menu-bar icon has today's keystrokes saved, the on/off switch, suggestion
+length, per-app toggle, personalization, custom instructions, model, Settings… and setup.
 
 | Key | Action |
 |---|---|
@@ -215,7 +246,9 @@ personalization, custom instructions, model and setup.
   it whenever you run a dev build on a machine you are also working on. An entry can be a
   pid, to allow one process of an app you also use (a test Chrome next to your own).
 - `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly;
-  `Foretype --font-selftest` checks the width-based font matcher (no permissions needed).
+  `Foretype --font-selftest` checks the width-based font matcher and
+  `Foretype --stats-selftest` the statistics counts, day buckets and reset (no permissions
+  needed).
   `Foretype --download-selftest MODEL_ID` downloads and verifies one catalog model
   (`FORETYPE_MODEL_BASE_URL` and `FORETYPE_MODELS_DIR` point it at a local server and a
   scratch folder).
@@ -237,6 +270,12 @@ personalization, custom instructions, model and setup.
   screenshot (`ftdrive`, 2026-10-20), not by an automated test; saving instructions and the
   personalization submenu were not exercised. The recorder, history and bias are covered by
   unit tests and replays.
+- The Settings window's five tabs, deleting a model (and the refusal for the one in use),
+  removing an app, resetting statistics, and cancel/resume/discard of a download (from a
+  local test server) were checked by screenshot (`ftdrive`, 2026-10-20). Cmd-, and the
+  editing shortcuts in Foretype's windows, personalization on/off and the server fields'
+  Apply were not exercised there (they would type keystrokes, create a Keychain item or
+  start an engine).
 - Sparkle updates work end to end with a local feed and a throwaway key
   (`scripts/sparkle-local-test.sh`). Notarization and a real feed still need a Developer ID
   certificate, notary credentials and Sparkle keys (`RELEASING.md`). The release workflow

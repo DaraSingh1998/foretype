@@ -5,6 +5,29 @@ roadmap phase.
 
 ## Unreleased
 
+### Product (2026-10-20)
+- **Settings window** (menu: Settings…, Cmd-,): General (on/off, length, stop at sentence
+  end, screen context, custom instructions), Personalization, Apps (the apps you changed,
+  with Remove), Model (models, sizes on disk, server) and Statistics tabs. Changes apply at
+  once through the same code as the menu, and the menu stays.
+- **Statistics:** accepts (Tab and accept-all), words and characters inserted, and
+  keystrokes saved (characters minus one key press per accept), today, last 7 days and all
+  time, with Reset; "Saved N keystrokes today" in the menu. Counts only, never text; the
+  last 30 days plus totals in UserDefaults. `--stats-selftest`.
+- **Model manager:** size on disk for each installed model, the Models folder's total, other
+  GGUF files in the folder listed and selectable, Delete with a confirmation (the model in
+  use is refused), leftover `.part` files shown and deletable. Cancel pauses a download when
+  the server allows resuming (Resume, Discard); discarding or quitting deletes the partial
+  download from the temporary folder. A failed resume no longer retries with stale resume
+  data.
+- **Stop at Sentence End** (core `stop_at_sentence_end`, on by default) is now a setting, in
+  the Length submenu and the General tab.
+- Foretype's windows get Cmd-W, Cmd-Q and the editing shortcuts (cut, copy, paste, select
+  all, undo) through a hidden main menu.
+- `ftdrive`: lists a submenu, presses toolbar and radio buttons, matches `TITLE*` by prefix,
+  and stops after a press that opened a modal alert.
+- Download progress reaches the UI in 0.5% steps instead of on every chunk.
+
 ### Fresh Chrome (2026-10-20)
 - **Fix:** a Chrome process no other Accessibility client had primed could get no
   suggestions. Chrome turns on web content only 2 s after `AXEnhancedUserInterface` is set
