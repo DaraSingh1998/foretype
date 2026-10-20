@@ -16,6 +16,10 @@
 #      reads only the test Chrome's process (--pid), whichever app is in front.
 #
 # Output: results/probe/chrome-unprimed.once.jsonl and chrome-primed.once.jsonl.
+#
+# Superseded: the primed read comes 0.5 s after the flag is set and the probe clears it on
+# exit, but Chrome turns on web content only after the flag has stayed set for 2 s, so this
+# always reads noValue. run_chrome_triggers.sh measures it properly (docs/MEASUREMENTS.md).
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 BIN="${AXPROBE_BIN:-$HERE/bundle/AXProbe.app/Contents/MacOS/axprobe}"

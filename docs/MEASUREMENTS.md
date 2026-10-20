@@ -169,10 +169,64 @@ the fixture textarea focused (its focus ring visible on screen), probed by pid:
   `noValue` in reads at 0.4, 1, 2, 4 and 8 s. Resetting the flag returns `notImplemented`.
 - Walking the window's AX tree first (as an observer-based client does) didn't change it.
 
-So in this setup priming alone doesn't expose Chrome's web content to an outside client.
-The user's long-running Chrome does expose it (Phase 0 and every Chrome test since), so some
-other trigger is involved; until it's found, a freshly started Chrome may get no
-suggestions. Raycast was running during the test.
+That conclusion was wrong: `axprobe --once --chromium-ax` reads 0.5 s after setting the
+flag and clears it when it exits, and Chrome drops the request when the flag is cleared
+within 2 s (next section).
+
+### Fresh Chrome: what turns web content on (`tools/spike/probe/run_chrome_triggers.sh`)
+
+Same Chrome and fixture, a new throwaway-profile process per trigger, raised, then the
+app's `AXFocusedUIElement` read every 250 ms for 10 s by `build/chrome_triggers` (a bare
+binary, so no AXProbe re-grant). `AXEnhancedUserInterface` read `false` before every run;
+Raycast was running, nothing else that primes Chromium. Raw lines:
+`tools/spike/results/probe/chrome-triggers.jsonl`.
+
+| Trigger | Focused web textarea | Web area in the window's tree at 10 s |
+|---|---|---|
+| None (only the reads) | never (`noValue`) | no |
+| AXObserver on the app, as FocusTracker attaches it | never; no notifications | no |
+| `AXFocusedUIElement` of the focused window | never (`attributeUnsupported`) | no |
+| Walk the window's tree first (36 nodes, native UI only) | never | no |
+| Hit test at the window's middle (returns the web view, `AXScrollArea`) | never | no |
+| Page moves focus between two textareas every 1.5 s, with or without an observer | never | no |
+| `AXManualAccessibility` | never (`attributeUnsupported`) | no |
+| `AXEnhancedUserInterface` set, cleared after 0.5 s | never | no |
+| `AXEnhancedUserInterface` set and kept, with or without an observer | at 2.06 s (3 runs: 2.061, 2.066, 2.056) | yes |
+| Chrome started with `--force-renderer-accessibility` | at the first read (0.27 s) | yes |
+
+With the flag kept, text, caret and caret rect match the renderer-flag run
+(`AXBoundsForRange` of the character before the caret: 281,248 10×19). Setting the flag
+returns `notImplemented` even though it works.
+
+Why: Chrome's application object (`chrome/browser/chrome_browser_application_mac.mm`)
+debounces `AXEnhancedUserInterface`. A set starts a 2 s timer, a clear inside those 2 s
+cancels it, and only when the timer fires does Chrome turn on complete accessibility, web
+content included. An outside client asking the app for its role turns on only the native
+UI (`kNativeAPIs`, the "Sonoma refinements"), which is why the toolbar answers. Chromium's
+web view also turns on basic web support when an assistive app asks its role, but in Chrome
+155 a hit test that reached it didn't build the tree. The user's long-running Chrome is
+readable because some client kept the flag set for 2 s at some point.
+
+### Fresh Chrome in Foretype (`scripts/e2e-chrome-fresh.sh`)
+
+Development build, Qwen3-0.6B Q8_0, `FORETYPE_ONLY_APPS` set to the test Chrome's pid,
+nothing typed; seconds from Foretype first setting the flag (Chrome activated itself at
+launch) to the ghost text, model time included (75–150 ms). Then the flag is cleared from
+outside (`chrome_triggers PID clear`). Logs: `tools/spike/results/probe/e2e-chrome-fresh/`.
+
+| Run | First set kept? | Ghost text | After the outside clear |
+|---|---|---|---|
+| 1 | yes | 2.12 s | flag set again within 1 s, text 2.1 s later |
+| 2 | no: read `false` at 0.6 s, set again | 3.15 s | set again, text 2.6 s later |
+| 3 | no: read `false` at 0.5 s, set again | 3.10 s | set again, text 2.6 s later |
+
+Something clears the flag within 0.5 s of Chrome's launch or activation in about half the
+runs (Tabber saw Chrome clear it within ~50 ms of activation); a clear inside the 2 s
+window cancels Chrome's pending switch, so FocusTracker checks the flag 0.5 s after each set.
+Before that check, 2 of 3 runs showed text only at 6.6 s (set again by the 3 s no-focus
+check). An earlier version that set the flag again whenever a read of it timed out kept
+restarting Chrome's 2 s wait (the field became readable only at 4.5 s). The overlay sits on the caret's baseline in
+the field's serif font (`build/e2e-chrome-1/1-fresh.png`, by eye).
 
 ### By-eye checks (2026-10-20)
 

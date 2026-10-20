@@ -212,7 +212,8 @@ personalization, custom instructions, model and setup.
   idle, and pause or abort if focus leaves that app.
 - `FORETYPE_DEBUG=1` logs snapshots, caret strategy, suggestions and latency to stderr.
 - `FORETYPE_ONLY_APPS=bundle.id,...` restricts reading and suggestions to those apps. Use
-  it whenever you run a dev build on a machine you are also working on.
+  it whenever you run a dev build on a machine you are also working on. An entry can be a
+  pid, to allow one process of an app you also use (a test Chrome next to your own).
 - `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly;
   `Foretype --font-selftest` checks the width-based font matcher (no permissions needed).
   `Foretype --download-selftest MODEL_ID` downloads and verifies one catalog model

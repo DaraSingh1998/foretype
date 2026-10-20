@@ -177,3 +177,18 @@ macOS app and the core.
 **Why.** The user wants Foretype for macOS only.
 **Cost.** None today. The core keeps its portability rule (no Mac-only APIs in `core/`), so
 the Windows and Linux plans in `docs/ROADMAP.md` stay valid if the decision changes.
+
+## D23. Chromium: keep `AXEnhancedUserInterface` set (2026-10-20)
+
+**Decision.** FocusTracker sets `AXEnhancedUserInterface` on a Chromium app once per process
+and keeps it until Foretype quits, checking it 0.5 s after the set and while the app shows no
+focused element, and setting it again only when it reads `false`.
+**Why.** It is the only outside trigger that makes a fresh Chrome expose its web content
+(`docs/MEASUREMENTS.md`): an AXObserver, walking or hit-testing the tree, focus changes in
+the page and `AXManualAccessibility` do nothing. Chrome debounces the flag for 2 s and drops
+the request if it is cleared in that window, so it can't be pulsed, and setting it again
+while set restarts the wait. `--force-renderer-accessibility` works at once but needs
+Foretype to launch Chrome.
+**Cost.** About 2 s (3 s when Chrome clears the flag as it activates) before a fresh Chrome
+gets suggestions; the flag stays on while Foretype runs, which some window managers dislike
+(restored on quit, and never set while VoiceOver runs).

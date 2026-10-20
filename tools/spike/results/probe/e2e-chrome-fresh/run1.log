@@ -1,0 +1,9 @@
+[   0.000] primed com.google.Chrome as chromium
+[   0.001] rev 1 policy Google Chrome caret=none -> ""
+[   0.645] engine ready: loaded in 728 ms
+[   2.119] rev 2 model 87ms Google Chrome caret=prevEdge 291,248 h19 -> " I think we can"
+[   2.533] screen: 203 chars from Google Chrome in 410 ms
+[   3.473] primed com.google.Chrome as chromium again (the flag read false)
+[   3.473] rev 3 policy Google Chrome caret=none -> ""
+[   5.572] rev 4 model 88ms Google Chrome caret=prevEdge 291,248 h19 -> " I think we can"
+[   5.754] screen: 203 chars from Google Chrome in 163 ms

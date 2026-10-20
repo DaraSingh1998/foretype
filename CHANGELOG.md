@@ -5,6 +5,16 @@ roadmap phase.
 
 ## Unreleased
 
+### Fresh Chrome (2026-10-20)
+- **Fix:** a Chrome process no other Accessibility client had primed could get no
+  suggestions. Chrome turns on web content only 2 s after `AXEnhancedUserInterface` is set
+  and cancels if it is cleared sooner, and it sometimes clears the flag itself as it
+  activates. Foretype now checks the flag 0.5 s after setting it and while Chrome shows no
+  focused element, sets it again only when it reads `false`, and never re-sets it while it
+  is set (that restarts Chrome's wait). A fresh Chrome gets suggestions after 2–3 s.
+- `FORETYPE_ONLY_APPS` accepts pids, and apps it excludes are no longer primed.
+- `scripts/e2e-chrome-fresh.sh` (no typing) and `tools/spike/probe/run_chrome_triggers.sh`.
+
 ### macOS leftovers (2026-10-19/20)
 - **Gemma 4 and Qwen3.5 run** in the built-in engine: a full-size sliding-window cache for
   Gemma 4, recurrent-state snapshots for Qwen3.5's hybrid layers, and a full re-prefill when

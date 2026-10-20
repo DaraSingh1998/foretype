@@ -59,7 +59,8 @@ downloading any model** (name, size, source).
 
 - **Never run a dev build without `FORETYPE_ONLY_APPS=<bundle id>`** while the user may be
   working. An early unrestricted run read and showed suggestions in the user's Microsoft
-  Teams for about 5 seconds (nothing was inserted).
+  Teams for about 5 seconds (nothing was inserted). To test an app the user also has open
+  (Chrome), start a separate process and pass its pid instead (`scripts/e2e-chrome-fresh.sh`).
 - The e2e scripts (`scripts/e2e-textedit.sh`, `scripts/e2e-terminal.sh`) type synthetic
   keystrokes. They restrict the app, wait for the user to be idle and pause if focus leaves,
   but **tell the user before running them** and ask them to stay off the keyboard.
@@ -88,7 +89,7 @@ downloading any model** (name, size, source).
 | Variable | Effect |
 |---|---|
 | `FORETYPE_MODEL` | GGUF to load (dev; skips the setup window when also trusted) |
-| `FORETYPE_ONLY_APPS` | Comma-separated bundle IDs; nothing else is read or intercepted |
+| `FORETYPE_ONLY_APPS` | Comma-separated bundle IDs or pids; nothing else is read, primed or intercepted |
 | `FORETYPE_DEBUG` | Logs snapshots, caret strategy, suggestions, latency to stderr |
 | `FORETYPE_INSERTION` | Forces `keystrokes`, `paste`, `paste-long` or `first-word-then-paste` |
 | `FORETYPE_MODELS_DIR`, `FORETYPE_MODEL_BASE_URL` | Model folder and download host (tests) |

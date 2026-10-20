@@ -43,11 +43,13 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | Replay quality/latency | `ft-replay` (below) | a model |
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
 | Terminal end-to-end | `FORETYPE_MODEL=... scripts/e2e-terminal.sh` | Accessibility, user idle |
+| Fresh Chrome end-to-end (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-chrome-fresh.sh` | Accessibility, user idle |
 | Cache rollback | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache [--long]` | a model |
 | Sparkle update | `scripts/sparkle-local-test.sh`, then Check for Updates… in the printed app | nothing (`RELEASING.md`) |
 | Benchmark a Mac | `scripts/bench-mac.sh [--only sw-]`, `ENERGY=1` for mJ per suggestion | the catalog models |
 | GPU energy of a command | `swiftc -O tools/energy/energy.swift -o build/ft-energy && build/ft-energy -- CMD` | nothing (CPU/DRAM: `sudo powermetrics`) |
-| Unprimed Chrome | `tools/spike/probe/run_unprimed_chrome.sh` | AXProbe.app granted Accessibility |
+| What turns on Chrome's web tree | `tools/spike/probe/run_chrome_triggers.sh` (`TRIGGERS="none enhanced"` for a subset) | Accessibility (the terminal's grant) |
+| Unprimed Chrome (superseded: reads before Chrome's 2 s wait ends) | `tools/spike/probe/run_unprimed_chrome.sh` | AXProbe.app granted Accessibility |
 
 Unit tests cover word splitting, prompt stability, the screen and examples sections,
 session reuse, the policy gate and agent prompts, the compat DB, the encrypted history
@@ -100,10 +102,11 @@ one.
 
 ### End-to-end scripts
 
-Both scripts start `mac/.build/release/Foretype` with `FORETYPE_DEBUG=1` and
+The scripts start `mac/.build/release/Foretype` with `FORETYPE_DEBUG=1` and
 `FORETYPE_ONLY_APPS` set to the app under test, wait until the user has been idle for
-`$IDLE` seconds (default 20), and drive keystrokes with `build/ftdrive` (compiled from
-`scripts/ftdrive.swift`). Typing pauses while another app is frontmost and aborts after 2 s.
+`$IDLE` seconds (default 20; 10 for Chrome), and drive keystrokes with `build/ftdrive`
+(compiled from `scripts/ftdrive.swift`). Typing pauses while another app is frontmost and
+aborts after 2 s.
 
 - `e2e-textedit.sh`: new unsaved document with `scripts/fixtures/email.txt`; checks Tab ×2,
   accept-all, mid-word completion, Esc then a real Tab, Option+Tab. Writes
@@ -115,14 +118,22 @@ Both scripts start `mac/.build/release/Foretype` with `FORETYPE_DEBUG=1` and
   reaches a shell; every entered line lands in `build/e2e-terminal/typed-lines.txt`).
   Checks: no suggestion on an ordinary line, the force hotkey (current line only), agent
   prompt suggestions on a `> ` line, snooze.
+- `e2e-chrome-fresh.sh`: types nothing. Starts a separate Chrome with a throwaway profile on
+  `tools/spike/probe/fixtures/testpage.html` and restricts Foretype to that process's pid
+  (the user's own Chrome has the same bundle ID), raises it and waits up to 10 s for a
+  suggestion (normally 2–3 s, see `docs/MEASUREMENTS.md`), screenshots the window region
+  to `build/e2e-chrome/1-fresh.png`, then clears `AXEnhancedUserInterface` from outside and
+  checks that Foretype primes again.
 
 **Before running either, tell the user** (they take over the keyboard focus), and if
 Cotypist is running, ask before quitting it (it also intercepts Tab). TextEdit sometimes
 opens an empty "Untitled" window on activation; close unmodified untitled windows
 afterwards.
 
-The ghost overlay can't be screenshotted from a Claude session: screen capture there is
-filtered to approved apps, and a dev binary can't be approved. Ask the user to look.
+The ghost overlay is its own window: the computer-use screenshot tool (filtered to approved
+apps) and a window-only `screencapture -l` miss it. `screencapture -R` over the window's
+region from a shell includes it (`e2e-chrome-fresh.sh` does this); otherwise ask the user to
+look.
 
 ## Debugging
 

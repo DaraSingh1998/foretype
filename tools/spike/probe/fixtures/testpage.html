@@ -39,6 +39,14 @@
     }
   }
   focusEnd();
+  // #refocus: move focus between two fields every 1.5 s (a focus change inside the page).
+  if (location.hash === "#refocus") {
+    const other = document.createElement("textarea");
+    other.value = "A second field.";
+    slot.appendChild(other);
+    let n = 0;
+    setInterval(() => { if (n++ % 2) focusEnd(); else other.focus(); }, 1500);
+  }
   window.addEventListener("load", focusEnd);
   window.addEventListener("focus", focusEnd);
 </script>

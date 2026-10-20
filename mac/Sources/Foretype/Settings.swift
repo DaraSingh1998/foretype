@@ -99,16 +99,26 @@ final class AppSettings {
     }
 
     /// FORETYPE_ONLY_APPS=bundle.id,other.id restricts suggestions to those apps
-    /// (a safety net for development and automated tests).
+    /// (a safety net for development and automated tests). An entry can also be a pid, to
+    /// allow one process of an app that runs several (a test Chrome next to the user's own).
     var onlyApps: [String] {
         (ProcessInfo.processInfo.environment["FORETYPE_ONLY_APPS"] ?? "")
             .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
+    /// Whether FORETYPE_ONLY_APPS lets Foretype read or prime this app.
+    func onlyAppsAllow(pid: pid_t, bundleId: String) -> Bool {
+        let only = onlyApps
+        return only.isEmpty || only.contains(bundleId) || only.contains(String(pid))
+    }
+
     var coreDict: [String: Any] {
         ["enabled": enabled, "length_words": lengthWords, "instructions": instructions,
          "app_instructions": appInstructions, "disabled_apps": disabledApps, "enabled_apps": enabledApps,
-         "only_apps": onlyApps, "personalize": personalize, "personalize_strength": personalizeStrength]
+         // The core filters by bundle ID and can't express a pid entry; then the tracker, which
+         // never reads an app this list rejects, is the only filter.
+         "only_apps": onlyApps.contains { pid_t($0) != nil } ? [] : onlyApps,
+         "personalize": personalize, "personalize_strength": personalizeStrength]
     }
 
     func coreJSON() -> String {

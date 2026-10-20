@@ -54,7 +54,7 @@ final class Controller {
     func start() -> Bool {
         engine.onEvent = { [weak self] ev in DispatchQueue.main.async { self?.handle(ev) } }
         tracker.primeKind = { [weak self] bundle in self?.engine.compatRule(bundle)["prime"] as? String }
-        tracker.onlyApps = Set(settings.onlyApps)
+        tracker.onlyAppsAllow = { [settings] pid, bundle in settings.onlyAppsAllow(pid: pid, bundleId: bundle) }
         tracker.onSnapshot = { [weak self] snap in self?.arrived(snap) }
         tracker.onFocusChange = { [weak self] snap in self?.engine.warm(snap) }
         screen.enabled = settings.useScreenContext
@@ -116,8 +116,7 @@ final class Controller {
     private func screenContextAllowed(_ s: FieldSnapshot) -> Bool {
         guard !s.secureInput, ["AXTextArea", "AXTextField", "AXComboBox"].contains(s.role),
               s.subrole != "AXSecureTextField", !s.bundleId.isEmpty else { return false }
-        let only = settings.onlyApps
-        if !only.isEmpty, !only.contains(s.bundleId) { return false }
+        if !settings.onlyAppsAllow(pid: s.pid, bundleId: s.bundleId) { return false }
         if settings.disabledApps.contains(s.bundleId) { return false }
         let off = (rule(s.bundleId)["disabled"] as? Bool) ?? false
         return !off || s.force || settings.enabledApps.contains(s.bundleId)

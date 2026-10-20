@@ -318,8 +318,12 @@ empty `text` means hide. The shell must ignore events whose `revision` is not it
   subrole, frame, marked range (`AXTextInputMarkedRange`, only length > 0 counts), window
   title and frame (on focus). `field_key = pid << 32 ^ CFHash(element)`. Primes Chromium
   (`AXEnhancedUserInterface`) and Electron (`AXManualAccessibility`) apps per the compat
-  DB and restores the flags on quit. With `FORETYPE_ONLY_APPS`, other apps' text is never
-  read.
+  DB and restores the flags on quit. Chrome turns on web content only after the flag has
+  stayed set for 2 s (a clear inside that window cancels it), so the flag is set once per
+  process and kept; it is checked again 0.5 s later (Chrome sometimes clears it as it
+  activates) and while the app shows no focused element, and set again only when it reads
+  `false`. With `FORETYPE_ONLY_APPS` (bundle IDs or pids), other apps are never read or
+  primed.
 - **`Caret.swift`**: `CaretResolver` reads both the zero-length `AXBoundsForRange` and the
   previous character's trailing edge, validates each (origin zero, zero or huge height,
   equal to the field frame, outside the field, off-screen, too wide for one character) and

@@ -65,28 +65,28 @@ are kept for if that changes; the core stays portable.
   Obsidian/CodeMirror); WebKit/Chromium text-marker reads; app-by-app insertion testing to
   fill `insertion` overrides; VS Code/Cursor chat panels; Google Docs (needs its
   screen-reader mode); Arc/Dia "Text Metrics" guidance in the UI; the overlay checked by eye
-  in Safari, Chrome, Mail and Notes.
+  in Safari, Mail and Notes.
 - **Personalization**: Cotypist history import; per-app retrieval tuning; logit bias for
   `llama-server` via its `logit_bias` parameter.
 - **Product**: Foundation Models fallback (zero download), localization, a preferences
   window, statistics (words saved), model manager polish (delete models, disk usage).
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
-  DRAM energy (`sudo powermetrics`; GPU energy is measured), why a fresh Chrome exposes no
-  web focus even when primed, the release-day corpus numbers.
+  DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
+  numbers.
 - **Release**: Developer ID certificate, notarization run, Sparkle keys and appcast on
   GitHub Pages, Homebrew tap, first tagged release.
 
 ## Known limitations
 
 - Insertion overrides exist but every app still defaults to keystrokes.
-- Checked by eye on 2026-10-20: ghost-text placement in TextEdit, the setup window, the
-  menu, the Custom Instructions window, live screen capture (development build). Not yet:
-  the overlay in other apps (Safari, Chrome, Mail, Notes), the bundled app's own Screen
-  Recording grant.
-- A Chrome process that no other Accessibility client has touched exposes no focused web
-  element, even after `AXEnhancedUserInterface` is set (`docs/MEASUREMENTS.md`). In daily
-  use another client has usually primed Chrome already; a fresh Chrome may get no
-  suggestions until that is understood.
+- Checked by eye on 2026-10-20: ghost-text placement in TextEdit and in a Chrome textarea
+  (the fixture page), the setup window, the menu, the Custom Instructions window, live
+  screen capture (development build). Not yet: the overlay in Safari, Mail and Notes, the
+  bundled app's own Screen Recording grant.
+- A Chrome process that no Accessibility client has primed shows its web fields 2–3 s
+  after Foretype first sees it in front: Chrome waits 2 s after `AXEnhancedUserInterface`
+  is set before it turns on web content (`docs/MEASUREMENTS.md`). Foretype keeps the flag
+  set until it quits, which some window managers dislike.
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in
   engine (no token healing).
 - Ad-hoc builds lose the Accessibility grant on every update until releases are signed

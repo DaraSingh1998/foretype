@@ -61,8 +61,8 @@ final class FocusTracker {
     var onFocusChange: ((FieldSnapshot) -> Void)?
     /// Returns the compatibility rule's `prime` value for a bundle ID ("chromium" | "electron").
     var primeKind: ((String) -> String?)?
-    /// When non-empty, fields of other apps are never read (FORETYPE_ONLY_APPS).
-    var onlyApps: Set<String> = []
+    /// FORETYPE_ONLY_APPS: apps (pid, bundle ID) it rejects are never read or primed.
+    var onlyAppsAllow: ((pid_t, String) -> Bool)?
 
     /// Text window before the caret, in UTF-16 units; its start moves in aligned steps so
     /// the core's prompt prefix stays byte-stable.
@@ -82,6 +82,8 @@ final class FocusTracker {
     private var fontCache: (key: UInt64, line: Int, font: NSFont?) = (0, -1, nil)
     private var titleCache: (pid: pid_t, title: String, frame: CGRect?) = (0, "", nil)
     private var primed: [pid_t: (manual: Bool?, enhanced: Bool?)] = [:]
+    private var primedAt: [pid_t: CFAbsoluteTime] = [:]
+    private var lastPrimeCheck: CFAbsoluteTime = 0
     private let ownPid = ProcessInfo.processInfo.processIdentifier
 
     func start() {
@@ -171,7 +173,7 @@ final class FocusTracker {
         if pid != observedPid {
             detachObserver()
             attachObserver(pid)
-            primeIfNeeded(pid)
+            if let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier { primeIfNeeded(pid, bundle) }
         }
         read(reason: "focus")
     }
@@ -217,20 +219,39 @@ final class FocusTracker {
     }
 
     /// Chromium and Electron build their accessibility tree lazily; ask for it.
-    private func primeIfNeeded(_ pid: pid_t) {
-        guard let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
-              let kind = primeKind?(bundle) else { return }
+    ///
+    /// Chrome turns on web content 2 s after `AXEnhancedUserInterface` is set, and a set or
+    /// clear inside those 2 s restarts or cancels the wait (a debounce in
+    /// `chrome_browser_application_mac.mm`). So the flag is set once per process and kept
+    /// until quit, and a fresh Chrome shows its focused field about 2 s after activation.
+    /// Nothing else an outside client does (an AXObserver, walking or hit-testing the tree,
+    /// a focus change in the page) turns it on, and setting it returns `notImplemented` even
+    /// when it works. Chrome often clears the flag again just after it activates, so it is
+    /// checked once 0.5 s after each set. It is also checked while the app shows no focused
+    /// element, and set again if it reads false 3 s after our set (the request was lost, say
+    /// while the app was launching, or someone cleared it). A read that times out is no
+    /// reason to set it again.
+    private func primeIfNeeded(_ pid: pid_t, _ bundle: String, after minAge: Double = 3) {
+        guard let kind = primeKind?(bundle), onlyAppsAllow?(pid, bundle) ?? true,
+              kind == "electron" || kind == "chromium" && !NSWorkspace.shared.isVoiceOverEnabled else { return }
+        let attr = kind == "electron" ? "AXManualAccessibility" : "AXEnhancedUserInterface"
         let app = AXUIElementCreateApplication(pid)
+        var value: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(app, attr as CFString, &value)
+        let current = err == .success ? AX.bool(value) : nil
+        if let at = primedAt[pid] {
+            guard current == false, CFAbsoluteTimeGetCurrent() - at > minAge else { return }
+        } else {
+            guard current != true else { return }
+        }
         if primed[pid] == nil {
             primed[pid] = (AX.bool(AX.copy(app, "AXManualAccessibility")), AX.bool(AX.copy(app, "AXEnhancedUserInterface")))
         }
-        if kind == "electron" {
-            AX.set(app, "AXManualAccessibility", kCFBooleanTrue)
-        } else if kind == "chromium", !NSWorkspace.shared.isVoiceOverEnabled,
-                  AX.bool(AX.copy(app, "AXEnhancedUserInterface")) != true {
-            AX.set(app, "AXEnhancedUserInterface", kCFBooleanTrue)
-        }
-        Log.debug("primed \(bundle) as \(kind)")
+        AX.set(app, attr, kCFBooleanTrue)
+        let again = primedAt[pid] != nil
+        primedAt[pid] = CFAbsoluteTimeGetCurrent()
+        Log.debug("primed \(bundle) as \(kind)\(again ? " again (the flag read false)" : "")")
+        if minAge > 1 { perform(afterMs: 500) { self.primeIfNeeded(pid, bundle, after: 0.4) } }
     }
 
     /// Puts the Chromium/Electron flags back as we found them (the enhanced flag disturbs
@@ -244,6 +265,7 @@ final class FocusTracker {
                 if orig.manual != true { AX.set(app, "AXManualAccessibility", kCFBooleanFalse) }
             }
             self.primed.removeAll()
+            self.primedAt.removeAll()
             done.signal()
         }
         _ = done.wait(timeout: .now() + 1)
@@ -273,7 +295,7 @@ final class FocusTracker {
         let running = NSRunningApplication(processIdentifier: pid)
         snap.bundleId = running?.bundleIdentifier ?? ""
         snap.appName = running?.localizedName ?? ""
-        if !onlyApps.isEmpty, !onlyApps.contains(snap.bundleId) {
+        if onlyAppsAllow?(pid, snap.bundleId) == false {
             snap.fieldKey = UInt64(UInt32(bitPattern: pid)) << 32
             return emit(snap, reason: reason)
         }
@@ -282,6 +304,11 @@ final class FocusTracker {
         // through the frontmost pid.
         let app = observedApp ?? AXUIElementCreateApplication(pid)
         guard let el = AX.element(AX.copy(app, kAXFocusedUIElementAttribute)) else {
+            let now = CFAbsoluteTimeGetCurrent()
+            if now - lastPrimeCheck > 1 {
+                lastPrimeCheck = now
+                primeIfNeeded(pid, snap.bundleId)
+            }
             snap.fieldKey = UInt64(UInt32(bitPattern: pid)) << 32
             return emit(snap, reason: reason)
         }
