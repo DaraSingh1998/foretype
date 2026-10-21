@@ -5,6 +5,15 @@ roadmap phase.
 
 ## Unreleased
 
+### Localization (2026-10-21)
+- The app's interface is localizable and translated into Hindi (हिन्दी): the menu-bar
+  menu, every Settings tab, the setup window, Custom Instructions, alerts, the import panel,
+  model download messages, tip cards and the Accessibility permission text. English stays
+  the base language; macOS picks the language.
+- Strings are looked up from the app bundle (`mac/Localization/<lang>.lproj`, copied in by
+  `scripts/build-mac.sh`); counts use `.stringsdict` plurals; numbers and percentages
+  follow the locale. `scripts/check-localization.py` checks the translations.
+
 ### Quality and compatibility backlog (2026-10-20)
 - Emoji: `:name` offers the emoji (1,913 gemoji shortcodes); Tab replaces the shortcode.
 - Autocorrect: a misspelled word just finished gets the macOS spell checker's correction

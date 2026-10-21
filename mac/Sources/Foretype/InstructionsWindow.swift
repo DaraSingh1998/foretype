@@ -12,7 +12,7 @@ final class InstructionsWindowController: NSWindowController, NSWindowDelegate {
         self.appBundle = appBundle
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 430),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Custom Instructions"
+        window.title = L("Custom Instructions")
         super.init(window: window)
         window.delegate = self
 
@@ -37,22 +37,22 @@ final class InstructionsWindowController: NSWindowController, NSWindowDelegate {
             return scroll
         }
 
-        let save = NSButton(title: "Save", target: self, action: #selector(saveClicked))
+        let save = NSButton(title: L("Save"), target: self, action: #selector(saveClicked))
         save.keyEquivalent = "\r"
-        let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelClicked))
+        let cancel = NSButton(title: L("Cancel"), target: self, action: #selector(cancelClicked))
         cancel.keyEquivalent = "\u{1b}"
         let buttons = NSStackView(views: [NSView(), cancel, save])
         buttons.orientation = .horizontal
 
         var rows: [NSView] = [
-            label("For all apps", bold: true),
-            label("Who you are and how you write, for example \u{201C}I'm a product manager. Keep it friendly and short; British spelling.\u{201D}"),
+            label(L("For all apps"), bold: true),
+            label(L("Who you are and how you write, for example \u{201C}I'm a product manager. Keep it friendly and short; British spelling.\u{201D}")),
             editor(globalView, global),
         ]
         if let appName {
             appView.string = appText
-            rows += [label("For \(appName)", bold: true),
-                     label("Added after the note above whenever you type in \(appName)."),
+            rows += [label(L("For %@", appName), bold: true),
+                     label(L("Added after the note above whenever you type in %@.", appName)),
                      editor(appView, appText)]
         }
         rows.append(buttons)

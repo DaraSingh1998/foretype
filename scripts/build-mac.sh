@@ -25,8 +25,18 @@ SCRATCH="$ROOT/mac/.build"
 
 APP="$ROOT/build/Foretype.app"
 rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp "$SCRATCH/release/Foretype" "$APP/Contents/MacOS/Foretype"
+# UI translations (mac/Localization/<lang>.lproj), looked up through Bundle.main. Not a SwiftPM
+# resource bundle: SwiftPM would put Foretype_Foretype.bundle at the app's top level, which
+# code signing rejects.
+for lproj in "$ROOT"/mac/Localization/*.lproj; do
+  ditto "$lproj" "$APP/Contents/Resources/$(basename "$lproj")"
+done
+LANGS=""
+for lproj in "$ROOT"/mac/Localization/*.lproj; do
+  LANGS="$LANGS<string>$(basename "$lproj" .lproj)</string>"
+done
 VERSION="${FORETYPE_VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/core/Cargo.toml" | head -1)}"
 BUILD="${FORETYPE_BUILD:-$(git -C "$ROOT" rev-list --count HEAD 2>/dev/null || echo 1)}"
 
@@ -60,6 +70,8 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDisplayName</key><string>Foretype</string>
   <key>CFBundleExecutable</key><string>Foretype</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>CFBundleLocalizations</key><array>${LANGS}</array>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
   <key>CFBundleVersion</key><string>${BUILD}</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>

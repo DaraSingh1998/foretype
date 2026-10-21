@@ -35,10 +35,11 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     private let statsPane: StatisticsPane
 
     init(host: PreferencesHost) {
-        let model = ModelPane(title: "Model", host: host)
-        let statistics = StatisticsPane(title: "Statistics", host: host)
-        let panes: [PreferencesPane] = [GeneralPane(title: "General", host: host), PersonalizationPane(title: "Personalization", host: host),
-                                        AppsPane(title: "Apps", host: host), model, statistics]
+        let model = ModelPane(title: L("Model"), host: host)
+        let statistics = StatisticsPane(title: L("Statistics"), host: host)
+        let panes: [PreferencesPane] = [GeneralPane(title: L("General"), host: host),
+                                        PersonalizationPane(title: L("Personalization"), host: host),
+                                        AppsPane(title: L("Apps"), host: host), model, statistics]
         let tabs = PreferencesTabController()
         tabs.tabStyle = .toolbar
         tabs.transitionOptions = []
@@ -238,16 +239,16 @@ private final class FlippedView: NSView {
 // MARK: General
 
 final class GeneralPane: PreferencesPane {
-    private let enabled = NSButton(checkboxWithTitle: "Show suggestions as you type", target: nil, action: nil)
+    private let enabled = NSButton(checkboxWithTitle: L("Show suggestions as you type"), target: nil, action: nil)
     private let length = NSPopUpButton()
-    private let sentenceEnd = NSButton(checkboxWithTitle: "Stop at the end of a sentence", target: nil, action: nil)
-    private let screen = NSButton(checkboxWithTitle: "Use text on screen near the field", target: nil, action: nil)
-    private let emoji = NSButton(checkboxWithTitle: "Offer emoji for :shortcodes", target: nil, action: nil)
-    private let autocorrect = NSButton(checkboxWithTitle: "Offer a fix for a misspelled word", target: nil, action: nil)
-    private let typoGate = NSButton(checkboxWithTitle: "Wait while a word looks misspelled", target: nil, action: nil)
-    private let midLine = NSButton(checkboxWithTitle: "Suggest in the middle of a line (experimental)", target: nil, action: nil)
+    private let sentenceEnd = NSButton(checkboxWithTitle: L("Stop at the end of a sentence"), target: nil, action: nil)
+    private let screen = NSButton(checkboxWithTitle: L("Use text on screen near the field"), target: nil, action: nil)
+    private let emoji = NSButton(checkboxWithTitle: L("Offer emoji for :shortcodes"), target: nil, action: nil)
+    private let autocorrect = NSButton(checkboxWithTitle: L("Offer a fix for a misspelled word"), target: nil, action: nil)
+    private let typoGate = NSButton(checkboxWithTitle: L("Wait while a word looks misspelled"), target: nil, action: nil)
+    private let midLine = NSButton(checkboxWithTitle: L("Suggest in the middle of a line (experimental)"), target: nil, action: nil)
     private let screenStatus = NSTextField(labelWithString: "")
-    private let screenAllow = NSButton(title: "Allow Screen Recording\u{2026}", target: nil, action: nil)
+    private let screenAllow = NSButton(title: L("Allow Screen Recording\u{2026}"), target: nil, action: nil)
     private let instructionsSummary = NSTextField(labelWithString: "")
 
     override func build() {
@@ -264,33 +265,33 @@ final class GeneralPane: PreferencesPane {
         screenAllow.action = #selector(allowScreen)
         screenAllow.controlSize = .small
         screenStatus.font = .systemFont(ofSize: 11)
-        let edit = NSButton(title: "Edit\u{2026}", target: self, action: #selector(editInstructions))
+        let edit = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editInstructions))
         instructionsSummary.textColor = .secondaryLabelColor
         instructionsSummary.lineBreakMode = .byTruncatingTail
         instructionsSummary.widthAnchor.constraint(lessThanOrEqualToConstant: 330).isActive = true
 
         let w: CGFloat = 400
         let grid = Self.form([
-            [Self.formLabel("Suggestions:"), enabled],
-            [Self.formLabel("Length:"), length],
+            [Self.formLabel(L("Suggestions:")), enabled],
+            [Self.formLabel(L("Length:")), length],
             [NSGridCell.emptyContentView, sentenceEnd],
-            [NSGridCell.emptyContentView, Self.note("When this is off, a suggestion can run on into the next sentence.", width: w)],
-            [Self.formLabel("Typing aids:"), emoji],
-            [NSGridCell.emptyContentView, Self.note("Type a colon and a name, like :tada, then Tab.", width: w)],
+            [NSGridCell.emptyContentView, Self.note(L("When this is off, a suggestion can run on into the next sentence."), width: w)],
+            [Self.formLabel(L("Typing aids:")), emoji],
+            [NSGridCell.emptyContentView, Self.note(L("Type a colon and a name, like :tada, then Tab."), width: w)],
             [NSGridCell.emptyContentView, autocorrect],
             [NSGridCell.emptyContentView, typoGate],
-            [NSGridCell.emptyContentView, Self.note("Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before.", width: w)],
+            [NSGridCell.emptyContentView, Self.note(L("Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before."), width: w)],
             [NSGridCell.emptyContentView, midLine],
-            [NSGridCell.emptyContentView, Self.note("Up to three words, shown in a small card under the caret.", width: w)],
-            [Self.formLabel("Screen context:"), screen],
-            [NSGridCell.emptyContentView, Self.note("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away.", width: w)],
+            [NSGridCell.emptyContentView, Self.note(L("Up to three words, shown in a small card under the caret."), width: w)],
+            [Self.formLabel(L("Screen context:")), screen],
+            [NSGridCell.emptyContentView, Self.note(L("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away."), width: w)],
             [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow])],
-            [Self.formLabel("Instructions:"), Self.hstack([edit, instructionsSummary])],
-            [NSGridCell.emptyContentView, Self.note("A note about you and how you write, for all apps and for the app you were last in.", width: w)],
+            [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
+            [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
         ])
         add(grid, spacingAfter: 18)
         add(Self.separator())
-        add(Self.note("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes."))
+        add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes.")))
     }
 
     override func refresh() {
@@ -304,13 +305,13 @@ final class GeneralPane: PreferencesPane {
         typoGate.state = s.typoGate ? .on : .off
         midLine.state = s.midLine ? .on : .off
         let allowed = ScreenContextProvider.hasPermission
-        screenStatus.stringValue = allowed ? "\u{2713} Screen Recording allowed" : "Screen Recording not allowed yet"
+        screenStatus.stringValue = allowed ? "\u{2713} " + L("Screen Recording allowed") : L("Screen Recording not allowed yet")
         screenStatus.textColor = allowed ? .systemGreen : .secondaryLabelColor
         screenAllow.isHidden = allowed || !s.useScreenContext
         let global = s.instructions.replacingOccurrences(of: "\n", with: " ")
         let apps = s.appInstructions.count
-        var summary = global.isEmpty ? "No note for all apps" : "\u{201C}\(global)\u{201D}"
-        if apps > 0 { summary += ", notes for \(apps) app\(apps == 1 ? "" : "s")" }
+        var summary = global.isEmpty ? L("No note for all apps") : "\u{201C}\(global)\u{201D}"
+        if apps > 0 { summary += ", " + LCount(apps, "notes for %@ apps", one: "notes for %@ app") }
         instructionsSummary.stringValue = summary
     }
 
@@ -339,10 +340,10 @@ final class GeneralPane: PreferencesPane {
 // MARK: Personalization
 
 final class PersonalizationPane: PreferencesPane {
-    private let learn = NSButton(checkboxWithTitle: "Learn from my writing", target: nil, action: nil)
-    private let strength = NSSegmentedControl(labels: ["Gentle", "Balanced", "Strong"], trackingMode: .selectOne, target: nil, action: nil)
+    private let learn = NSButton(checkboxWithTitle: L("Learn from my writing"), target: nil, action: nil)
+    private let strength = NSSegmentedControl(labels: AppSettings.strengthNames, trackingMode: .selectOne, target: nil, action: nil)
     private let learned = NSTextField(labelWithString: "")
-    private let importButton = NSButton(title: "Import Writing\u{2026}", target: nil, action: nil)
+    private let importButton = NSButton(title: L("Import Writing\u{2026}"), target: nil, action: nil)
 
     override func build() {
         learn.target = self
@@ -350,18 +351,18 @@ final class PersonalizationPane: PreferencesPane {
         strength.target = self
         strength.action = #selector(strengthChanged)
         learned.textColor = .secondaryLabelColor
-        let delete = NSButton(title: "Delete Writing History\u{2026}", target: self, action: #selector(deleteHistory))
+        let delete = NSButton(title: L("Delete Writing History\u{2026}"), target: self, action: #selector(deleteHistory))
         importButton.target = self
         importButton.action = #selector(importWriting)
         let w: CGFloat = 400
         let grid = Self.form([
             [NSGridCell.emptyContentView, learn],
-            [NSGridCell.emptyContentView, Self.note("Off by default. Only fields where you accepted a suggestion are kept, only the text you typed there, at least 20 characters, never secure fields. Stored encrypted on this Mac (key in your Keychain); nothing leaves it.", width: w)],
-            [Self.formLabel("Strength:"), strength],
-            [NSGridCell.emptyContentView, Self.note("How strongly suggestions lean towards words you use often.", width: w)],
-            [Self.formLabel("Learned:"), learned],
+            [NSGridCell.emptyContentView, Self.note(L("Off by default. Only fields where you accepted a suggestion are kept, only the text you typed there, at least 20 characters, never secure fields. Stored encrypted on this Mac (key in your Keychain); nothing leaves it."), width: w)],
+            [Self.formLabel(L("Strength:")), strength],
+            [NSGridCell.emptyContentView, Self.note(L("How strongly suggestions lean towards words you use often."), width: w)],
+            [Self.formLabel(L("Learned:")), learned],
             [NSGridCell.emptyContentView, Self.hstack([importButton, delete])],
-            [NSGridCell.emptyContentView, Self.note("Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words.", width: w)],
+            [NSGridCell.emptyContentView, Self.note(L("Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words."), width: w)],
         ])
         add(grid)
     }
@@ -374,11 +375,11 @@ final class PersonalizationPane: PreferencesPane {
         strength.isEnabled = s.personalize
         importButton.isEnabled = s.personalize
         if !s.personalize {
-            learned.stringValue = "Nothing while this is off"
+            learned.stringValue = L("Nothing while this is off")
         } else if let h = host.historyStats() {
-            learned.stringValue = "\(AppDelegate.count(h.records, "text")), \(AppDelegate.count(h.words, "word"))"
+            learned.stringValue = LCount(h.records, "%@ texts", one: "%@ text") + ", " + LCount(h.words, "%@ words", one: "%@ word")
         } else {
-            learned.stringValue = "Available once Foretype is running"
+            learned.stringValue = L("Available once Foretype is running")
         }
     }
 
@@ -399,11 +400,11 @@ final class PersonalizationPane: PreferencesPane {
 
 final class AppsPane: PreferencesPane {
     private let list = NSStackView()
-    private let empty = PreferencesPane.note("You haven't changed any app yet. To turn Foretype off (or on) in an app, open the Foretype menu while that app is in front and choose \u{201C}Suggest in \u{2026}\u{201D}.")
+    private let empty = PreferencesPane.note(L("You haven't changed any app yet. To turn Foretype off (or on) in an app, open the Foretype menu while that app is in front and choose \u{201C}Suggest in \u{2026}\u{201D}."))
     private let onlyApps = NSTextField(labelWithString: "")
 
     override func build() {
-        add(Self.heading("Apps you changed"))
+        add(Self.heading(L("Apps you changed")))
         list.orientation = .vertical
         list.alignment = .leading
         list.spacing = 0
@@ -427,7 +428,7 @@ final class AppsPane: PreferencesPane {
             scroll.heightAnchor.constraint(equalToConstant: 200),
         ])
         add(scroll)
-        add(Self.note("Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts."))
+        add(Self.note(L("Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts.")))
         onlyApps.font = .systemFont(ofSize: 11)
         onlyApps.textColor = .systemOrange
         add(onlyApps)
@@ -436,7 +437,7 @@ final class AppsPane: PreferencesPane {
     override func refresh() {
         guard let s = host?.settings else { return }
         list.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let rows = s.disabledApps.map { ($0, "Off", true) } + s.enabledApps.map { ($0, "On (off by default)", false) }
+        let rows = s.disabledApps.map { ($0, L("Off"), true) } + s.enabledApps.map { ($0, L("On (off by default)"), false) }
         if rows.isEmpty {
             let pad = NSStackView(views: [empty])
             pad.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
@@ -454,7 +455,7 @@ final class AppsPane: PreferencesPane {
                 sep.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
             }
         }
-        onlyApps.stringValue = s.onlyApps.isEmpty ? "" : "Development: limited to \(s.onlyApps.joined(separator: ", ")) (FORETYPE_ONLY_APPS)"
+        onlyApps.stringValue = s.onlyApps.isEmpty ? "" : L("Development: limited to %@ (FORETYPE_ONLY_APPS)", s.onlyApps.joined(separator: ", "))
         onlyApps.isHidden = s.onlyApps.isEmpty
     }
 
@@ -471,7 +472,7 @@ final class AppsPane: PreferencesPane {
         image.heightAnchor.constraint(equalToConstant: 24).isActive = true
         let title = NSTextField(labelWithString: name)
         // Not installed: the bundle ID is already the title.
-        let id = NSTextField(labelWithString: icon == nil ? "not installed" : bundle)
+        let id = NSTextField(labelWithString: icon == nil ? L("not installed") : bundle)
         id.font = .systemFont(ofSize: 10)
         id.textColor = .tertiaryLabelColor
         let names = NSStackView(views: [title, id])
@@ -480,9 +481,9 @@ final class AppsPane: PreferencesPane {
         names.spacing = 1
         let status = NSTextField(labelWithString: state)
         status.textColor = off ? .secondaryLabelColor : .systemGreen
-        let remove = ActionButton.make("Remove") { [weak self] in self?.remove(bundle, off: off) }
+        let remove = ActionButton.make(L("Remove")) { [weak self] in self?.remove(bundle, off: off) }
         remove.controlSize = .small
-        remove.toolTip = "Return \(name) to its default"
+        remove.toolTip = L("Return %@ to its default", name)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let row = NSStackView(views: [image, names, spacer, status, remove])
@@ -519,34 +520,34 @@ final class ModelPane: PreferencesPane, NSTextFieldDelegate {
         status.textColor = .secondaryLabelColor
         status.lineBreakMode = .byTruncatingMiddle
         status.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        add(Self.hstack([Self.heading("Built-in models"), status]))
+        add(Self.hstack([Self.heading(L("Built-in models")), status]))
         rows.orientation = .vertical
         rows.alignment = .leading
         rows.spacing = 6
         add(rows)
-        let show = NSButton(title: "Show in Finder", target: self, action: #selector(showFolder))
+        let show = NSButton(title: L("Show in Finder"), target: self, action: #selector(showFolder))
         show.controlSize = .small
         usage.textColor = .secondaryLabelColor
         add(Self.hstack([usage, show]), spacingAfter: 16)
         add(Self.separator())
 
-        add(Self.heading("Where suggestions come from"))
+        add(Self.heading(L("Where suggestions come from")))
         backend.addItems(withTitles: AppDelegate.backendTitles)
         backend.target = self
         backend.action = #selector(backendChanged)
         url.placeholderString = "http://127.0.0.1:8080"
-        modelName.placeholderString = "model name (OpenAI-compatible only)"
+        modelName.placeholderString = L("model name (OpenAI-compatible only)")
         for f in [url, modelName, apiKey] as [NSTextField] {
             f.delegate = self
             f.widthAnchor.constraint(equalToConstant: 330).isActive = true
         }
-        let apply = NSButton(title: "Apply", target: self, action: #selector(applyServer))
+        let apply = NSButton(title: L("Apply"), target: self, action: #selector(applyServer))
         let grid = Self.form([
-            [Self.formLabel("Engine:"), backend],
-            [Self.formLabel("Server URL:"), url],
-            [Self.formLabel("Model:"), modelName],
-            [Self.formLabel("API key:"), apiKey],
-            [NSGridCell.emptyContentView, Self.note("A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers (Ollama, LM Studio, a cloud provider) complete words you have started less well, about half the typing saved. The API key is kept in your Keychain.", width: 330)],
+            [Self.formLabel(L("Engine:")), backend],
+            [Self.formLabel(L("Server URL:")), url],
+            [Self.formLabel(L("Model:")), modelName],
+            [Self.formLabel(L("API key:")), apiKey],
+            [NSGridCell.emptyContentView, Self.note(L("A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers (Ollama, LM Studio, a cloud provider) complete words you have started less well, about half the typing saved. The API key is kept in your Keychain."), width: 330)],
             [NSGridCell.emptyContentView, apply],
         ])
         add(grid)
@@ -566,7 +567,7 @@ final class ModelPane: PreferencesPane, NSTextFieldDelegate {
         url.stringValue = s.backendURL
         modelName.stringValue = s.backendModel
         apiKey.stringValue = ""
-        apiKey.placeholderString = s.backendAPIKey.isEmpty ? "optional" : "saved; type to replace"
+        apiKey.placeholderString = s.backendAPIKey.isEmpty ? L("optional") : L("saved; type to replace")
         serverEdited = false
         enableServerFields()
     }
@@ -584,7 +585,7 @@ final class ModelPane: PreferencesPane, NSTextFieldDelegate {
     func refreshRows() -> Bool {
         guard let host else { return false }
         let entries = modelEntries(host)
-        usage.stringValue = "Models folder: \(AppDelegate.bytes(host.models.diskUsage())) on disk"
+        usage.stringValue = L("Models folder: %@ on disk", AppDelegate.bytes(host.models.diskUsage()))
         let keys = entries.map(\.key)
         if keys == rowKeys {
             for (row, e) in zip(rowViews, entries) { row.update(e) }
@@ -608,47 +609,50 @@ final class ModelPane: PreferencesPane, NSTextFieldDelegate {
         var out: [ModelRow.Entry] = []
         for m in models.catalog {
             let path = models.path(m)
-            var e = ModelRow.Entry(key: "m:\(m.id)", title: m.name, badge: m.recommended ? "recommended" : "")
+            var e = ModelRow.Entry(key: "m:\(m.id)", title: m.name, badge: m.recommended ? L("recommended") : "")
             switch models.states[m.id] ?? .notInstalled {
             case .installed:
                 let inUse = host.isModelInUse(path)
                 let bytes = files.first { $0.model == m }?.bytes ?? m.bytes
-                e.detail = "\(AppDelegate.bytes(bytes)) on disk" + (inUse ? " \u{00B7} in use" : "")
+                e.detail = L(inUse ? "%@ on disk \u{00B7} in use" : "%@ on disk", AppDelegate.bytes(bytes))
                 e.inUse = inUse
-                e.primary = inUse ? ("In Use", nil) : ("Use", { [weak host] in host?.useModelFile(path) } as () -> Void)
-                e.secondary = ("Delete\u{2026}", { [weak host] in host?.confirmDeleteModel(path) })
+                e.primary = inUse ? (L("In Use"), nil) : (L("Use"), { [weak host] in host?.useModelFile(path) } as () -> Void)
+                e.secondary = (L("Delete\u{2026}"), { [weak host] in host?.confirmDeleteModel(path) })
             case let .downloading(p):
-                e.detail = String(format: "Downloading %.0f%% of %@", p * 100, m.sizeText)
+                e.detail = L("Downloading %1$@ of %2$@", formatPercent(p), m.sizeText)
                 e.progress = p
-                e.primary = ("Cancel", { models.cancel(m) })
+                e.primary = (L("Cancel"), { models.cancel(m) })
             case let .paused(p):
-                let kept = models.keptBytes(m).map { "\(AppDelegate.bytes($0)) " } ?? ""
-                e.detail = String(format: "Paused at %.0f%% of %@ (%@kept until Foretype quits)", p * 100, m.sizeText, kept)
+                if let kept = models.keptBytes(m) {
+                    e.detail = L("Paused at %1$@ of %2$@ (%3$@ kept until Foretype quits)", formatPercent(p), m.sizeText, AppDelegate.bytes(kept))
+                } else {
+                    e.detail = L("Paused at %1$@ of %2$@ (kept until Foretype quits)", formatPercent(p), m.sizeText)
+                }
                 e.progress = p
-                e.primary = ("Resume", { [weak host] in host?.download(m) })
-                e.secondary = ("Discard", { models.discardPaused(m) })
+                e.primary = (L("Resume"), { [weak host] in host?.download(m) })
+                e.secondary = (L("Discard"), { models.discardPaused(m) })
             case .verifying:
-                e.detail = "Verifying the checksum\u{2026}"
+                e.detail = L("Verifying the checksum\u{2026}")
                 e.progress = -1
             case let .failed(msg):
-                e.detail = "Download failed: \(msg)"
+                e.detail = L("Download failed: %@", msg)
                 e.failed = true
-                e.primary = ("Retry", { [weak host] in host?.download(m) })
+                e.primary = (L("Retry"), { [weak host] in host?.download(m) })
             case .notInstalled:
-                e.detail = "\(m.sizeText) download \u{00B7} \(m.license)"
-                e.primary = ("Download", { [weak host] in host?.download(m) })
+                e.detail = L("%1$@ download \u{00B7} %2$@", m.sizeText, m.license)
+                e.primary = (L("Download"), { [weak host] in host?.download(m) })
             }
             out.append(e)
         }
         for f in files where f.model == nil {
-            var e = ModelRow.Entry(key: "f:\(f.path)", title: f.fileName, badge: f.incomplete ? "incomplete download" : "not in the catalog")
+            var e = ModelRow.Entry(key: "f:\(f.path)", title: f.fileName, badge: f.incomplete ? L("incomplete download") : L("not in the catalog"))
             let inUse = !f.incomplete && host.isModelInUse(f.path)
-            e.detail = "\(AppDelegate.bytes(f.bytes)) on disk" + (inUse ? " \u{00B7} in use" : "")
+            e.detail = L(inUse ? "%@ on disk \u{00B7} in use" : "%@ on disk", AppDelegate.bytes(f.bytes))
             e.inUse = inUse
             if !f.incomplete {
-                e.primary = inUse ? ("In Use", nil) : ("Use", { [weak host] in host?.useModelFile(f.path) } as () -> Void)
+                e.primary = inUse ? (L("In Use"), nil) : (L("Use"), { [weak host] in host?.useModelFile(f.path) } as () -> Void)
             }
-            e.secondary = ("Delete\u{2026}", { [weak host] in host?.confirmDeleteModel(f.path) })
+            e.secondary = (L("Delete\u{2026}"), { [weak host] in host?.confirmDeleteModel(f.path) })
             out.append(e)
         }
         return out
@@ -759,26 +763,27 @@ private final class ModelRow: NSStackView {
 // MARK: Statistics
 
 final class StatisticsPane: PreferencesPane {
-    /// Rows of the table: title and how to read the value from the counts.
-    private static let rowSpecs: [(String, (UsageStats.Counts) -> Int)] = [
-        ("Keystrokes saved", { $0.keystrokesSaved }),
-        ("Words inserted", { $0.words }),
-        ("Characters inserted", { $0.characters }),
-        ("Suggestions accepted", { $0.accepts }),
-        ("    Next word (Tab)", { $0.wordAccepts }),
-        ("    Whole suggestion", { $0.allAccepts }),
-    ]
+    /// Rows of the table: title, whether it is a sub-row (indented, secondary) and how to
+    /// read the value from the counts.
+    private static var rowSpecs: [(String, Bool, (UsageStats.Counts) -> Int)] {
+        [(L("Keystrokes saved"), false, { $0.keystrokesSaved }),
+         (L("Words inserted"), false, { $0.words }),
+         (L("Characters inserted"), false, { $0.characters }),
+         (L("Suggestions accepted"), false, { $0.accepts }),
+         (L("Next word (Tab)"), true, { $0.wordAccepts }),
+         (L("Whole suggestion"), true, { $0.allAccepts })]
+    }
     private var cells: [[NSTextField]] = []
     private let since = NSTextField(labelWithString: "")
 
     override func build() {
-        let header = ["", "Today", "Last 7 days", "All time"].map { t -> NSView in
+        let header = ["", L("Today"), L("Last 7 days"), L("All time")].map { t -> NSView in
             let l = NSTextField(labelWithString: t)
             l.font = .boldSystemFont(ofSize: 12)
             return l
         }
         var grid: [[NSView]] = [header]
-        for (i, (title, _)) in Self.rowSpecs.enumerated() {
+        for (i, (title, sub, _)) in Self.rowSpecs.enumerated() {
             // The first row is the headline number.
             let values = (0..<3).map { _ -> NSTextField in
                 let l = NSTextField(labelWithString: "0")
@@ -787,9 +792,9 @@ final class StatisticsPane: PreferencesPane {
                 return l
             }
             cells.append(values)
-            let t = NSTextField(labelWithString: title)
+            let t = NSTextField(labelWithString: sub ? "    " + title : title)
             if i == 0 { t.font = .boldSystemFont(ofSize: 13) }
-            if title.hasPrefix(" ") { t.textColor = .secondaryLabelColor }
+            if sub { t.textColor = .secondaryLabelColor }
             grid.append([t] + values)
         }
         let g = NSGridView(views: grid)
@@ -805,8 +810,8 @@ final class StatisticsPane: PreferencesPane {
         since.font = .systemFont(ofSize: 11)
         since.textColor = .secondaryLabelColor
         add(since)
-        add(Self.note("Keystrokes saved are the characters Foretype typed for you minus the one key press each accept took. Only these numbers are stored (the last 30 days and the totals), never what you typed or where."), spacingAfter: 16)
-        let reset = NSButton(title: "Reset Statistics\u{2026}", target: self, action: #selector(resetClicked))
+        add(Self.note(L("Keystrokes saved are the characters Foretype typed for you minus the one key press each accept took. Only these numbers are stored (the last 30 days and the totals), never what you typed or where.")), spacingAfter: 16)
+        let reset = NSButton(title: L("Reset Statistics\u{2026}"), target: self, action: #selector(resetClicked))
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         add(Self.hstack([spacer, reset]))
@@ -817,21 +822,21 @@ final class StatisticsPane: PreferencesPane {
         let columns = [stats.today, stats.lastDays(7), stats.total]
         for (r, spec) in Self.rowSpecs.enumerated() {
             for (c, counts) in columns.enumerated() {
-                cells[r][c].stringValue = AppDelegate.number(spec.1(counts))
+                cells[r][c].stringValue = formatNumber(spec.2(counts))
             }
         }
         let f = DateFormatter()
         f.dateStyle = .long
-        since.stringValue = stats.total.accepts == 0 ? "Nothing accepted yet." : "Counting since \(f.string(from: stats.since))."
+        since.stringValue = stats.total.accepts == 0 ? L("Nothing accepted yet.") : L("Counting since %@.", f.string(from: stats.since))
     }
 
     @objc private func resetClicked() {
         let alert = NSAlert()
-        alert.messageText = "Reset the statistics?"
-        alert.informativeText = "Today's, the last 30 days' and the all-time counts go back to zero."
+        alert.messageText = L("Reset the statistics?")
+        alert.informativeText = L("Today's, the last 30 days' and the all-time counts go back to zero.")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Reset")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Reset"))
+        alert.addButton(withTitle: L("Cancel"))
         if alert.runModal() == .alertFirstButtonReturn { host?.stats.reset() }
     }
 }

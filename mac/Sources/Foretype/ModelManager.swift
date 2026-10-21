@@ -209,7 +209,7 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
         let url = URL(fileURLWithPath: p).resolvingSymlinksInPath()
         guard url.deletingLastPathComponent().path == ModelManager.dir.resolvingSymlinksInPath().path,
               p.hasSuffix(".gguf") || p.hasSuffix(".gguf.part") else {
-            throw NSError(domain: "Foretype", code: 2, userInfo: [NSLocalizedDescriptionKey: "Only model files in the Models folder can be deleted here."])
+            throw NSError(domain: "Foretype", code: 2, userInfo: [NSLocalizedDescriptionKey: L("Only model files in the Models folder can be deleted here.")])
         }
         try FileManager.default.removeItem(atPath: p)
         for m in catalog where path(m) == p && states[m.id] == .installed { set(m, .notInstalled) }
@@ -250,7 +250,7 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
                 guard ok else {
                     try? fm.removeItem(at: partial)
                     return self.finish(m, .failure(NSError(domain: "Foretype", code: 1,
-                                                           userInfo: [NSLocalizedDescriptionKey: "Checksum mismatch; the download was discarded."])))
+                                                           userInfo: [NSLocalizedDescriptionKey: L("Checksum mismatch; the download was discarded.")])))
                 }
                 let final = URL(fileURLWithPath: self.path(m))
                 try? fm.removeItem(at: final)
