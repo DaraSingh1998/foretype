@@ -243,6 +243,15 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   overwritten.
 - **Chromium** reports a font size but no font name; Foretype measures the on-screen width
   of the last few characters and picks the matching font family.
+- **Apps without usable caret geometry** (Microsoft Teams; LibreOffice, whose paragraph
+  positions are off although its character positions are right): Foretype finds the caret
+  from pixels, and where the app's character positions turn out to match the screen it uses
+  those from then on. When you pause, it captures the text field a few times (never anything else,
+  no image is kept) and looks for the one thin bar that blinks; while you type it moves the
+  ghost text by the width of what you typed and checks the position after short pauses. This
+  uses the Screen Recording permission and follows the Screen Context switch; until the
+  caret is found in a new field or line (about 0.7 s), the suggestion shows in a small card
+  above the field.
 - **Power**: the model is unloaded after 5 idle minutes (about 1 GB freed) and reloaded on
   the next keystroke; on battery, mid-word suggestions wait 80 ms for the next keystroke.
 
@@ -265,9 +274,11 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   it whenever you run a dev build on a machine you are also working on. An entry can be a
   pid, to allow one process of an app you also use (a test Chrome next to your own).
 - `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly;
-  `Foretype --font-selftest` checks the width-based font matcher and
-  `Foretype --stats-selftest` the statistics counts, day buckets and reset (no permissions
-  needed).
+  `Foretype --font-selftest` checks the width-based font matcher, `Foretype
+  --stats-selftest` the statistics counts, day buckets and reset, and `Foretype
+  --caret-selftest` the pixel caret detectors on rendered text (no permissions needed).
+  `scripts/caret-measure.sh` compares the pixel caret with the Accessibility caret in a test
+  document (TextEdit by default) without typing anything.
   `Foretype --download-selftest MODEL_ID` downloads and verifies one catalog model
   (`FORETYPE_MODEL_BASE_URL` and `FORETYPE_MODELS_DIR` point it at a local server and a
   scratch folder).
@@ -288,6 +299,13 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   and the typo gate in a live app, the mid-line card, the code-editor chat patterns
   (`allow_fields` were written without access to those apps' AX trees), text-marker
   reads, and the Google Docs and Arc hints.
+- The pixel caret (apps without caret geometry) is measured in TextEdit against its
+  Accessibility caret and in LibreOffice Writer; it is untested in Microsoft Teams and
+  Obsidian. A caret that never blinks (the "prefer non-blinking cursor" Accessibility
+  setting) is never found, and a new field or line shows the card above the field for about
+  0.7 s first. LibreOffice Writer reported no focused text element for a document opened
+  from outside (no clicks or typing were possible in the test), so suggestions there are
+  unverified.
 - The setup window, the menu and the Custom Instructions window have been checked by
   screenshot (`ftdrive`, 2026-10-20), not by an automated test; saving instructions and the
   personalization submenu were not exercised. The recorder, history and bias are covered by

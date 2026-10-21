@@ -26,6 +26,8 @@ struct FieldSnapshot {
     var frame: CGRect?
     var windowFrame: CGRect?
     var caret: CaretInfo?
+    /// The previous character's edge when only the field-frame check rejected it (no caret).
+    var edgeOutsideFrame: CGRect?
     var font: NSFont?
     /// OCR of the focused window near the field, filled in by the controller.
     var screenContext = ""
@@ -383,6 +385,7 @@ final class FocusTracker {
 
         snap.frame = AX.frame(el)
         snap.caret = CaretResolver.resolve(el, caret: caret, frame: snap.frame, bundleId: snap.bundleId)
+        if snap.caret == nil { snap.edgeOutsideFrame = CaretResolver.edgeOutsideFrame(el, caret: caret, frame: snap.frame) }
         // Fonts are expensive in Safari (~3.5 ms): read once per field and line.
         let line = Int((snap.caret?.rect.minY ?? 0) / 4)
         if fontCache.key != snap.fieldKey || fontCache.line != line {

@@ -234,11 +234,16 @@ dismissal marker.
 {
   "apps": { "<bundle id>": { "disabled": bool, "agent_prompt_only": bool,
                              "insertion": "keystrokes|paste|paste-long|first-word-then-paste",
-                             "prime": "chromium|electron", "note": "…" } },
+                             "prime": "chromium|electron", "caret": "pixel|ax",
+                             "note": "…" } },
   "prefixes": { "com.jetbrains.": { "disabled": true } },
   "agent_prompt": { "borders": ["│", "┃", "|"], "markers": ["> ", "› ", "▌ "] }
 }
 ```
+
+`caret` is read only by the shell: `pixel` always takes the caret from screen pixels (the
+app's AX geometry is wrong), `ax` never does; unset means AX with the pixel locator as the
+fallback when AX gives nothing.
 
 The longest matching prefix applies when there is no exact entry. An agent prompt line is
 `[whitespace][border][whitespace]marker text`; shell prompts (`$`, `%`, `❯`) don't match.
@@ -343,6 +348,7 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
 | `foretype.ax` | `FocusTracker`: CFRunLoop with AXObserver sources, timers, all AX reads (80 ms global messaging timeout) |
 | `foretype.keys` | `KeyTap`: both event taps; callbacks never block or call Accessibility |
 | `foretype.screen` (queue) | Screen capture completion and Vision OCR |
+| `foretype.caret` (queue) | Pixel caret captures and detection (blocking on ScreenCaptureKit, at typing pauses only) |
 | `foretype.engine` (Rust) | Inference |
 
 ### Components (`mac/Sources/Foretype/`)
@@ -382,13 +388,47 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
   it at line starts. Zero-length lower means a soft wrap. `font()` reads `AXFont`: the
   family wins over a fake name (Word); size-only (Chrome) goes to `FontMatcher`, which picks
   the family whose rendering of the last ≤24 characters matches their on-screen width.
+  The font is scaled when the last ≥ 6 characters are more than 25% wider or narrower on
+  screen than in it (a zoomed document whose app reports the unzoomed size: LibreOffice).
+  When it finds no caret, the controller asks the pixel caret locator (below).
+- **`PixelCaret.swift`**: the pixel caret locator, for fields where `CaretResolver` finds
+  nothing (Teams, LibreOffice) or the app's rule says `"caret": "pixel"`. It captures only
+  the field's rectangle (or the window, for apps whose field frame turned out not to contain
+  the caret) of the app's own window with `SCScreenshotManager` (the pointer and Foretype's
+  overlay are never in it), converts it to bytes and drops the image. Two detectors share a
+  bar finder (column runs of set pixels merged into bars ≤ 3.5 pt wide, ≥ 3× as tall as
+  wide, ≥ 75% filled, clear columns either side):
+  - *blink*: captures every 120 ms for up to 1.3 s and keeps each pixel's colour range;
+    pixels that changed by ≥ 48 form the caret, the only thing that toggles. It must be the
+    one candidate, with little else changed around it (typing during the captures fails
+    this). It learns the caret's look: colour (the extreme farther from the background,
+    from fully covered pixels), width, height.
+  - *verify*: one capture of ±16–80 pt around a predicted x (up to 3, 250 ms apart, to span
+    an off phase), looking for a bar of the learned colour and 85–115% of the learned
+    height; glyph stems are shorter than a line. The nearest one wins.
+  The x is the intensity-weighted centre (median per column, so a neighbouring glyph's ink
+  doesn't pull it), sub-pixel. `PixelCaretProvider` keeps one estimate per field (x, y,
+  height, the caret line's start index and text, the look, a width scale, the field
+  origin). `caret(for:)` (AX thread, every snapshot) returns it advanced by the width change
+  of the line's text before the caret, in the host font (or GhostPanel's fallback font)
+  times the learned width scale; nil on another line or past the field's edge. `note()`
+  schedules work on the `foretype.caret` queue only when typing pauses (a newer snapshot
+  cancels it): blink 0.15 s after focus moves to a new field or 0.5 s after the caret
+  changed line, verify 0.25 s after the text on the same line changed (blink if that
+  fails). A result updates the estimate, learns the width scale from the observed travel
+  (≥ 30 pt, ratio 0.6–1.6) and moves a visible suggestion. If AX had a previous-character
+  rect that only the frame check rejected (`edgeOutsideFrame`), the blink search starts on
+  that line, and a hit within 1.5 pt of it counts as a match; after two in a row
+  `CaretResolver` skips the frame check for that app (LibreOffice), so AX places the caret
+  again with no captures.
 - **`GhostPanel.swift`**: borderless, non-activating, click-through `NSPanel` at
   `.statusBar` level, on all Spaces, excluded from Accessibility. Draws the words that fit
-  before the field's right edge in the host font, gray. Without a caret rect it shows a
-  "mirror card" (⇥ suggestion) above the field. `advance` shifts the ghost after an accept
-  until the host reports the new caret. Mid-line suggestions show as a card just under the
-  caret (inline ghost text would overlap the rest of the line); `showHint` shows a tip card
-  for 8 s without turning on the key tap.
+  before the field's right edge in the host font, gray. Without a caret rect (AX gave none
+  and the pixel locator has no position yet) it shows a "mirror card" (⇥ suggestion) above
+  the field. `advance` shifts the ghost after an accept until the host reports the new
+  caret. Mid-line suggestions show as a card just under the caret (inline ghost text would
+  overlap the rest of the line); `showHint` shows a tip card for 8 s without turning on the
+  key tap.
 - **`KeyTap.swift`**: a permanent listen-only session tap (notices typing) and a consuming
   head-inserted session tap that is enabled only while a suggestion is visible (disabled 50
   ms after it hides, so the last synthetic key drains). Consumes Tab (next word), the key
@@ -402,14 +442,17 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
   meanwhile; only if `NSPasteboard.accessBehavior == .alwaysAllow` (macOS 15.4+).
   `deleteBackward(n)` sends Backspace `n` times (replacements: emoji, autocorrect).
 - **`Controller.swift`**: wires everything. On the AX thread it adds the cached screen text
-  to each snapshot, applies force (per field and line) and snooze, adds the speller's
-  verdicts, shows one-time hints (Google Docs without screen-reader support; Arc and Dia
-  without Text Metrics), submits, and asks the screen provider for a refresh. On the main thread it drops events whose revision is
-  stale, shows or hides the panel, toggles the consuming tap, and performs key actions. If
-  an accept finds no suggestion (it went stale), it gives the key back; a replacement's text
-  is deleted before the insert, and an accept that inserts text is counted in
-  `UsageStats`. The engine can be swapped at runtime (`replaceEngine`) when the model or
-  server changes.
+  to each snapshot, puts in the pixel caret estimate where AX gave no caret (or the rule
+  says `pixel`; only with Screen Recording, screen context on and screen context allowed for
+  the field), applies force (per field and line) and snooze, adds the speller's verdicts,
+  shows one-time hints (Google Docs without screen-reader support; Arc and Dia without Text
+  Metrics), submits, and asks the screen and caret providers for a refresh. On the main
+  thread it drops events whose revision is stale, shows or hides the panel (and moves it
+  when a new pixel position arrives for the same revision), toggles the consuming tap, and
+  performs key actions. If an accept finds no suggestion (it went stale), it gives the key
+  back; a replacement's text is deleted before the insert, and an accept that inserts text
+  is counted in `UsageStats`. The engine can be swapped at runtime (`replaceEngine`) when
+  the model or server changes.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
   every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
   `SCScreenshotManager.captureImage` → Vision `.accurate` OCR → lines grouped into rows,

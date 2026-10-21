@@ -13,6 +13,8 @@ from Mac MVP to Linux"), adjusted as the work went.
 | 5. Windows shell | Deferred: macOS only for now (D22) | |
 | 6. Linux shell | Deferred: macOS only for now (D22) | |
 
+Since Phase 4: the pixel caret locator (D31, `feat/pixel-caret`).
+
 ## What each phase delivered
 
 - **Phase 1**: Rust core (policy gate, session reuse, prompt builder, in-process llama.cpp
@@ -63,8 +65,12 @@ are kept for if that changes; the core stays portable.
   autocorrect and mid-line landed in `feat/quality`.)
 - **Compatibility**: app-by-app insertion testing to fill `insertion` overrides; check the
   VS Code/Cursor/Windsurf chat `allow_fields` patterns and text-marker reads in real apps;
-  the overlay checked by eye in Safari, Mail and Notes. (Chat inputs, Google Docs and
-  Arc/Dia hints and text markers landed in `feat/compat-fallback`.)
+  the overlay checked by eye in Safari, Mail and Notes; the pixel caret locator checked in
+  Teams and Obsidian/CodeMirror (not tested: Teams is the developer's live chat, Obsidian
+  is not installed) and with a non-blinking caret; LibreOffice Writer end to end (it
+  reported no `AXFocusedUIElement` for a document opened from outside; a fallback could
+  take the paragraph `AXTextArea` whose selection is valid). (Chat inputs, Google Docs and
+  Arc/Dia hints, text markers and the pixel caret locator landed.)
 - **Personalization**: per-app retrieval tuning (needs a larger personal corpus than the 12
   self-written documents: tuning on those would fit noise); measure the llama-server
   `logit_bias`. Cotypist's history can't be imported (encrypted, D30); Import Writing…
@@ -92,6 +98,11 @@ are kept for if that changes; the core stays portable.
   after Foretype first sees it in front: Chrome waits 2 s after `AXEnhancedUserInterface`
   is set before it turns on web content (`docs/MEASUREMENTS.md`). Foretype keeps the flag
   set until it quits, which some window managers dislike.
+- Pixel caret (apps without caret geometry): a new field or line shows the mirror card for
+  about 0.7 s, until the caret first blinks off; a caret that never blinks is never found;
+  between checks the ghost follows a font guess (about 1 pt off over a line without the
+  host font); a soft-wrapped line is found again only at the next pause. Measured in
+  TextEdit against its AX caret (`docs/MEASUREMENTS.md`).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in
   engine (no token healing).
 - Ad-hoc builds lose the Accessibility grant on every update until releases are signed

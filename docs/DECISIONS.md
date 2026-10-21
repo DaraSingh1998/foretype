@@ -92,7 +92,7 @@ without it Foretype types instead of leaving the user's clipboard overwritten.
 Phase 0 measured the zero-length `AXBoundsForRange` one line too high in every TextKit app
 (TextEdit, Notes, Stickies, Safari's address bar). Both rects are read; disagreement by a
 line teaches a per-app offset used at line starts. Teams and LibreOffice expose no usable
-geometry (mirror card for now; a pixel locator is on the roadmap).
+geometry; the pixel caret locator (D31) places the ghost text there.
 
 ## D12. Default policy: quiet where Tab matters
 
@@ -262,3 +262,29 @@ user picks.
 **Why.** Cotypist's `cotypist.db` is encrypted (not a SQLite header) with a key in
 Cotypist's own Keychain item; reading it would mean breaking another app's encryption.
 
+## D31. Pixel caret locator as the fallback (2026-10-20)
+
+**Decision.** When `CaretResolver` finds no caret in a text field with text, or the app's
+rule says `"caret": "pixel"`, find the caret from pixels of the app's own window: a blink
+detector (several captures of the field at a typing pause; the caret is the one thin bar
+that toggles) and a verify detector (one capture near the predicted position, a bar of the
+colour and height the blink detector learned). Between captures, advance the last position
+by the rendered width of the text typed on the same line. Only at pauses, never per
+keystroke; only the field's rectangle; images dropped after the search. When AX did report
+a character rect that only the field-frame check rejected, the locator confirms it: two
+matches and that app's rects are used again (LibreOffice: paragraph frames 98 pt off,
+character rects right to 0.5 pt), so the captures stop.
+**Why.** Teams, LibreOffice and Obsidian/CodeMirror give no usable caret geometry
+(D11), so the ghost text could only sit in a mirror card above the field. The blink is the
+one signal that tells a caret from a glyph stem without knowing the font: in TextEdit,
+where AX is right, the blink detector matched the AX caret to 0.00 pt at 12 of 12 positions
+(`docs/MEASUREMENTS.md`). Text-marker APIs (`AXBoundsForTextMarkerRange`) would cover
+Chromium and Electron only, not LibreOffice's own toolkit, and Teams can't be tested on the
+developer Mac.
+**Cost.** Uses the Screen Recording permission, so it follows the Screen Context switch.
+A new field or a new line shows the mirror card until the caret first blinks off (about
+0.7 s; up to 1.3 s). Each pause in such an app costs 1–11 captures of about 45 ms each on a
+background queue. Between checks the ghost text follows the host font, or a guessed font
+times a learned width scale (about 1 pt off over a line). A caret that does not blink (the
+Accessibility "prefer non-blinking cursor" setting, or an app that never blinks) is never
+found: the mirror card stays. Soft-wrapped lines are found again only at the next pause.

@@ -18,6 +18,7 @@ final class Controller {
     let panel = GhostPanel()
     let screen = ScreenContextProvider()
     let speller = Speller()
+    let pixelCaret = PixelCaretProvider()
     let hotkeys = Hotkeys()
     let power = PowerMonitor()
     var onStatus: ((String, String) -> Void)?
@@ -33,6 +34,9 @@ final class Controller {
 
     private let lock = NSLock()
     private var latest = FieldSnapshot()
+    /// Main thread: the suggestion on screen and its field, to move it when the pixel caret
+    /// locator reports a new position.
+    private var shown: (fieldKey: UInt64, text: String)?
 
     init(engine: EngineBridge, settings: AppSettings, stats: UsageStats) {
         _engine = engine
@@ -63,6 +67,7 @@ final class Controller {
         tracker.onFocusChange = { [weak self] snap in self?.engine.warm(snap) }
         screen.enabled = settings.useScreenContext
         screen.onUpdate = { [weak self] fieldKey, text in self?.screenTextArrived(fieldKey, text) }
+        pixelCaret.onUpdate = { [weak self] fieldKey in self?.pixelCaretArrived(fieldKey) }
         keys.onKeyDown = { [weak self] in self?.tracker.keyDown() }
         keys.onAction = { [weak self] action in DispatchQueue.main.async { self?.perform(action) } }
         hotkeys.onAction = { [weak self] action in self?.hotkey(action) }
@@ -101,6 +106,8 @@ final class Controller {
     private func arrived(_ snap: FieldSnapshot) {
         var s = snap
         s.screenContext = screen.text(for: s.fieldKey)
+        let pixel = pixelTarget(s)
+        if let pixel { s.caret = pixelCaret.caret(for: pixel) }
         lock.lock()
         let line = s.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
         if forcedField != 0, forcedField != s.fieldKey || !line.hasPrefix(forcedLine) { forcedField = 0 }
@@ -117,6 +124,51 @@ final class Controller {
         engine.submit(s)
         screen.note(.init(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame),
                     skip: !screenContextAllowed(s))
+        if let pixel { pixelCaret.note(pixel) }
+    }
+
+    /// The pixel caret locator's view of a snapshot, when it should place the ghost text:
+    /// the app's rule says so (`"caret": "pixel"`), or Accessibility gave no caret for a
+    /// field with text. Never for fields where screen context is not allowed, or with
+    /// screen context off (it captures the screen too).
+    private func pixelTarget(_ s: FieldSnapshot) -> PixelCaretProvider.Target? {
+        guard settings.useScreenContext, s.fieldKey & 0xFFFF_FFFF != 0, !s.textBefore.isEmpty,
+              s.selectionLength == 0, s.markedLength == 0, screenContextAllowed(s),
+              ScreenContextProvider.hasPermission else { return nil }
+        // FORETYPE_CARET=pixel|ax overrides the app's rule (testing).
+        let mode = ProcessInfo.processInfo.environment["FORETYPE_CARET"] ?? rule(s.bundleId)["caret"] as? String
+        guard mode != "ax", s.caret == nil || mode == "pixel" else { return nil }
+        let line = s.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+        return .init(fieldKey: s.fieldKey, pid: s.pid, bundleId: s.bundleId, windowFrame: s.windowFrame, fieldFrame: s.frame,
+                     lineStart: s.caretIndex - line.utf16.count, lineText: line, font: s.font,
+                     edgeOutsideFrame: s.edgeOutsideFrame)
+    }
+
+    /// Caret queue: the locator found or corrected the caret; move a visible suggestion.
+    private func pixelCaretArrived(_ fieldKey: UInt64) {
+        lock.lock()
+        let snap = latest
+        lock.unlock()
+        guard snap.fieldKey == fieldKey, let t = pixelTarget(snap) else { return }
+        let caret = pixelCaret.caret(for: t)
+        lock.lock()
+        guard latest.revision == snap.revision else { lock.unlock(); return }
+        latest.caret = caret
+        let updated = latest
+        lock.unlock()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let shown = self.shown, shown.fieldKey == fieldKey, self.panel.isVisible,
+                  self.latestSnapshot.revision == updated.revision else { return }
+            self.panel.show(text: shown.text, caret: updated.caret, frame: self.panelFrame(updated), font: updated.font)
+        }
+    }
+
+    /// The field frame's right edge bounds the ghost text, unless the caret lies left or right
+    /// of the field (a frame reported elsewhere); then the window's does. LibreOffice's
+    /// paragraph frames are about 100 pt too high but horizontally right.
+    private func panelFrame(_ s: FieldSnapshot) -> CGRect? {
+        guard let c = s.caret, let f = s.frame, c.rect.minX < f.minX - 4 || c.rect.minX > f.maxX + 4 else { return s.frame }
+        return s.windowFrame
     }
 
     /// One-time tips (per Mac) for places that need a setting changed before Foretype can
@@ -169,11 +221,12 @@ final class Controller {
                 hide()
             } else {
                 // A replacement shows what Tab turns the typed text into.
-                let shown = replace.isEmpty ? text
+                let display = replace.isEmpty ? text
                     : source == "emoji" ? " \(text) \(label)" : " → \(text.trimmingCharacters(in: .whitespaces))"
                 let midLine = !(snap.textAfter.split(separator: "\n", omittingEmptySubsequences: false).first ?? "")
                     .trimmingCharacters(in: .whitespaces).isEmpty
-                panel.show(text: shown, caret: snap.caret, frame: snap.frame, font: snap.font, midLine: midLine && replace.isEmpty)
+                panel.show(text: display, caret: snap.caret, frame: panelFrame(snap), font: snap.font, midLine: midLine && replace.isEmpty)
+                shown = (snap.fieldKey, display)
                 keys.setSuggestionVisible(panel.isVisible)
             }
             if Log.enabled, source != "pending" {
@@ -188,6 +241,7 @@ final class Controller {
 
     func hide() {
         panel.hide()
+        shown = nil
         keys.setSuggestionVisible(false)
     }
 
@@ -210,6 +264,7 @@ final class Controller {
                 hide()
             } else {
                 panel.advance(inserted: r.insert, remaining: r.remaining)
+                shown = panel.isVisible ? (latestSnapshot.fieldKey, r.remaining) : nil
                 keys.setSuggestionVisible(panel.isVisible)
             }
         case .dismiss:

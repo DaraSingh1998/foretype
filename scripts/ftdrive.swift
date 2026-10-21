@@ -8,6 +8,13 @@
 //        ftdrive front   (prints the frontmost app's bundle ID)
 //        ftdrive front-pid (prints the frontmost app's pid)
 //        ftdrive raise PID (makes that process frontmost through AXFrontmost)
+//        ftdrive title PID (prints the title of that process's focused window)
+//        ftdrive close PID TITLE (presses the close button of its window whose title
+//                                 contains TITLE; an unmodified document closes silently)
+//        ftdrive quit PID (asks that app to quit, as the Dock's Quit does)
+//        ftdrive caret PID TITLE POS (moves the caret through AXSelectedTextRange, only while
+//                                     PID is frontmost with a window titled TITLE in front)
+//        ftdrive frame PID (prints the focused window's frame as x,y,w,h)
 //
 // Accessibility commands for testing an app's own windows without keystrokes (they work
 // for menu-bar apps, which screen-control tools often cannot target):
@@ -100,6 +107,47 @@ case "raise" where args.count == 3:
     guard let pid = pid_t(args[2]) else { exit(2) }
     let r = AXUIElementSetAttributeValue(AXUIElementCreateApplication(pid), kAXFrontmostAttribute as CFString, kCFBooleanTrue)
     exit(r == .success ? 0 : 1)
+case "title" where args.count == 3:
+    guard let pid = pid_t(args[2]) else { exit(2) }
+    let app = AXUIElementCreateApplication(pid)
+    guard let w = axAttr(app, kAXFocusedWindowAttribute), CFGetTypeID(w) == AXUIElementGetTypeID() else { exit(1) }
+    print(axTitle(w as! AXUIElement))
+case "close" where args.count == 4:
+    guard let pid = pid_t(args[2]) else { exit(2) }
+    let app = AXUIElementCreateApplication(pid)
+    let w = (axAttr(app, kAXWindowsAttribute) as? [AXUIElement] ?? []).first { axTitle($0).contains(args[3]) }
+    guard let w, let b = axAttr(w, kAXCloseButtonAttribute), CFGetTypeID(b) == AXUIElementGetTypeID(),
+          AXUIElementPerformAction(b as! AXUIElement, kAXPressAction as CFString) == .success else {
+        FileHandle.standardError.write("no window titled \(args[3])\n".data(using: .utf8)!)
+        exit(1)
+    }
+case "frame" where args.count == 3:
+    // ftdrive frame PID: the focused window's frame as x,y,w,h (for screencapture -R).
+    guard let pid = pid_t(args[2]) else { exit(2) }
+    let app = AXUIElementCreateApplication(pid)
+    guard let w = axAttr(app, kAXFocusedWindowAttribute), CFGetTypeID(w) == AXUIElementGetTypeID(),
+          let p = axAttr(w as! AXUIElement, kAXPositionAttribute), let s = axAttr(w as! AXUIElement, kAXSizeAttribute) else { exit(1) }
+    var pt = CGPoint.zero, sz = CGSize.zero
+    AXValueGetValue(p as! AXValue, .cgPoint, &pt)
+    AXValueGetValue(s as! AXValue, .cgSize, &sz)
+    print("\(Int(pt.x)),\(Int(pt.y)),\(Int(sz.width)),\(Int(sz.height))")
+case "caret" where args.count == 5:
+    // ftdrive caret PID TITLE POS: puts the caret at POS (UTF-16 index) in the focused text
+    // element, only if PID is frontmost with a window titled TITLE in front. No keystrokes.
+    guard let pid = pid_t(args[2]), let pos = Int(args[4]) else { exit(2) }
+    let app = AXUIElementCreateApplication(pid)
+    guard frontPid() == pid, let w = axAttr(app, kAXFocusedWindowAttribute), CFGetTypeID(w) == AXUIElementGetTypeID(),
+          axTitle(w as! AXUIElement).contains(args[3]),
+          let el = axAttr(app, kAXFocusedUIElementAttribute), CFGetTypeID(el) == AXUIElementGetTypeID() else {
+        FileHandle.standardError.write("not frontmost with \(args[3])\n".data(using: .utf8)!)
+        exit(3)
+    }
+    var r = CFRange(location: pos, length: 0)
+    let err = AXUIElementSetAttributeValue(el as! AXUIElement, kAXSelectedTextRangeAttribute as CFString, AXValueCreate(.cfRange, &r)!)
+    exit(err == .success ? 0 : 1)
+case "quit" where args.count == 3:
+    guard let pid = pid_t(args[2]), let app = NSRunningApplication(processIdentifier: pid) else { exit(2) }
+    exit(app.terminate() ? 0 : 1)
 case "type":
     let text = args.count > 2 ? args[2] : ""
     let interval = args.count > 3 ? (Double(args[3]) ?? 120) : 120

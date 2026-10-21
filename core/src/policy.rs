@@ -22,6 +22,11 @@ pub struct AppRule {
     pub insertion: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prime: Option<String>,
+    /// Where the shell finds the caret: `"pixel"` always locates it on screen (the app's
+    /// accessibility geometry is wrong), `"ax"` never does. Unset: accessibility, with the
+    /// pixel locator as the fallback when that gives nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
     /// Fields that stay on in an app that is off by default: case-insensitive substrings
@@ -182,6 +187,24 @@ mod tests {
         assert!(db.rule("com.jetbrains.intellij").disabled);
         assert!(!db.rule("com.apple.TextEdit").disabled);
         assert_eq!(db.rule("com.google.Chrome").prime.as_deref(), Some("chromium"));
+    }
+
+    #[test]
+    fn caret_rule() {
+        // Apps without AX geometry (Teams) or with rects the pixel caret confirms (LibreOffice)
+        // need no rule: the pixel caret is the fallback.
+        let db = CompatDb::bundled();
+        assert_eq!(db.rule("org.libreoffice.script").caret, None);
+        assert_eq!(db.rule("com.microsoft.teams2").caret, None);
+        let db: CompatDb = serde_json::from_str(r#"{"apps": {"a.b": {"caret": "pixel"}, "c.d": {"caret": "ax"}}}"#).unwrap();
+        assert_eq!(db.rule("a.b").caret.as_deref(), Some("pixel"));
+        assert_eq!(db.rule("c.d").caret.as_deref(), Some("ax"));
+        // The shell reads the rule as JSON: the key appears only when set.
+        let json = serde_json::to_string(&db.rule("a.b")).unwrap();
+        assert!(json.contains("\"caret\":\"pixel\""), "{json}");
+        assert!(!serde_json::to_string(&db.rule("x.y")).unwrap().contains("\"caret\":"));
+        let r: AppRule = serde_json::from_str(r#"{"disabled": true}"#).unwrap();
+        assert!(r.disabled && r.caret.is_none());
     }
 
     #[test]
