@@ -22,6 +22,8 @@ protocol PreferencesHost: AnyObject {
     func applyServer(backend: String, url: String, model: String, apiKey: String?)
     /// Adds text files the user picks to the writing history.
     func importWriting()
+    /// Picks an application and flips its default (off, or on where it is off by default).
+    func addAppException()
 }
 
 /// The Settings window (menu: Settings…, Cmd-,): everything in the menu-bar menu plus the
@@ -400,7 +402,7 @@ final class PersonalizationPane: PreferencesPane {
 
 final class AppsPane: PreferencesPane {
     private let list = NSStackView()
-    private let empty = PreferencesPane.note(L("You haven't changed any app yet. To turn Foretype off (or on) in an app, open the Foretype menu while that app is in front and choose \u{201C}Suggest in \u{2026}\u{201D}."))
+    private let empty = PreferencesPane.note(L("You haven't changed any app yet. Add an app below, or choose \u{201C}Suggest in \u{2026}\u{201D} in the Foretype menu while that app is in front."))
     private let onlyApps = NSTextField(labelWithString: "")
 
     override func build() {
@@ -428,6 +430,7 @@ final class AppsPane: PreferencesPane {
             scroll.heightAnchor.constraint(equalToConstant: 200),
         ])
         add(scroll)
+        add(Self.hstack([ActionButton.make(L("Add an App\u{2026}")) { [weak self] in self?.host?.addAppException() }]))
         add(Self.note(L("Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts.")))
         onlyApps.font = .systemFont(ofSize: 11)
         onlyApps.textColor = .systemOrange

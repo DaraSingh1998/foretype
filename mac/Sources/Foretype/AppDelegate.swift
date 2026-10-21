@@ -422,6 +422,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         settingsChanged()
     }
 
+    func addAppException() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.message = L("Choose an app to change: Foretype turns off there, or on where it is off by default.")
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        guard panel.runModal() == .OK, let url = panel.url,
+              let bundle = Bundle(url: url)?.bundleIdentifier, bundle != Bundle.main.bundleIdentifier else { return }
+        let offByDefault = (controller?.engine.compatRule(bundle)["disabled"] as? Bool) ?? false
+        if offByDefault {
+            if !settings.enabledApps.contains(bundle) { settings.enabledApps.append(bundle) }
+        } else if !settings.disabledApps.contains(bundle) {
+            settings.disabledApps.append(bundle)
+        }
+        settingsChanged()
+    }
+
     @objc private func toggleApp(_ sender: NSMenuItem) {
         guard let info = sender.representedObject as? [Any], let bundle = info[0] as? String,
               let offByDefault = info[1] as? Bool else { return }

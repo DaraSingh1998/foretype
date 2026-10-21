@@ -189,7 +189,9 @@
 
 /* Settings ▸ Apps */
 "Apps you changed" = "आपके बदले हुए ऐप्स";
-"You haven't changed any app yet. To turn Foretype off (or on) in an app, open the Foretype menu while that app is in front and choose “Suggest in …”." = "आपने अभी तक किसी ऐप की सेटिंग नहीं बदली है। किसी ऐप में Foretype बंद (या चालू) करने के लिए, वह ऐप सामने रहते हुए Foretype मेनू खोलें और “… में सुझाव दें” चुनें।";
+"You haven't changed any app yet. Add an app below, or choose “Suggest in …” in the Foretype menu while that app is in front." = "आपने अभी तक किसी ऐप की सेटिंग नहीं बदली है। नीचे से कोई ऐप जोड़ें, या वह ऐप सामने रहते हुए Foretype मेनू में “… में सुझाव दें” चुनें।";
+"Add an App…" = "ऐप जोड़ें…";
+"Choose an app to change: Foretype turns off there, or on where it is off by default." = "बदलने के लिए कोई ऐप चुनें: वहाँ Foretype बंद हो जाएगा, या जहाँ वह डिफ़ॉल्ट रूप से बंद है वहाँ चालू।";
 "Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts." = "“हटाएँ” किसी ऐप को उसकी डिफ़ॉल्ट सेटिंग पर लौटा देता है। कोड एडिटर, पासवर्ड मैनेजर, रिमोट डेस्कटॉप और स्प्रेडशीट डिफ़ॉल्ट रूप से बंद हैं; टर्मिनल केवल AI-एजेंट प्रॉम्प्ट पर सुझाव देते हैं।";
 "On (off by default)" = "चालू (डिफ़ॉल्ट रूप से बंद)";
 "not installed" = "इंस्टॉल नहीं है";
