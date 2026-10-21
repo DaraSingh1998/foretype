@@ -54,7 +54,9 @@ suggestion() {
 }
 
 echo "=== raise" >>"$LOG"
-"$DRIVE" raise "$CH" || { echo "could not raise the test Chrome"; exit 1; }
+# A fresh profile can take a few seconds to open its window: retry the raise.
+for _ in $(seq 20); do "$DRIVE" raise "$CH" && [ "$("$DRIVE" front-pid)" = "$CH" ] && break; sleep 0.5; done
+[ "$("$DRIVE" front-pid)" = "$CH" ] || { echo "could not raise the test Chrome"; exit 1; }
 status=0
 if suggestion 10 1; then
   # A region, not the window alone, so the overlay panel shows too.

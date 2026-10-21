@@ -540,15 +540,17 @@ impl Core {
             if !snap.force && session.is_dismissed(snap.field_key, &snap.text_before) {
                 return self.emit_suggestion(rev, String::new(), "dismissed", None);
             }
-            if let Some(rest) = session.type_through(snap.field_key, &snap.text_before) {
-                drop(session);
-                return self.emit_suggestion(rev, rest, "typeThrough", None);
-            }
             drop(session);
+            // Before type-through: a model that continues a misspelling ("recie" → "ve the")
+            // must not carry the user past the typo gate and autocorrect.
             if let Some(handled) = self.typing_aids(&snap, &settings) {
                 return handled;
             }
             let mut session = self.shared.session.lock().unwrap();
+            if let Some(rest) = session.type_through(snap.field_key, &snap.text_before) {
+                drop(session);
+                return self.emit_suggestion(rev, rest, "typeThrough", None);
+            }
             let hit = if line_suffix(&snap).is_empty() { session.cached(snap.field_key, &snap.text_before) } else { None };
             if let Some(hit) = hit {
                 session.set(snap.field_key, &snap.text_before, &hit);
@@ -1090,6 +1092,24 @@ mod tests {
         c.configure(Settings { autocorrect: false, ..Settings::default() });
         c.submit(fix(7, "I will recieve ", "recieve", "receive"));
         assert_ne!(suggestion_for(&rx, 7).1, "autocorrect", "turned off");
+    }
+
+    #[test]
+    fn typing_aids_come_before_type_through() {
+        let (c, rx) = core_with_events();
+        // A suggestion that continues a misspelling is showing...
+        c.shared.session.lock().unwrap().set(1, "I will rec", "ieve the notes");
+        // ...the user types through it to the end of the word and a space.
+        c.submit(Snapshot {
+            revision: 1,
+            spell_word: "recieve".into(),
+            spell_correction: "receive".into(),
+            ..snap(1, "I will recieve ")
+        });
+        assert_eq!(suggestion_for(&rx, 1).1, "autocorrect");
+        c.shared.session.lock().unwrap().set(1, "I will rec", "ieve the notes");
+        c.submit(Snapshot { revision: 2, spell_fragment: "typo".into(), ..snap(1, "I will recie") });
+        assert_eq!(suggestion_for(&rx, 2).3.as_deref(), Some("typo"));
     }
 
     #[test]

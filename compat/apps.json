@@ -34,8 +34,9 @@
     "com.microsoft.VSCode": {
       "disabled": true,
       "prime": "electron",
-      "note": "Code editor; main buffer off by default. Chat inputs on (allow_fields; patterns unverified).",
+      "note": "Code editor; main buffer off by default. Chat inputs on (allow_fields; \"Message input\" checked in VS Code on 2026-10-21).",
       "allow_fields": [
+        "message input",
         "chat",
         "copilot"
       ]
@@ -45,6 +46,7 @@
       "prime": "electron",
       "note": "Cursor; code editor. Chat/composer inputs on (allow_fields; patterns unverified).",
       "allow_fields": [
+        "message input",
         "chat",
         "composer",
         "agent"
@@ -55,6 +57,7 @@
       "prime": "electron",
       "note": "Windsurf; code editor. Cascade/chat inputs on (allow_fields; patterns unverified).",
       "allow_fields": [
+        "message input",
         "cascade",
         "chat"
       ]

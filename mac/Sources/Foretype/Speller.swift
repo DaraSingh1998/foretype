@@ -2,9 +2,11 @@ import AppKit
 
 /// Asks the system spell checker about what is being typed, for the core's typo gate and
 /// autocorrect. Runs on the AX thread (NSSpellChecker answers off the main thread in well
-/// under a millisecond once warm). The language is left to the checker, so it follows the
-/// user's preferred languages (British spellings pass for en_GB/en_IN) and knows the words
-/// they taught it with Learn Spelling.
+/// under a millisecond once warm). It checks in the checker's current language (the one
+/// chosen in System Settings, or its automatic pick), so British spellings pass for en_GB
+/// and en_IN, and it knows the words the user taught it with Learn Spelling. Passing no
+/// language instead accepts a word valid in *any* of the user's languages: with many of them
+/// installed, typos such as "recie" passed as words.
 final class Speller {
     private let checker = NSSpellChecker.shared
     private let tag = NSSpellChecker.uniqueSpellDocumentTag()
@@ -22,7 +24,7 @@ final class Speller {
     }
 
     private func misspelled(_ word: String) -> Bool {
-        let r = checker.checkSpelling(of: word, startingAt: 0, language: nil, wrap: false,
+        let r = checker.checkSpelling(of: word, startingAt: 0, language: checker.language(), wrap: false,
                                       inSpellDocumentWithTag: tag, wordCount: nil)
         return r.location != NSNotFound
     }
@@ -51,7 +53,7 @@ final class Speller {
             v = "word"
         } else {
             let range = NSRange(location: 0, length: (fragment as NSString).length)
-            let more = checker.completions(forPartialWordRange: range, in: fragment, language: nil,
+            let more = checker.completions(forPartialWordRange: range, in: fragment, language: checker.language(),
                                            inSpellDocumentWithTag: tag) ?? []
             v = more.isEmpty ? "typo" : "prefix"
         }

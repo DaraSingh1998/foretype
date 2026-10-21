@@ -24,7 +24,9 @@ echo "waiting for ${IDLE}s of user inactivity..."
 until [ "$(idle)" -ge "$IDLE" ]; do sleep 2; done
 
 defaults write Foretype midLine -bool true
-FORETYPE_DEBUG=1 FORETYPE_ONLY_APPS=com.apple.TextEdit "$BIN" >"$LOG" 2>&1 &
+: >"$LOG"
+# Append mode: the step markers below go into the same file without being overwritten.
+FORETYPE_DEBUG=1 FORETYPE_ONLY_APPS=com.apple.TextEdit "$BIN" >>"$LOG" 2>&1 &
 FT=$!
 cleanup() {
   osascript -e 'tell application "TextEdit" to if (count of documents) > 0 then close document 1 saving no' >/dev/null 2>&1
@@ -69,7 +71,9 @@ front; "$DRIVE" type " I will recieve " 110 || exit 3
 sleep 1.2; shot 2-autocorrect
 front; "$DRIVE" key tab; sleep 0.8
 check "correction suggested" 'since "2 autocorrect" | grep -q " autocorrect "'
-check "Tab replaced recieve" 'doc | grep -q "I will receive" && ! doc | grep -q recieve'
+# TextEdit corrects spelling itself as the space is typed, so the word may already be fixed
+# by the time Tab arrives; Foretype's own replace-on-Tab is checked in a browser field.
+check "word ends up corrected" 'doc | grep -q "I will receive" && ! doc | grep -q recieve'
 
 mark "3 typo gate"
 front; "$DRIVE" type " zqxwv" 110 || exit 3

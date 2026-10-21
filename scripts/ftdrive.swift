@@ -15,6 +15,7 @@
 //        ftdrive caret PID TITLE POS (moves the caret through AXSelectedTextRange, only while
 //                                     PID is frontmost with a window titled TITLE in front)
 //        ftdrive frame PID (prints the focused window's frame as x,y,w,h)
+//        ftdrive value PID (prints the focused text element's value; for test documents only)
 //
 // Accessibility commands for testing an app's own windows without keystrokes (they work
 // for menu-bar apps, which screen-control tools often cannot target):
@@ -145,6 +146,13 @@ case "caret" where args.count == 5:
     var r = CFRange(location: pos, length: 0)
     let err = AXUIElementSetAttributeValue(el as! AXUIElement, kAXSelectedTextRangeAttribute as CFString, AXValueCreate(.cfRange, &r)!)
     exit(err == .success ? 0 : 1)
+case "value" where args.count == 3:
+    // The focused text element's AXValue in PID (a test document or test browser profile).
+    guard let pid = pid_t(args[2]) else { exit(2) }
+    let app = AXUIElementCreateApplication(pid)
+    guard let el = axAttr(app, kAXFocusedUIElementAttribute), CFGetTypeID(el) == AXUIElementGetTypeID(),
+          let v = axAttr(el as! AXUIElement, kAXValueAttribute) as? String else { exit(1) }
+    print(v)
 case "quit" where args.count == 3:
     guard let pid = pid_t(args[2]), let app = NSRunningApplication(processIdentifier: pid) else { exit(2) }
     exit(app.terminate() ? 0 : 1)

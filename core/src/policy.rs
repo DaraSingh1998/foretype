@@ -245,7 +245,7 @@ mod tests {
         s.bundle_id = "com.microsoft.VSCode".into();
         s.description = "Editor content;Press Alt+F1 for Accessibility Options.".into();
         assert_eq!(evaluate(&s, &db, &none, &none, false), Some("appDisabledByDefault"), "the code editor stays off");
-        s.description = "Chat Input".into();
+        s.description = "Message input".into(); // VS Code's chat input, as read on 2026-10-21
         assert_eq!(evaluate(&s, &db, &none, &none, false), None, "its chat input is on");
         let mut s = snap("Last login: Mon\n$ ls -la");
         s.bundle_id = "com.apple.Terminal".into();
