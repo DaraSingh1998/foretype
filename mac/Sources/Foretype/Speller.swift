@@ -16,7 +16,30 @@ final class Speller {
 
     init() {
         // The first query loads the dictionaries (about 10 ms); do it before typing starts.
-        DispatchQueue.global(qos: .utility).async { [self] in _ = misspelled("warm") }
+        DispatchQueue.global(qos: .utility).async { [self] in
+            _ = misspelled("warm")
+            _ = Speller.wordList
+        }
+    }
+
+    /// A second opinion on "can this still become a word": the checker's completion list
+    /// misses real words (en_IN had nothing for "vom…"), so a fragment is a typo only when no
+    /// word in /usr/share/dict/words (235,976, lowercased and sorted, about 5 MB) starts with
+    /// it either.
+    private static let wordList: [String] = {
+        guard let s = try? String(contentsOfFile: "/usr/share/dict/words", encoding: .utf8) else { return [] }
+        return Array(Set(s.split(separator: "\n").map { $0.lowercased() })).sorted()
+    }()
+
+    private static func wordListHasPrefix(_ fragment: String) -> Bool {
+        let words = wordList
+        let key = fragment.lowercased()
+        var lo = 0, hi = words.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if words[mid] < key { lo = mid + 1 } else { hi = mid }
+        }
+        return lo < words.count && words[lo].hasPrefix(key)
     }
 
     private static func isWordChar(_ c: Character) -> Bool {
@@ -55,7 +78,7 @@ final class Speller {
             let range = NSRange(location: 0, length: (fragment as NSString).length)
             let more = checker.completions(forPartialWordRange: range, in: fragment, language: checker.language(),
                                            inSpellDocumentWithTag: tag) ?? []
-            v = more.isEmpty ? "typo" : "prefix"
+            v = more.isEmpty && !Speller.wordListHasPrefix(fragment) ? "typo" : "prefix"
         }
         if fragments.count > 2000 { fragments.removeAll() }
         fragments[fragment] = v
