@@ -58,8 +58,9 @@ are kept for if that changes; the core stays portable.
 
 ## Backlog (any phase)
 
-- **Models**: a purpose-tuned small completion model; MLX as an experiment. (KV snapshots
-  for Gemma 4 and Qwen3.5 landed in `phase3/kv-snapshots`.)
+- **Models**: a purpose-tuned small completion model (deferred by the user on 2026-10-20: it
+  needs a better training set than oasst1 to be worth GPU hours). (KV snapshots for Gemma 4
+  and Qwen3.5 landed in `phase3/kv-snapshots`; MLX was measured and isn't faster, D32.)
 - **Quality**: a model trained for fill-in-the-middle, so mid-line can use the rest of the
   line (Qwen3's FIM tokens don't work on prose). (Beam search, the typo gate, emoji,
   autocorrect and mid-line landed in `feat/quality`.)

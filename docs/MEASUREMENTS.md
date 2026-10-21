@@ -326,6 +326,22 @@ first).
 agreement than the" → "previous discussion suggested."). Not replayed on the corpus: the
 replay tool is Rust and this backend lives in the Swift shell.
 
+### MLX against llama.cpp (experiment)
+
+MLX 0.32.4 / mlx-lm 0.32.2 with `Qwen/Qwen3-1.7B-MLX-4bit` (the instruct model: no MLX
+build of the base exists, and speed doesn't depend on it), against llama.cpp
+(`llama-bench`, Homebrew 0.7.0) with Qwen3-1.7B-Base Q4_K_M, same day, same Mac. The MLX
+keystroke loop (scratch script; 100 keystrokes of the email fixture, prefix-cache trim and
+reuse like the engine, 8 greedy tokens, Python loop) is roughly what the engine does.
+
+| | MLX 4-bit | llama.cpp Q4_K_M |
+|---|---:|---:|
+| Prompt, 512 tokens | 1,131 tok/s | 1,282 tok/s |
+| Decode, 128 tokens | 98.1 tok/s | 93.7 tok/s |
+| Keystroke loop, 8-token suggestion | p50 86 / p90 89 ms, 1-token prefill | engine: p50 70–77 ms for 4 words |
+
+No reason to switch (D32).
+
 ### llama-server vocabulary bias
 
 `logit_bias` for the user's single-token words (one `/tokenize` call per profile).

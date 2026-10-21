@@ -288,3 +288,12 @@ background queue. Between checks the ghost text follows the host font, or a gues
 times a learned width scale (about 1 pt off over a line). A caret that does not blink (the
 Accessibility "prefer non-blinking cursor" setting, or an app that never blinks) is never
 found: the mirror card stays. Soft-wrapped lines are found again only at the next pause.
+
+## D32. Stay on llama.cpp after an MLX comparison (2026-10-21)
+
+**Decision.** Keep the in-process llama.cpp engine (D4); MLX stays an experiment.
+**Why.** On the same Mac and model size MLX decoded 5% faster and prefilled 12% slower
+(`docs/MEASUREMENTS.md`), and its keystroke loop was no faster than the engine's. Switching
+would trade the portable Rust core, GGUF models and the KV rollback work (D21) for an
+Apple-only runtime with no measurable gain.
+
