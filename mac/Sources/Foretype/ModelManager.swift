@@ -26,7 +26,7 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
     enum State: Equatable {
         case notInstalled
         case downloading(Double)
-        /// Cancelled with resume data kept (in memory: a relaunch starts over).
+        /// Cancelled with resume data kept (across relaunches too: see `saveForRelaunch`).
         case paused(Double)
         case verifying
         case installed
@@ -75,6 +75,7 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
         super.init()
         session = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue.main)
         for m in catalog { states[m.id] = isInstalled(m) ? .installed : .notInstalled }
+        restorePaused()
     }
 
     var recommended: ModelInfo? { catalog.first { $0.recommended } ?? catalog.first }
@@ -131,17 +132,77 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
         if let data = resumeData.removeValue(forKey: m.id), let tmp = ModelManager.resumeTempFile(data) {
             try? FileManager.default.removeItem(at: tmp)
         }
+        forgetSaved(m.id)
         progress[m.id] = nil
         if case .paused = states[m.id] ?? .notInstalled { set(m, .notInstalled) }
     }
 
-    /// At quit: resume data lives in memory only, so the partial downloads it points to
-    /// would otherwise stay in the temporary folder until macOS cleans it.
-    func discardAllResumeData() {
-        for data in resumeData.values {
-            if let tmp = ModelManager.resumeTempFile(data) { try? FileManager.default.removeItem(at: tmp) }
+    /// Paused downloads kept for the next launch: URLSession's resume data and the partial
+    /// file it names, moved out of the temporary folder (which macOS empties at restart).
+    static var resumeDir: URL { dir.appendingPathComponent(".resume", isDirectory: true) }
+
+    /// At quit: pauses running downloads (waiting up to 2 s for URLSession to hand over
+    /// their resume data) and keeps every paused one for the next launch.
+    func saveForRelaunch() {
+        var pending = tasks.count
+        for (id, task) in tasks {
+            task.cancel { [weak self] data in
+                DispatchQueue.main.async {
+                    if let data { self?.resumeData[id] = data }
+                    pending -= 1
+                }
+            }
         }
+        let deadline = Date().addingTimeInterval(2)
+        while pending > 0, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        tasks.removeAll()
+        for (id, data) in resumeData { persist(id, data) }
         resumeData.removeAll()
+    }
+
+    private func persist(_ id: String, _ data: Data) {
+        let fm = FileManager.default
+        guard let tmp = ModelManager.resumeTempFile(data), fm.fileExists(atPath: tmp.path) else { return }
+        try? fm.createDirectory(at: ModelManager.resumeDir, withIntermediateDirectories: true)
+        let saved = ModelManager.resumeDir.appendingPathComponent(id + ".partial")
+        try? fm.removeItem(at: saved)
+        do {
+            try fm.moveItem(at: tmp, to: saved)
+            try data.write(to: ModelManager.resumeDir.appendingPathComponent(id + ".resume"))
+        } catch {
+            forgetSaved(id)
+        }
+    }
+
+    /// At launch: downloads paused in an earlier run come back paused, ready to resume.
+    private func restorePaused() {
+        let fm = FileManager.default
+        for m in catalog where states[m.id] == .notInstalled {
+            let saved = ModelManager.resumeDir.appendingPathComponent(m.id + ".partial")
+            guard let data = try? Data(contentsOf: ModelManager.resumeDir.appendingPathComponent(m.id + ".resume")) else { continue }
+            guard let tmp = ModelManager.resumeTempFile(data), fm.fileExists(atPath: saved.path) else {
+                forgetSaved(m.id)
+                continue
+            }
+            try? fm.removeItem(at: tmp)
+            guard (try? fm.moveItem(at: saved, to: tmp)) != nil else {
+                forgetSaved(m.id)
+                continue
+            }
+            try? fm.removeItem(at: ModelManager.resumeDir.appendingPathComponent(m.id + ".resume"))
+            resumeData[m.id] = data
+            let kept = (try? fm.attributesOfItem(atPath: tmp.path)[.size] as? NSNumber)?.doubleValue ?? 0
+            progress[m.id] = min(kept / Double(max(m.bytes, 1)), 1)
+            states[m.id] = .paused(progress[m.id] ?? 0)
+        }
+    }
+
+    private func forgetSaved(_ id: String) {
+        for ext in [".partial", ".resume"] {
+            try? FileManager.default.removeItem(at: ModelManager.resumeDir.appendingPathComponent(id + ext))
+        }
     }
 
     /// Bytes a paused (or failed, resumable) download has kept, when known.
@@ -278,6 +339,7 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
         case .success:
             resumeData[m.id] = nil
             progress[m.id] = nil
+            forgetSaved(m.id)
             set(m, .installed)
         case let .failure(e):
             set(m, .failed(e.localizedDescription))
@@ -316,6 +378,55 @@ final class ModelManager: NSObject, URLSessionDownloadDelegate {
             print("failed: \(e.localizedDescription); partial file left: \(FileManager.default.fileExists(atPath: mgr.path(m) + ".part"))")
             return false
         }
+    }
+
+    /// `Foretype --resume-selftest MODEL_ID`: starts a download, pauses it past 20%, saves it
+    /// as a quit would, then a fresh manager (as after a relaunch) must show it paused with
+    /// the bytes kept and finish it with a verified checksum. Point FORETYPE_MODEL_BASE_URL at
+    /// a local server that supports Range requests and is slow enough to pause mid-way, and
+    /// FORETYPE_MODELS_DIR at a scratch folder.
+    static func resumeSelfTest(id: String) -> Bool {
+        let first = ModelManager()
+        guard let m = first.catalog.first(where: { $0.id == id }) else {
+            print("unknown model \(id)")
+            return false
+        }
+        var paused = false
+        first.onChange = { _, state in
+            if case let .downloading(p) = state, p > 0.2, !paused {
+                paused = true
+                first.cancel(m)
+            }
+        }
+        first.download(m)
+        let deadline = Date().addingTimeInterval(120)
+        while !(first.states[m.id].map { if case .paused = $0 { return true } else { return false } } ?? false), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        guard case let .paused(p) = first.states[m.id] ?? .notInstalled else {
+            print("never paused (the server must support Range and be slower than the pause)")
+            return false
+        }
+        print(String(format: "paused at %.0f%%", p * 100))
+        first.saveForRelaunch()
+        let second = ModelManager()
+        guard case let .paused(q) = second.states[m.id] ?? .notInstalled, q > 0.1 else {
+            print("after relaunch: not paused (\(String(describing: second.states[m.id])))")
+            return false
+        }
+        print(String(format: "after relaunch: paused with %.0f%% kept", q * 100))
+        var result: Result<String, Error>?
+        second.download(m) { result = $0 }
+        while result == nil {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        if case let .failure(e) = result! {
+            print("resume failed: \(e.localizedDescription)")
+            return false
+        }
+        let leftovers = (try? FileManager.default.contentsOfDirectory(atPath: resumeDir.path)) ?? []
+        print("resumed and verified; installed=\(second.isInstalled(m) ? "yes" : "no"); saved files left: \(leftovers.count)")
+        return second.isInstalled(m) && leftovers.isEmpty
     }
 
     /// Streaming SHA-256 (models are gigabytes).

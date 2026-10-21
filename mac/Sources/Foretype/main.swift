@@ -20,6 +20,9 @@ if let i = CommandLine.arguments.firstIndex(of: "--caret-measure"), i + 2 < Comm
     NSApplication.shared.setActivationPolicy(.prohibited)
     exit(CaretBench.run(pid: pid, title: CommandLine.arguments[i + 2], positions: n) ? 0 : 1)
 }
+if let i = CommandLine.arguments.firstIndex(of: "--resume-selftest"), i + 1 < CommandLine.arguments.count {
+    exit(ModelManager.resumeSelfTest(id: CommandLine.arguments[i + 1]) ? 0 : 1)
+}
 if let i = CommandLine.arguments.firstIndex(of: "--download-selftest"), i + 1 < CommandLine.arguments.count {
     exit(ModelManager.selfTest(id: CommandLine.arguments[i + 1]) ? 0 : 1)
 }

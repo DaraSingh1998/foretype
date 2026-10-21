@@ -188,7 +188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     func applicationWillTerminate(_ notification: Notification) {
         controller?.shutdown()
-        models.discardAllResumeData()
+        models.saveForRelaunch()
     }
 
     // MARK: - Menu
