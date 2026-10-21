@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Counted nouns and sentences (LCount in mac/Sources/Foretype/Localization.swift), English.
+  The key is the English plural with %@ for the number. Each entry gets the count as
+  %1$ld (it only picks the form; leave it out of the text) and the number, already
+  formatted for the locale, as %2$@. A bare dev binary without this file uses the same
+  forms from the code (the key and its `one:` argument).
+-->
+<plist version="1.0">
+<dict>
+	<key>%@ keystrokes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ keystroke</string>
+			<key>other</key>
+			<string>%2$@ keystrokes</string>
+		</dict>
+	</dict>
+	<key>%@ texts</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ text</string>
+			<key>other</key>
+			<string>%2$@ texts</string>
+		</dict>
+	</dict>
+	<key>%@ words</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ word</string>
+			<key>other</key>
+			<string>%2$@ words</string>
+		</dict>
+	</dict>
+	<key>Imported %@ passages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>Imported %2$@ passage</string>
+			<key>other</key>
+			<string>Imported %2$@ passages</string>
+		</dict>
+	</dict>
+	<key>From %@ files. Suggestions lean towards the words you use from the next one on.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>From %2$@ file. Suggestions lean towards the words you use from the next one on.</string>
+			<key>other</key>
+			<string>From %2$@ files. Suggestions lean towards the words you use from the next one on.</string>
+		</dict>
+	</dict>
+	<key>notes for %@ apps</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>notes for %2$@ app</string>
+			<key>other</key>
+			<string>notes for %2$@ apps</string>
+		</dict>
+	</dict>
+</dict>
+</plist>

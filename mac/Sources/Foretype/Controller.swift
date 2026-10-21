@@ -177,10 +177,10 @@ final class Controller {
         let textRole = ["AXTextArea", "AXTextField", "AXComboBox"].contains(s.role)
         let hint: (key: String, text: String)?
         if s.url.contains("docs.google.com/document"), !textRole || s.textBefore.isEmpty {
-            hint = ("googleDocs", "Google Docs hides its text from other apps. Turn on Tools \u{25B8} Accessibility \u{25B8} Screen reader support (\u{2318}\u{2325}Z) to get suggestions.")
+            hint = ("googleDocs", L("Google Docs hides its text from other apps. Turn on Tools \u{25B8} Accessibility \u{25B8} Screen reader support (\u{2318}\u{2325}Z) to get suggestions."))
         } else if ["company.thebrowser.Browser", "company.thebrowser.dia"].contains(s.bundleId), textRole, s.caret == nil,
                   !s.textBefore.isEmpty {
-            hint = ("textMetrics.\(s.bundleId)", "For ghost text at the caret in \(s.appName), open chrome://accessibility and turn on Text Metrics.")
+            hint = ("textMetrics.\(s.bundleId)", L("For ghost text at the caret in %@, open chrome://accessibility and turn on Text Metrics.", s.appName))
         } else {
             hint = nil
         }

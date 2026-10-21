@@ -5,9 +5,12 @@ import Security
 final class AppSettings {
     private let d = UserDefaults.standard
 
-    static let lengthPresets: [(name: String, words: Int)] = [
-        ("Short (2 words)", 2), ("Medium (4 words)", 4), ("Long (7 words)", 7), ("Very long (10 words)", 10),
-    ]
+    static var lengthPresets: [(name: String, words: Int)] {
+        [(L("Short (2 words)"), 2), (L("Medium (4 words)"), 4), (L("Long (7 words)"), 7), (L("Very long (10 words)"), 10)]
+    }
+
+    /// `personalizeStrength` 0, 1 and 2, as the menu and the Settings window name them.
+    static var strengthNames: [String] { [L("Gentle"), L("Balanced"), L("Strong")] }
 
     var enabled: Bool {
         get { d.object(forKey: "enabled") as? Bool ?? true }

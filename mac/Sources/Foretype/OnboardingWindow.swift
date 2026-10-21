@@ -13,10 +13,10 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let screenStatus = NSTextField(labelWithString: "")
     private let modelStatus = NSTextField(labelWithString: "")
     private let progress = NSProgressIndicator()
-    private let axButton = NSButton(title: "Open Settings", target: nil, action: nil)
-    private let screenButton = NSButton(title: "Allow", target: nil, action: nil)
-    private let modelButton = NSButton(title: "Download", target: nil, action: nil)
-    private let doneButton = NSButton(title: "Start Foretype", target: nil, action: nil)
+    private let axButton = NSButton(title: L("Open Settings"), target: nil, action: nil)
+    private let screenButton = NSButton(title: L("Allow"), target: nil, action: nil)
+    private let modelButton = NSButton(title: L("Download"), target: nil, action: nil)
+    private let doneButton = NSButton(title: L("Start Foretype"), target: nil, action: nil)
     private var timer: Timer?
 
     init(models: ModelManager, settings: AppSettings) {
@@ -24,7 +24,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         self.settings = settings
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 360),
                               styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Set Up Foretype"
+        window.title = L("Set Up Foretype")
         super.init(window: window)
         window.delegate = self
         build()
@@ -72,15 +72,16 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
 
         let rec = models.recommended
         let intro = NSTextField(wrappingLabelWithString:
-            "Foretype suggests your next words in any app and runs entirely on this Mac. Nothing you type is sent anywhere.")
+            L("Foretype suggests your next words in any app and runs entirely on this Mac. Nothing you type is sent anywhere."))
         let rows: [NSView] = [
             intro,
-            row("Accessibility (required)", "Lets Foretype read the text field you are typing in and type the words you accept.",
+            row(L("Accessibility (required)"), L("Lets Foretype read the text field you are typing in and type the words you accept."),
                 status: axStatus, button: axButton),
-            row("Screen Recording (optional)", "Reads text near the field, such as the message you are answering, for better suggestions. Images are never stored.",
+            row(L("Screen Recording (optional)"), L("Reads text near the field, such as the message you are answering, for better suggestions. Images are never stored."),
                 status: screenStatus, button: screenButton),
-            row("Language model", rec.map { "\($0.name), \($0.sizeText). \($0.license), downloaded from Hugging Face and checked against a pinned SHA-256." }
-                ?? "No model in the catalog for this Mac.", status: modelStatus, button: modelButton, extra: progress),
+            row(L("Language model"),
+                rec.map { L("%1$@, %2$@. %3$@, downloaded from Hugging Face and checked against a pinned SHA-256.", $0.name, $0.sizeText, $0.license) }
+                    ?? L("No model in the catalog for this Mac."), status: modelStatus, button: modelButton, extra: progress),
         ]
         let buttons = NSStackView(views: [NSView(), doneButton])
         let stack = NSStackView(views: rows + [buttons])
@@ -120,57 +121,57 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     /// Also called by the model manager's progress callbacks.
     func refresh() {
         let ax = AXIsProcessTrusted()
-        axStatus.stringValue = ax ? "\u{2713} Granted" : "Not granted yet"
+        axStatus.stringValue = ax ? "\u{2713} " + L("Granted") : L("Not granted yet")
         axStatus.textColor = ax ? .systemGreen : .secondaryLabelColor
         axButton.isEnabled = !ax
 
         let screen = ScreenContextProvider.hasPermission
-        screenStatus.stringValue = screen ? "\u{2713} Granted" : (settings.useScreenContext ? "Not granted" : "Off")
+        screenStatus.stringValue = screen ? "\u{2713} " + L("Granted") : (settings.useScreenContext ? L("Not granted") : L("Off"))
         screenStatus.textColor = screen ? .systemGreen : .secondaryLabelColor
         screenButton.isEnabled = !screen
 
         if settings.backend != "local" {
-            modelStatus.stringValue = "Using your server: \(settings.backendURL)"
+            modelStatus.stringValue = L("Using your server: %@", settings.backendURL)
             modelButton.isEnabled = false
             progress.isHidden = true
         } else if let rec = models.recommended {
             switch models.states[rec.id] ?? .notInstalled {
             case .installed:
-                modelStatus.stringValue = "\u{2713} Installed"
+                modelStatus.stringValue = "\u{2713} " + L("Installed")
                 modelStatus.textColor = .systemGreen
-                modelButton.title = "Download"
+                modelButton.title = L("Download")
                 modelButton.isEnabled = false
                 progress.isHidden = true
             case let .downloading(p):
-                modelStatus.stringValue = String(format: "Downloading\u{2026} %.0f%%", p * 100)
+                modelStatus.stringValue = L("Downloading\u{2026} %@", formatPercent(p))
                 modelStatus.textColor = .secondaryLabelColor
-                modelButton.title = "Cancel"
+                modelButton.title = L("Cancel")
                 modelButton.isEnabled = true
                 progress.isHidden = false
                 progress.doubleValue = p
             case let .paused(p):
-                modelStatus.stringValue = String(format: "Paused at %.0f%%", p * 100)
+                modelStatus.stringValue = L("Paused at %@", formatPercent(p))
                 modelStatus.textColor = .secondaryLabelColor
-                modelButton.title = "Resume"
+                modelButton.title = L("Resume")
                 modelButton.isEnabled = true
                 progress.isHidden = false
                 progress.doubleValue = p
             case .verifying:
-                modelStatus.stringValue = "Verifying\u{2026}"
+                modelStatus.stringValue = L("Verifying\u{2026}")
                 modelButton.isEnabled = false
                 progress.isIndeterminate = true
                 progress.startAnimation(nil)
             case let .failed(msg):
-                modelStatus.stringValue = "Download failed: \(msg)"
+                modelStatus.stringValue = L("Download failed: %@", msg)
                 modelStatus.textColor = .systemRed
-                modelButton.title = "Retry"
+                modelButton.title = L("Retry")
                 modelButton.isEnabled = true
                 progress.isHidden = true
             case .notInstalled:
                 let other = ModelLocator.find(settings: settings, recommendedFile: rec.file)
-                modelStatus.stringValue = other.map { "\u{2713} Using \(URL(fileURLWithPath: $0).lastPathComponent)" } ?? "Not downloaded"
+                modelStatus.stringValue = other.map { "\u{2713} " + L("Using %@", URL(fileURLWithPath: $0).lastPathComponent) } ?? L("Not downloaded")
                 modelStatus.textColor = other == nil ? .secondaryLabelColor : .systemGreen
-                modelButton.title = "Download"
+                modelButton.title = L("Download")
                 modelButton.isEnabled = true
                 progress.isHidden = true
             }

@@ -56,7 +56,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let ready = AXIsProcessTrusted() && modelReady
         if !ready || (!settings.onboarded && Bundle.main.bundleIdentifier != nil) {
             engineState = "setup"
-            engineDetail = "Finish setup to start"
+            engineDetail = L("Finish setup to start")
             showOnboarding()
         } else {
             startEngine()
@@ -68,22 +68,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     /// Cmd-Q and the editing keys (copy and paste in the instruction and server fields).
     private func installMainMenu() {
         let app = NSMenu()
-        let prefs = NSMenuItem(title: "Settings\u{2026}", action: #selector(openPreferences), keyEquivalent: ",")
+        let prefs = NSMenuItem(title: L("Settings\u{2026}"), action: #selector(openPreferences), keyEquivalent: ",")
         prefs.target = self
         app.addItem(prefs)
         app.addItem(.separator())
-        app.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-        app.addItem(NSMenuItem(title: "Quit Foretype", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-        let edit = NSMenu(title: "Edit")
-        edit.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
-        let redo = NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        app.addItem(NSMenuItem(title: L("Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        app.addItem(NSMenuItem(title: L("Quit Foretype"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        let edit = NSMenu(title: L("Edit"))
+        edit.addItem(NSMenuItem(title: L("Undo"), action: Selector(("undo:")), keyEquivalent: "z"))
+        let redo = NSMenuItem(title: L("Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         edit.addItem(redo)
         edit.addItem(.separator())
-        edit.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        edit.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        edit.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        edit.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        edit.addItem(NSMenuItem(title: L("Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        edit.addItem(NSMenuItem(title: L("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        edit.addItem(NSMenuItem(title: L("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        edit.addItem(NSMenuItem(title: L("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         let main = NSMenu()
         for submenu in [app, edit] {
             let item = NSMenuItem()
@@ -120,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     private func startEngine() {
         guard AXIsProcessTrusted() else {
             engineState = "waiting"
-            engineDetail = "Grant Accessibility in System Settings"
+            engineDetail = L("Grant Accessibility in System Settings")
             return
         }
         var config: [String: Any] = ["settings": settings.coreDict]
@@ -128,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         if settings.backend == "local" {
             guard let model = ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) else {
                 engineState = "error"
-                engineDetail = "No model yet: open Setup\u{2026} to download one"
+                engineDetail = L("No model yet: open Setup\u{2026} to download one")
                 showOnboarding()
                 return
             }
@@ -138,7 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         } else if settings.backend == "apple" {
             // The core asks the shell, which asks Foundation Models (AppleModel.swift).
             config["backend"] = "shell"
-            label = "Apple on-device model"
+            label = L("Apple on-device model")
         } else {
             config["backend"] = settings.backend
             config["backend_url"] = settings.backendURL
@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let json = String(data: try! JSONSerialization.data(withJSONObject: config), encoding: .utf8)!
         guard let engine = EngineBridge(configJSON: json) else {
             engineState = "error"
-            engineDetail = "Engine failed to start"
+            engineDetail = L("Engine failed to start")
             return
         }
         if settings.backend == "apple" { engine.setCompleter(AppleModel.complete) }
@@ -167,7 +167,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         }
         let onStatus: (String, String) -> Void = { [weak self] state, detail in
             self?.engineState = state
-            self?.engineDetail = state == "ready" ? label : detail
+            // The core's details are English (error texts, file paths); "model unloaded" is the
+            // one fixed text it sends.
+            self?.engineDetail = state == "ready" ? label : detail == "model unloaded" ? L("model unloaded") : detail
             self?.preferences?.refresh()
         }
         if let c = controller {
@@ -179,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         c.onStatus = onStatus
         if !c.start() {
             engineState = "error"
-            engineDetail = "Could not create event taps (Accessibility permission?)"
+            engineDetail = L("Could not create event taps (Accessibility permission?)")
         }
         controller = c
     }
@@ -193,7 +195,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let title = NSMenuItem(title: "Foretype \u{2014} \(engineState)", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: "Foretype \u{2014} \(Self.stateName(engineState))", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
         if !engineDetail.isEmpty {
@@ -202,19 +204,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             menu.addItem(detail)
         }
         if stats.total.accepts > 0 {
-            let saved = NSMenuItem(title: "Saved \(Self.count(stats.today.keystrokesSaved, "keystroke")) today \u{00B7} "
-                + "\(Self.number(stats.total.keystrokesSaved)) in all", action: nil, keyEquivalent: "")
+            let today = LCount(stats.today.keystrokesSaved, "%@ keystrokes", one: "%@ keystroke")
+            let saved = NSMenuItem(title: L("Saved %1$@ today \u{00B7} %2$@ in all", today, formatNumber(stats.total.keystrokesSaved)),
+                                   action: nil, keyEquivalent: "")
             saved.isEnabled = false
             menu.addItem(saved)
         }
         menu.addItem(.separator())
 
-        let enabled = NSMenuItem(title: "Suggestions On", action: #selector(toggleEnabled), keyEquivalent: "")
+        let enabled = NSMenuItem(title: L("Suggestions On"), action: #selector(toggleEnabled), keyEquivalent: "")
         enabled.target = self
         enabled.state = settings.enabled ? .on : .off
         menu.addItem(enabled)
 
-        let lengthItem = NSMenuItem(title: "Suggestion Length", action: nil, keyEquivalent: "")
+        let lengthItem = NSMenuItem(title: L("Suggestion Length"), action: nil, keyEquivalent: "")
         let lengthMenu = NSMenu()
         for (i, preset) in AppSettings.lengthPresets.enumerated() {
             let item = NSMenuItem(title: preset.name, action: #selector(setLength(_:)), keyEquivalent: "")
@@ -224,19 +227,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             lengthMenu.addItem(item)
         }
         lengthMenu.addItem(.separator())
-        let sentence = NSMenuItem(title: "Stop at Sentence End", action: #selector(toggleSentenceEnd), keyEquivalent: "")
+        let sentence = NSMenuItem(title: L("Stop at Sentence End"), action: #selector(toggleSentenceEnd), keyEquivalent: "")
         sentence.target = self
         sentence.state = settings.stopAtSentenceEnd ? .on : .off
         lengthMenu.addItem(sentence)
         lengthItem.submenu = lengthMenu
         menu.addItem(lengthItem)
 
-        let screenItem = NSMenuItem(title: "Use Screen Context", action: #selector(toggleScreenContext), keyEquivalent: "")
+        let screenItem = NSMenuItem(title: L("Use Screen Context"), action: #selector(toggleScreenContext), keyEquivalent: "")
         screenItem.target = self
         screenItem.state = settings.useScreenContext ? .on : .off
         menu.addItem(screenItem)
         if settings.useScreenContext, !ScreenContextProvider.hasPermission {
-            let grant = NSMenuItem(title: "Allow Screen Recording\u{2026}", action: #selector(openScreenRecording), keyEquivalent: "")
+            let grant = NSMenuItem(title: L("Allow Screen Recording\u{2026}"), action: #selector(openScreenRecording), keyEquivalent: "")
             grant.target = self
             menu.addItem(grant)
         }
@@ -245,7 +248,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             let name = app.localizedName ?? bundle
             let offByDefault = (controller?.engine.compatRule(bundle)["disabled"] as? Bool) ?? false
             let on = offByDefault ? settings.enabledApps.contains(bundle) : !settings.disabledApps.contains(bundle)
-            let item = NSMenuItem(title: "Suggest in \(name)", action: #selector(toggleApp(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: L("Suggest in %@", name), action: #selector(toggleApp(_:)), keyEquivalent: "")
             item.target = self
             item.state = on ? .on : .off
             item.representedObject = [bundle, offByDefault] as [Any]
@@ -253,7 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             if let until = controller?.snoozed[bundle], until > Date() {
                 let f = DateFormatter()
                 f.timeStyle = .short
-                let s = NSMenuItem(title: "Snoozed until \(f.string(from: until)) \u{2014} Resume", action: #selector(unsnooze(_:)), keyEquivalent: "")
+                let s = NSMenuItem(title: L("Snoozed until %@ \u{2014} Resume", f.string(from: until)), action: #selector(unsnooze(_:)), keyEquivalent: "")
                 s.target = self
                 s.representedObject = bundle
                 menu.addItem(s)
@@ -261,14 +264,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         }
         menu.addItem(.separator())
         menu.addItem(.separator())
-        let personal = NSMenuItem(title: "Personalization", action: nil, keyEquivalent: "")
+        let personal = NSMenuItem(title: L("Personalization"), action: nil, keyEquivalent: "")
         let pm = NSMenu()
-        let learn = NSMenuItem(title: "Learn From My Writing", action: #selector(togglePersonalize), keyEquivalent: "")
+        let learn = NSMenuItem(title: L("Learn From My Writing"), action: #selector(togglePersonalize), keyEquivalent: "")
         learn.target = self
         learn.state = settings.personalize ? .on : .off
         pm.addItem(learn)
         if settings.personalize {
-            for (i, name) in ["Gentle", "Balanced", "Strong"].enumerated() {
+            for (i, name) in AppSettings.strengthNames.enumerated() {
                 let item = NSMenuItem(title: name, action: #selector(setStrength(_:)), keyEquivalent: "")
                 item.target = self
                 item.tag = i
@@ -277,50 +280,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
                 pm.addItem(item)
             }
             if let stats = controller?.engine.historyStats() {
-                let info = NSMenuItem(title: "\(stats.records) texts, \(stats.words) words learned", action: nil, keyEquivalent: "")
+                let info = NSMenuItem(title: L("%1$@, %2$@ learned", LCount(stats.records, "%@ texts", one: "%@ text"),
+                                                    LCount(stats.words, "%@ words", one: "%@ word")),
+                                      action: nil, keyEquivalent: "")
                 info.isEnabled = false
                 pm.addItem(info)
             }
         }
         pm.addItem(.separator())
-        let imp = NSMenuItem(title: "Import Writing\u{2026}", action: settings.personalize ? #selector(importWritingMenu) : nil, keyEquivalent: "")
+        let imp = NSMenuItem(title: L("Import Writing\u{2026}"), action: settings.personalize ? #selector(importWritingMenu) : nil, keyEquivalent: "")
         imp.target = self
         pm.addItem(imp)
-        let del = NSMenuItem(title: "Delete Writing History\u{2026}", action: #selector(deleteHistory), keyEquivalent: "")
+        let del = NSMenuItem(title: L("Delete Writing History\u{2026}"), action: #selector(deleteHistory), keyEquivalent: "")
         del.target = self
         pm.addItem(del)
-        let note = NSMenuItem(title: "Stored encrypted on this Mac; only texts where you accepted a suggestion.", action: nil, keyEquivalent: "")
+        let note = NSMenuItem(title: L("Stored encrypted on this Mac; only texts where you accepted a suggestion."), action: nil, keyEquivalent: "")
         note.isEnabled = false
         pm.addItem(note)
         personal.submenu = pm
         menu.addItem(personal)
-        let instr = NSMenuItem(title: "Custom Instructions\u{2026}", action: #selector(openInstructionsMenu), keyEquivalent: "")
+        let instr = NSMenuItem(title: L("Custom Instructions\u{2026}"), action: #selector(openInstructionsMenu), keyEquivalent: "")
         instr.target = self
         menu.addItem(instr)
         menu.addItem(.separator())
 
-        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        let modelItem = NSMenuItem(title: L("Model"), action: nil, keyEquivalent: "")
         modelItem.submenu = modelMenu()
         menu.addItem(modelItem)
-        let prefs = NSMenuItem(title: "Settings\u{2026}", action: #selector(openPreferences), keyEquivalent: ",")
+        let prefs = NSMenuItem(title: L("Settings\u{2026}"), action: #selector(openPreferences), keyEquivalent: ",")
         prefs.target = self
         menu.addItem(prefs)
-        let setup = NSMenuItem(title: "Setup\u{2026}", action: #selector(openSetup), keyEquivalent: "")
+        let setup = NSMenuItem(title: L("Setup\u{2026}"), action: #selector(openSetup), keyEquivalent: "")
         setup.target = self
         menu.addItem(setup)
         if let updater, updater.isConfigured {
-            let check = NSMenuItem(title: "Check for Updates\u{2026}", action: #selector(checkForUpdates), keyEquivalent: "")
+            let check = NSMenuItem(title: L("Check for Updates\u{2026}"), action: #selector(checkForUpdates), keyEquivalent: "")
             check.target = self
             menu.addItem(check)
         }
         menu.addItem(.separator())
 
         if !AXIsProcessTrusted() {
-            let item = NSMenuItem(title: "Open Accessibility Settings\u{2026}", action: #selector(openAccessibility), keyEquivalent: "")
+            let item = NSMenuItem(title: L("Open Accessibility Settings\u{2026}"), action: #selector(openAccessibility), keyEquivalent: "")
             item.target = self
             menu.addItem(item)
         }
-        menu.addItem(NSMenuItem(title: "Quit Foretype", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L("Quit Foretype"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
     /// Catalog models (download state or size on disk), other GGUFs in the folder, delete,
@@ -330,16 +335,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let active = settings.backend == "local" ? ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) : nil
         let files = models.localFiles()
         for m in models.catalog {
-            var title = m.name
-            if m.recommended { title += " (recommended)" }
+            let name = m.recommended ? L("%@ (recommended)", m.name) : m.name
+            let title: String
             switch models.states[m.id] ?? .notInstalled {
-            case let .downloading(p): title += String(format: " \u{2014} %@, downloading %.0f%%, click to cancel", m.sizeText, p * 100)
-            case let .paused(p): title += String(format: " \u{2014} %@, paused at %.0f%%, click to resume", m.sizeText, p * 100)
-            case .verifying: title += " \u{2014} verifying\u{2026}"
-            case .notInstalled, .failed: title += " \u{2014} \(m.sizeText), download"
+            case let .downloading(p): title = L("%1$@ \u{2014} %2$@, downloading %3$@, click to cancel", name, m.sizeText, formatPercent(p))
+            case let .paused(p): title = L("%1$@ \u{2014} %2$@, paused at %3$@, click to resume", name, m.sizeText, formatPercent(p))
+            case .verifying: title = L("%@ \u{2014} verifying\u{2026}", name)
+            case .notInstalled, .failed: title = L("%1$@ \u{2014} %2$@, download", name, m.sizeText)
             case .installed:
                 let bytes = files.first { $0.model == m }?.bytes ?? m.bytes
-                title += " \u{2014} \(Self.bytes(bytes)) on disk"
+                title = L("%1$@ \u{2014} %2$@ on disk", name, Self.bytes(bytes))
             }
             let item = NSMenuItem(title: title, action: #selector(modelChosen(_:)), keyEquivalent: "")
             item.target = self
@@ -350,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         // GGUFs that aren't (complete) catalog models: ModelLocator may pick one, so they can
         // be chosen too.
         for f in files where f.model == nil && !f.incomplete {
-            let item = NSMenuItem(title: "\(f.fileName) \u{2014} \(Self.bytes(f.bytes)) on disk", action: #selector(fileChosen(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: L("%1$@ \u{2014} %2$@ on disk", f.fileName, Self.bytes(f.bytes)), action: #selector(fileChosen(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = f.path
             item.state = active == f.path ? .on : .off
@@ -358,12 +363,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         }
         mm.addItem(.separator())
         if !files.isEmpty {
-            let delete = NSMenuItem(title: "Delete a Model", action: nil, keyEquivalent: "")
+            let delete = NSMenuItem(title: L("Delete a Model"), action: nil, keyEquivalent: "")
             let dm = NSMenu()
             for f in files {
                 var title = "\(f.name) \u{2014} \(Self.bytes(f.bytes))"
-                if f.incomplete { title += " (incomplete download)" }
-                if isModelInUse(f.path) { title += " (in use)" }
+                if f.incomplete { title = L("%@ (incomplete download)", title) }
+                if isModelInUse(f.path) { title = L("%@ (in use)", title) }
                 let item = NSMenuItem(title: title + "\u{2026}", action: #selector(deleteChosen(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = f.path
@@ -372,15 +377,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             delete.submenu = dm
             mm.addItem(delete)
         }
-        let usage = NSMenuItem(title: "Models folder: \(Self.bytes(models.diskUsage())) on disk", action: nil, keyEquivalent: "")
+        let usage = NSMenuItem(title: L("Models folder: %@ on disk", Self.bytes(models.diskUsage())), action: nil, keyEquivalent: "")
         usage.isEnabled = false
         mm.addItem(usage)
         mm.addItem(.separator())
-        let server = NSMenuItem(title: "Use a Server Instead\u{2026}", action: #selector(configureServer), keyEquivalent: "")
+        let server = NSMenuItem(title: L("Use a Server Instead\u{2026}"), action: #selector(configureServer), keyEquivalent: "")
         server.target = self
         server.state = settings.backend == "local" ? .off : .on
         mm.addItem(server)
-        let folder = NSMenuItem(title: "Show Models Folder", action: #selector(showModelsFolder), keyEquivalent: "")
+        let folder = NSMenuItem(title: L("Show Models Folder"), action: #selector(showModelsFolder), keyEquivalent: "")
         folder.target = self
         mm.addItem(folder)
         return mm
@@ -388,10 +393,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     static func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
 
-    static func number(_ n: Int) -> String { NumberFormatter.localizedString(from: NSNumber(value: n), number: .decimal) }
-
-    /// "1 keystroke", "1,234 keystrokes".
-    static func count(_ n: Int, _ noun: String) -> String { "\(number(n)) \(noun)\(n == 1 ? "" : "s")" }
+    /// The engine state ("ready", "loading", ...) as the menu and the Settings window show it.
+    static func stateName(_ state: String) -> String {
+        switch state {
+        case "starting": return L("starting")
+        case "setup": return L("setup")
+        case "waiting": return L("waiting")
+        case "loading": return L("loading")
+        case "ready": return L("ready")
+        case "idle": return L("idle")
+        case "error": return L("error")
+        default: return state
+        }
+    }
 
     @objc private func toggleEnabled() {
         settings.enabled.toggle()
@@ -474,9 +488,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let url = NSTextField(string: settings.backendURL)
         url.placeholderString = "http://127.0.0.1:8080"
         let model = NSTextField(string: settings.backendModel)
-        model.placeholderString = "model name (OpenAI-compatible only)"
+        model.placeholderString = L("model name (OpenAI-compatible only)")
         let key = NSSecureTextField(string: "")
-        key.placeholderString = settings.backendAPIKey.isEmpty ? "API key (optional)" : "API key saved; type to replace"
+        key.placeholderString = settings.backendAPIKey.isEmpty ? L("API key (optional)") : L("API key saved; type to replace")
         let stack = NSStackView(views: [kind, url, model, key])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -484,11 +498,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         for f in [url, model, key] { f.widthAnchor.constraint(equalToConstant: 340).isActive = true }
         stack.frame = NSRect(x: 0, y: 0, width: 340, height: 118)
         let alert = NSAlert()
-        alert.messageText = "Where should suggestions come from?"
-        alert.informativeText = "A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers work too, but complete words you have started less well (about half the typing saved). Apple's on-device model needs no download but takes about 0.7 s per suggestion. The API key is stored in your Keychain."
+        alert.messageText = L("Where should suggestions come from?")
+        alert.informativeText = L("A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers work too, but complete words you have started less well (about half the typing saved). Apple's on-device model needs no download but takes about 0.7 s per suggestion. The API key is stored in your Keychain.")
         alert.accessoryView = stack
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Save"))
+        alert.addButton(withTitle: L("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         applyServer(backend: Self.backends[max(0, kind.indexOfSelectedItem)], url: url.stringValue,
                     model: model.stringValue, apiKey: key.stringValue)
@@ -500,8 +514,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         ["local", "llama-server", "openai"] + (AppleModel.isAvailable ? ["apple"] : [])
     }
     static var backendTitles: [String] {
-        ["Built-in (on this Mac)", "llama.cpp llama-server", "OpenAI-compatible (Ollama, LM Studio, ...)"]
-            + (AppleModel.isAvailable ? ["Apple on-device model (no download; slower)"] : [])
+        [L("Built-in (on this Mac)"), "llama.cpp llama-server", L("OpenAI-compatible (Ollama, LM Studio, ...)")]
+            + (AppleModel.isAvailable ? [L("Apple on-device model (no download; slower)")] : [])
     }
 
     @objc private func togglePersonalize() {
@@ -540,7 +554,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     // MARK: - PreferencesHost (also the menu's code path)
 
-    var engineStatus: String { engineDetail.isEmpty ? engineState : "\(engineState) \u{2014} \(engineDetail)" }
+    var engineStatus: String {
+        let state = Self.stateName(engineState)
+        return engineDetail.isEmpty ? state : "\(state) \u{2014} \(engineDetail)"
+    }
 
     func settingsChanged() {
         controller?.applySettings()
@@ -552,8 +569,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             guard let key = HistoryStore.keyHex() else {
                 NSApp.activate(ignoringOtherApps: true)
                 let alert = NSAlert()
-                alert.messageText = "Couldn't create the encryption key"
-                alert.informativeText = "Foretype needs a key in your Keychain to store your writing history encrypted."
+                alert.messageText = L("Couldn't create the encryption key")
+                alert.informativeText = L("Foretype needs a key in your Keychain to store your writing history encrypted.")
                 alert.runModal()
                 preferences?.refresh()
                 return
@@ -578,7 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         guard settings.personalize, let engine = controller?.engine else { return }
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSOpenPanel()
-        panel.message = "Choose text files or folders with your own writing"
+        panel.message = L("Choose text files or folders with your own writing")
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.allowedContentTypes = [.plainText, UTType(filenameExtension: "md") ?? .plainText]
@@ -604,8 +621,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         }
         let n = engine.importHistory(items)
         let alert = NSAlert()
-        alert.messageText = n.map { "Imported \(AppDelegate.count($0, "passage"))" } ?? "Import failed"
-        alert.informativeText = "From \(AppDelegate.count(files.count, "file")). Suggestions lean towards the words you use from the next one on."
+        alert.messageText = n.map { LCount($0, "Imported %@ passages", one: "Imported %@ passage") } ?? L("Import failed")
+        alert.informativeText = LCount(files.count, "From %@ files. Suggestions lean towards the words you use from the next one on.",
+                                       one: "From %@ file. Suggestions lean towards the words you use from the next one on.")
         alert.runModal()
         preferences?.refresh()
     }
@@ -613,11 +631,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     func confirmDeleteHistory() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
-        alert.messageText = "Delete your writing history?"
-        alert.informativeText = "Foretype forgets everything it learned from your writing. This can't be undone."
+        alert.messageText = L("Delete your writing history?")
+        alert.informativeText = L("Foretype forgets everything it learned from your writing. This can't be undone.")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Delete"))
+        alert.addButton(withTitle: L("Cancel"))
         if alert.runModal() == .alertFirstButtonReturn {
             if controller?.engine.clearHistory() != true {
                 try? FileManager.default.removeItem(atPath: HistoryStore.path)
@@ -680,30 +698,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let name = file?.name ?? URL(fileURLWithPath: path).lastPathComponent
         let alert = NSAlert()
         if isModelInUse(path) {
-            alert.messageText = "\(name) is in use"
-            alert.informativeText = "Foretype is using this model. Choose another model or a server first, then delete it."
+            alert.messageText = L("%@ is in use", name)
+            alert.informativeText = L("Foretype is using this model. Choose another model or a server first, then delete it.")
             alert.runModal()
             return
         }
         let size = Self.bytes(file?.bytes ?? ModelManager.sizeOnDisk(path))
-        alert.messageText = "Delete \(name)?"
+        alert.messageText = L("Delete %@?", name)
         if file?.incomplete == true {
-            alert.informativeText = "This incomplete download (\(size)) is removed from the Models folder."
+            alert.informativeText = L("This incomplete download (%@) is removed from the Models folder.", size)
         } else if file?.model != nil {
-            alert.informativeText = "The model file (\(size)) is removed from this Mac. You can download it again from the Model menu."
+            alert.informativeText = L("The model file (%@) is removed from this Mac. You can download it again from the Model menu.", size)
         } else {
-            alert.informativeText = "The file (\(size)) is removed from this Mac. It isn't in Foretype's catalog, so it can't be downloaded again from here."
+            alert.informativeText = L("The file (%@) is removed from this Mac. It isn't in Foretype's catalog, so it can't be downloaded again from here.", size)
         }
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Delete"))
+        alert.addButton(withTitle: L("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         do {
             try models.delete(path: path)
             if settings.modelPath == path { settings.modelPath = nil }
         } catch {
             let failed = NSAlert()
-            failed.messageText = "Couldn't delete \(name)"
+            failed.messageText = L("Couldn't delete %@", name)
             failed.informativeText = error.localizedDescription
             failed.runModal()
         }
