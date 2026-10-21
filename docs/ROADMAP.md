@@ -74,13 +74,12 @@ are kept for if that changes; the core stays portable.
   take the paragraph `AXTextArea` whose selection is valid). (Chat inputs, Google Docs and
   Arc/Dia hints, text markers and the pixel caret locator landed.)
 - **Personalization**: per-app retrieval tuning (needs a larger personal corpus than the 12
-  self-written documents: tuning on those would fit noise); measure the llama-server
-  `logit_bias`. Cotypist's history can't be imported (encrypted, D30); Import Writing…
-  takes text files instead.
-- **Product**: resume data that survives a relaunch, adding an app to the
-  per-app list from the Settings window (today only from the menu while that app is in
-  front). (Settings window, statistics, model manager polish, the Apple on-device
-  fallback and localization, English and Hindi, landed.)
+  self-written documents: tuning on those would fit noise). Cotypist's history can't be
+  imported (encrypted, D30); Import Writing… takes text files instead. (The llama-server
+  `logit_bias` landed and was measured: 40.7% → 41.0–41.3%.)
+- **Product**: more languages (English and Hindi so far). (Settings window, statistics,
+  model manager polish, downloads that resume after a relaunch, adding an app from the
+  Settings window, the Apple on-device fallback and localization landed.)
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.

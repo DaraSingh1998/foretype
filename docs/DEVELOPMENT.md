@@ -42,6 +42,9 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
+| Typing aids in TextEdit (emoji, autocorrect, typo gate, mid-line) | `FORETYPE_MODEL=... scripts/e2e-typing-aids.sh` | Accessibility, user idle |
+| Emoji/autocorrect Tab replacement in a web field | `FORETYPE_MODEL=... [MARKERS=1] scripts/e2e-browser-aids.sh` | Accessibility, user idle (throwaway Chrome profile) |
+| Download resumes after a relaunch | `FORETYPE_MODEL_BASE_URL=http://127.0.0.1:PORT FORETYPE_MODELS_DIR=/tmp/x mac/.build/release/Foretype --resume-selftest qwen3-0.6b-base-q8` | a local server with Range support, slow enough to pause mid-way |
 | Pixel caret vs AX caret | `scripts/caret-measure.sh [APP BUNDLE_ID FIXTURE]` | Accessibility and Screen Recording (the terminal's), user idle |
 | Pixel caret in the app (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-pixel-caret.sh [APP BUNDLE_ID FIXTURE]` | same |
 | Model download + verify | `FORETYPE_MODEL_BASE_URL=http://127.0.0.1:PORT FORETYPE_MODELS_DIR=/tmp/x mac/.build/release/Foretype --download-selftest qwen3-0.6b-base-q8` | a local `python3 -m http.server` serving the GGUF |

@@ -14,6 +14,19 @@ roadmap phase.
   `scripts/build-mac.sh`); counts use `.stringsdict` plurals; numbers and percentages
   follow the locale. `scripts/check-localization.py` checks the translations.
 
+### Hands-on fixes and last backlog items (2026-10-21)
+- Typo gate and autocorrect: the spell checker now checks in the user's current language
+  (with no language it accepted words from any installed language, so "recie" passed), and
+  `/usr/share/dict/words` is a second opinion before a fragment counts as a typo (the
+  checker's completions missed "vomit").
+- Emoji, autocorrect and the typo gate now run before type-through, so a model that
+  continues a misspelling no longer carries it past them.
+- VS Code's chat input ("Message input") gets suggestions; Cursor and Windsurf too.
+- Downloads paused (or running at quit) resume after a relaunch (`--resume-selftest`).
+- Settings → Apps: Add an App… changes an app's default without opening it.
+- e2e: `scripts/e2e-typing-aids.sh` (TextEdit) and `scripts/e2e-browser-aids.sh` (a
+  throwaway Chrome profile).
+
 ### Quality and compatibility backlog (2026-10-20)
 - Emoji: `:name` offers the emoji (1,913 gemoji shortcodes); Tab replaces the shortcode.
 - Autocorrect: a misspelled word just finished gets the macOS spell checker's correction
