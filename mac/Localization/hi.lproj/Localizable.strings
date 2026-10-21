@@ -1,0 +1,243 @@
+/* Foretype: Hindi (हिन्दी).
+   Keys are the English text as the Swift code writes it (L("...") in mac/Sources/Foretype).
+   Terms follow macOS's own Hindi: सेटिंग, सिस्टम सेटिंग, ऐक्सेसिबिलिटी, स्क्रीन रिकॉर्डिंग,
+   कीचेन, डिलीट करें, रद्द करें, सहेजें. "Foretype" and key names (Tab, Esc, Option, Ctrl) stay
+   in Latin script. Counted nouns are in Localizable.stringsdict.
+   Check with: python3 scripts/check-localization.py */
+
+/* Menu-bar menu (AppDelegate.swift) */
+"Finish setup to start" = "शुरू करने के लिए सेटअप पूरा करें";
+"Settings…" = "सेटिंग…";
+"Close Window" = "विंडो बंद करें";
+"Quit Foretype" = "Foretype बंद करें";
+"Edit" = "संपादित करें";
+"Undo" = "पहले जैसा करें";
+"Redo" = "फिर करें";
+"Cut" = "कट";
+"Copy" = "कॉपी";
+"Paste" = "पेस्ट";
+"Select All" = "सभी चुनें";
+"Grant Accessibility in System Settings" = "सिस्टम सेटिंग में ऐक्सेसिबिलिटी की अनुमति दें";
+"No model yet: open Setup… to download one" = "अभी कोई मॉडल नहीं है: डाउनलोड करने के लिए “सेटअप…” खोलें";
+"Apple on-device model" = "Apple का ऑन-डिवाइस मॉडल";
+"Engine failed to start" = "इंजन शुरू नहीं हो सका";
+"model unloaded" = "मॉडल अनलोड किया गया";
+"Could not create event taps (Accessibility permission?)" = "इवेंट टैप नहीं बनाए जा सके (क्या ऐक्सेसिबिलिटी की अनुमति है?)";
+"Saved %1$@ today · %2$@ in all" = "आज की बचत: %1$@ · कुल %2$@";
+"Suggestions On" = "सुझाव चालू";
+"Suggestion Length" = "सुझाव की लंबाई";
+"Stop at Sentence End" = "वाक्य के अंत पर रुकें";
+"Use Screen Context" = "स्क्रीन संदर्भ का उपयोग करें";
+"Allow Screen Recording…" = "स्क्रीन रिकॉर्डिंग की अनुमति दें…";
+"Suggest in %@" = "%@ में सुझाव दें";
+"Snoozed until %@ — Resume" = "%@ तक स्नूज़ किया गया — फिर शुरू करें";
+"Personalization" = "वैयक्तिकरण";
+"Learn From My Writing" = "मेरे लेखन से सीखें";
+"%1$@, %2$@ learned" = "सीखे गए: %1$@, %2$@";
+"Import Writing…" = "लेखन इंपोर्ट करें…";
+"Delete Writing History…" = "लेखन इतिहास डिलीट करें…";
+"Stored encrypted on this Mac; only texts where you accepted a suggestion." = "इस Mac पर एंक्रिप्टेड रूप में सहेजा जाता है; केवल वे टेक्स्ट जिनमें आपने कोई सुझाव स्वीकार किया।";
+"Custom Instructions…" = "कस्टम निर्देश…";
+"Model" = "मॉडल";
+"Setup…" = "सेटअप…";
+"Check for Updates…" = "अपडेट जाँचें…";
+"Open Accessibility Settings…" = "ऐक्सेसिबिलिटी सेटिंग खोलें…";
+
+/* Engine states, shown after "Foretype —" in the menu and in Settings ▸ Model */
+"starting" = "शुरू हो रहा है";
+"setup" = "सेटअप";
+"waiting" = "प्रतीक्षा में";
+"loading" = "लोड हो रहा है";
+"ready" = "तैयार";
+"idle" = "निष्क्रिय";
+"error" = "एरर";
+
+/* Model submenu: %1$@ model name, %2$@ download size, %3$@ percent */
+"%@ (recommended)" = "%@ (अनुशंसित)";
+"%1$@ — %2$@, downloading %3$@, click to cancel" = "%1$@ — %2$@, %3$@ डाउनलोड हुआ, रद्द करने के लिए क्लिक करें";
+"%1$@ — %2$@, paused at %3$@, click to resume" = "%1$@ — %2$@, %3$@ पर पॉज़, जारी रखने के लिए क्लिक करें";
+"%@ — verifying…" = "%@ — सत्यापन किया जा रहा है…";
+"%1$@ — %2$@, download" = "%1$@ — %2$@, डाउनलोड करें";
+"%1$@ — %2$@ on disk" = "%1$@ — डिस्क पर %2$@";
+"Delete a Model" = "मॉडल डिलीट करें";
+"%@ (incomplete download)" = "%@ (अधूरा डाउनलोड)";
+"%@ (in use)" = "%@ (उपयोग में)";
+"Models folder: %@ on disk" = "मॉडल फ़ोल्डर: डिस्क पर %@";
+"Use a Server Instead…" = "इसके बजाय सर्वर का उपयोग करें…";
+"Show Models Folder" = "मॉडल फ़ोल्डर दिखाएँ";
+
+/* Server dialog and engine choices (AppDelegate.swift, Settings ▸ Model) */
+"model name (OpenAI-compatible only)" = "मॉडल का नाम (केवल OpenAI-संगत)";
+"API key (optional)" = "API कुंजी (वैकल्पिक)";
+"API key saved; type to replace" = "API कुंजी सहेजी गई है; बदलने के लिए टाइप करें";
+"Where should suggestions come from?" = "सुझाव कहाँ से आएँ?";
+"A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers work too, but complete words you have started less well (about half the typing saved). Apple's on-device model needs no download but takes about 0.7 s per suggestion. The API key is stored in your Keychain." = "llama-server बिल्टइन इंजन जैसे ही सुझाव देता है। OpenAI-संगत सर्वर भी काम करते हैं, लेकिन आपके शुरू किए गए शब्दों को उतनी अच्छी तरह पूरा नहीं करते (टाइपिंग की बचत लगभग आधी रह जाती है)। Apple के ऑन-डिवाइस मॉडल को डाउनलोड की ज़रूरत नहीं है, लेकिन हर सुझाव में लगभग 0.7 सेकंड लगते हैं। API कुंजी आपके कीचेन में सहेजी जाती है।";
+"Save" = "सहेजें";
+"Cancel" = "रद्द करें";
+"Built-in (on this Mac)" = "बिल्टइन (इस Mac पर)";
+"OpenAI-compatible (Ollama, LM Studio, ...)" = "OpenAI-संगत (Ollama, LM Studio, ...)";
+"Apple on-device model (no download; slower)" = "Apple का ऑन-डिवाइस मॉडल (डाउनलोड नहीं; धीमा)";
+
+/* Alerts and the import panel (AppDelegate.swift) */
+"Couldn't create the encryption key" = "एंक्रिप्शन कुंजी नहीं बनाई जा सकी";
+"Foretype needs a key in your Keychain to store your writing history encrypted." = "आपका लेखन इतिहास एंक्रिप्टेड रूप में सहेजने के लिए Foretype को आपके कीचेन में एक कुंजी चाहिए।";
+"Choose text files or folders with your own writing" = "अपने लेखन वाली टेक्स्ट फ़ाइलें या फ़ोल्डर चुनें";
+"Import failed" = "इंपोर्ट विफल हुआ";
+"Delete your writing history?" = "अपना लेखन इतिहास डिलीट करें?";
+"Foretype forgets everything it learned from your writing. This can't be undone." = "Foretype आपके लेखन से सीखी हर बात भूल जाएगा। इसे पहले जैसा नहीं किया जा सकता।";
+"Delete" = "डिलीट करें";
+"%@ is in use" = "%@ उपयोग में है";
+"Foretype is using this model. Choose another model or a server first, then delete it." = "Foretype इस मॉडल का उपयोग कर रहा है। पहले कोई दूसरा मॉडल या सर्वर चुनें, फिर इसे डिलीट करें।";
+"Delete %@?" = "%@ डिलीट करें?";
+"This incomplete download (%@) is removed from the Models folder." = "यह अधूरा डाउनलोड (%@) मॉडल फ़ोल्डर से हटा दिया जाएगा।";
+"The model file (%@) is removed from this Mac. You can download it again from the Model menu." = "मॉडल फ़ाइल (%@) इस Mac से हटा दी जाएगी। आप इसे “मॉडल” मेनू से फिर डाउनलोड कर सकते हैं।";
+"The file (%@) is removed from this Mac. It isn't in Foretype's catalog, so it can't be downloaded again from here." = "फ़ाइल (%@) इस Mac से हटा दी जाएगी। यह Foretype के कैटलॉग में नहीं है, इसलिए इसे यहाँ से फिर डाउनलोड नहीं किया जा सकता।";
+"Couldn't delete %@" = "%@ डिलीट नहीं किया जा सका";
+
+/* One-time tip cards (Controller.swift). Google Docs' and Chrome's own labels stay in English. */
+"Google Docs hides its text from other apps. Turn on Tools ▸ Accessibility ▸ Screen reader support (⌘⌥Z) to get suggestions." = "Google Docs अपना टेक्स्ट दूसरे ऐप्स से छिपाता है। सुझाव पाने के लिए Tools ▸ Accessibility ▸ Screen reader support (⌘⌥Z) चालू करें।";
+"For ghost text at the caret in %@, open chrome://accessibility and turn on Text Metrics." = "%@ में सुझाव सीधे कर्सर पर दिखाने के लिए chrome://accessibility खोलें और Text Metrics चालू करें।";
+
+/* Custom Instructions window (InstructionsWindow.swift) */
+"Custom Instructions" = "कस्टम निर्देश";
+"For all apps" = "सभी ऐप्स के लिए";
+"Who you are and how you write, for example “I'm a product manager. Keep it friendly and short; British spelling.”" = "आप कौन हैं और कैसे लिखते हैं, जैसे “मैं प्रोडक्ट मैनेजर हूँ। लहजा दोस्ताना और बात छोटी रखें; ब्रिटिश वर्तनी।”";
+"For %@" = "%@ के लिए";
+"Added after the note above whenever you type in %@." = "जब भी आप %@ में टाइप करते हैं, यह ऊपर वाले नोट के बाद जोड़ा जाता है।";
+
+/* Model downloads (ModelManager.swift) */
+"Only model files in the Models folder can be deleted here." = "यहाँ केवल मॉडल फ़ोल्डर की मॉडल फ़ाइलें डिलीट की जा सकती हैं।";
+"Checksum mismatch; the download was discarded." = "चेकसम मेल नहीं खाया; डाउनलोड ख़ारिज कर दिया गया।";
+
+/* Setup window (OnboardingWindow.swift) */
+"Set Up Foretype" = "Foretype सेटअप करें";
+"Foretype suggests your next words in any app and runs entirely on this Mac. Nothing you type is sent anywhere." = "Foretype किसी भी ऐप में आपके अगले शब्द सुझाता है और पूरी तरह इसी Mac पर चलता है। आप जो भी टाइप करते हैं, वह कहीं नहीं भेजा जाता।";
+"Accessibility (required)" = "ऐक्सेसिबिलिटी (आवश्यक)";
+"Lets Foretype read the text field you are typing in and type the words you accept." = "इससे Foretype वह टेक्स्ट फ़ील्ड पढ़ सकता है जिसमें आप टाइप कर रहे हैं, और आपके स्वीकार किए गए शब्द टाइप कर सकता है।";
+"Screen Recording (optional)" = "स्क्रीन रिकॉर्डिंग (वैकल्पिक)";
+"Reads text near the field, such as the message you are answering, for better suggestions. Images are never stored." = "बेहतर सुझावों के लिए फ़ील्ड के आसपास का टेक्स्ट पढ़ता है, जैसे वह संदेश जिसका आप जवाब दे रहे हैं। इमेज कभी सहेजी नहीं जातीं।";
+"Language model" = "भाषा मॉडल";
+"%1$@, %2$@. %3$@, downloaded from Hugging Face and checked against a pinned SHA-256." = "%1$@, %2$@। %3$@ लाइसेंस। Hugging Face से डाउनलोड होता है और एक तय SHA-256 से जाँचा जाता है।";
+"No model in the catalog for this Mac." = "कैटलॉग में इस Mac के लिए कोई मॉडल नहीं है।";
+"Open Settings" = "सेटिंग खोलें";
+"Allow" = "अनुमति दें";
+"Download" = "डाउनलोड करें";
+"Start Foretype" = "Foretype शुरू करें";
+"Granted" = "अनुमति दी गई";
+"Not granted yet" = "अभी अनुमति नहीं दी गई";
+"Not granted" = "अनुमति नहीं दी गई";
+"Off" = "बंद";
+"Using your server: %@" = "आपके सर्वर का उपयोग हो रहा है: %@";
+"Installed" = "इंस्टॉल किया गया";
+"Downloading… %@" = "डाउनलोड जारी है… %@";
+"Paused at %@" = "%@ पर पॉज़ किया गया";
+"Resume" = "जारी रखें";
+"Verifying…" = "सत्यापन किया जा रहा है…";
+"Download failed: %@" = "डाउनलोड विफल हुआ: %@";
+"Retry" = "फिर कोशिश करें";
+"Using %@" = "%@ का उपयोग हो रहा है";
+"Not downloaded" = "डाउनलोड नहीं किया गया";
+
+/* Settings window tabs (PreferencesWindow.swift) */
+"General" = "सामान्य";
+"Apps" = "ऐप्स";
+"Statistics" = "आँकड़े";
+
+/* Settings ▸ General */
+"Suggestions:" = "सुझाव:";
+"Show suggestions as you type" = "टाइप करते समय सुझाव दिखाएँ";
+"Length:" = "लंबाई:";
+"Stop at the end of a sentence" = "वाक्य के अंत पर रुकें";
+"When this is off, a suggestion can run on into the next sentence." = "यह बंद होने पर सुझाव अगले वाक्य तक जा सकता है।";
+"Typing aids:" = "टाइपिंग सहायता:";
+"Offer emoji for :shortcodes" = ":shortcodes के लिए ईमोजी सुझाएँ";
+"Type a colon and a name, like :tada, then Tab." = "कोलन और नाम टाइप करें, जैसे :tada, फिर Tab दबाएँ।";
+"Offer a fix for a misspelled word" = "ग़लत वर्तनी वाले शब्द का सुधार सुझाएँ";
+"Wait while a word looks misspelled" = "शब्द की वर्तनी ग़लत लगे तो रुकें";
+"Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before." = "दोनों आपकी भाषाओं में macOS की वर्तनी जाँच का उपयोग करते हैं, और नाम, संक्षिप्त रूप और आपके पहले लिखे शब्द छोड़ देते हैं।";
+"Suggest in the middle of a line (experimental)" = "पंक्ति के बीच में भी सुझाव दें (प्रायोगिक)";
+"Up to three words, shown in a small card under the caret." = "अधिकतम तीन शब्द, कर्सर के नीचे एक छोटे कार्ड में।";
+"Screen context:" = "स्क्रीन संदर्भ:";
+"Use text on screen near the field" = "फ़ील्ड के आसपास का स्क्रीन टेक्स्ट उपयोग करें";
+"Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away." = "आप जिस फ़ील्ड में टाइप कर रहे हैं, उसके आसपास का टेक्स्ट (जैसे वह संदेश जिसका आप जवाब दे रहे हैं) ऑन-डिवाइस OCR से पढ़ता है। इमेज तुरंत हटा दी जाती है।";
+"Screen Recording allowed" = "स्क्रीन रिकॉर्डिंग की अनुमति है";
+"Screen Recording not allowed yet" = "स्क्रीन रिकॉर्डिंग की अनुमति अभी नहीं है";
+"Instructions:" = "निर्देश:";
+"Edit…" = "संपादित करें…";
+"A note about you and how you write, for all apps and for the app you were last in." = "आपके और आपकी लेखन-शैली के बारे में एक नोट, सभी ऐप्स के लिए और उस ऐप के लिए जिसमें आप पिछली बार थे।";
+"No note for all apps" = "सभी ऐप्स के लिए कोई नोट नहीं";
+"Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes." = "Tab अगला शब्द लेता है, Tab के ऊपर वाली कुंजी पूरा सुझाव लेती है, Esc उसे हटा देता है और Option-Tab असली Tab टाइप करता है। Ctrl + Tab के ऊपर वाली कुंजी वहाँ भी सुझाव देती है जहाँ Foretype आमतौर पर चुप रहता है; Ctrl-Option-Command + वही कुंजी उस ऐप को 5 मिनट के लिए स्नूज़ करती है।";
+
+/* Suggestion lengths and personalization strengths (Settings.swift) */
+"Short (2 words)" = "छोटा (2 शब्द)";
+"Medium (4 words)" = "मध्यम (4 शब्द)";
+"Long (7 words)" = "लंबा (7 शब्द)";
+"Very long (10 words)" = "बहुत लंबा (10 शब्द)";
+"Gentle" = "हल्का";
+"Balanced" = "संतुलित";
+"Strong" = "प्रबल";
+
+/* Settings ▸ Personalization */
+"Learn from my writing" = "मेरे लेखन से सीखें";
+"Off by default. Only fields where you accepted a suggestion are kept, only the text you typed there, at least 20 characters, never secure fields. Stored encrypted on this Mac (key in your Keychain); nothing leaves it." = "डिफ़ॉल्ट रूप से बंद। केवल वे फ़ील्ड रखे जाते हैं जिनमें आपने कोई सुझाव स्वीकार किया, उनमें भी सिर्फ़ आपका टाइप किया टेक्स्ट, कम से कम 20 वर्ण, और सुरक्षित फ़ील्ड कभी नहीं। इस Mac पर एंक्रिप्टेड रूप में सहेजा जाता है (कुंजी आपके कीचेन में); कुछ भी बाहर नहीं जाता।";
+"Strength:" = "प्रबलता:";
+"How strongly suggestions lean towards words you use often." = "सुझाव आपके अक्सर उपयोग होने वाले शब्दों की ओर कितना झुकें।";
+"Learned:" = "सीखा गया:";
+"Nothing while this is off" = "यह बंद होने पर कुछ नहीं";
+"Available once Foretype is running" = "Foretype चलने पर उपलब्ध";
+"Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words." = "इंपोर्ट आपकी चुनी हुई टेक्स्ट फ़ाइलों (.txt, .md) को अनुच्छेदों में बाँटकर जोड़ता है, ताकि आपके शब्द सीखे जा सकें।";
+
+/* Settings ▸ Apps */
+"Apps you changed" = "आपके बदले हुए ऐप्स";
+"You haven't changed any app yet. To turn Foretype off (or on) in an app, open the Foretype menu while that app is in front and choose “Suggest in …”." = "आपने अभी तक किसी ऐप की सेटिंग नहीं बदली है। किसी ऐप में Foretype बंद (या चालू) करने के लिए, वह ऐप सामने रहते हुए Foretype मेनू खोलें और “… में सुझाव दें” चुनें।";
+"Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts." = "“हटाएँ” किसी ऐप को उसकी डिफ़ॉल्ट सेटिंग पर लौटा देता है। कोड एडिटर, पासवर्ड मैनेजर, रिमोट डेस्कटॉप और स्प्रेडशीट डिफ़ॉल्ट रूप से बंद हैं; टर्मिनल केवल AI-एजेंट प्रॉम्प्ट पर सुझाव देते हैं।";
+"On (off by default)" = "चालू (डिफ़ॉल्ट रूप से बंद)";
+"not installed" = "इंस्टॉल नहीं है";
+"Remove" = "हटाएँ";
+"Return %@ to its default" = "%@ को डिफ़ॉल्ट पर लौटाएँ";
+"Development: limited to %@ (FORETYPE_ONLY_APPS)" = "डेवलपमेंट: केवल %@ तक सीमित (FORETYPE_ONLY_APPS)";
+
+/* Settings ▸ Model: %1$@ percent, %2$@ download size, %3$@ bytes kept */
+"Built-in models" = "बिल्टइन मॉडल";
+"recommended" = "अनुशंसित";
+"incomplete download" = "अधूरा डाउनलोड";
+"not in the catalog" = "कैटलॉग में नहीं";
+"%@ on disk" = "डिस्क पर %@";
+"%@ on disk · in use" = "डिस्क पर %@ · उपयोग में";
+"In Use" = "उपयोग में";
+"Use" = "उपयोग करें";
+"Delete…" = "डिलीट करें…";
+"Downloading %1$@ of %2$@" = "%2$@ में से %1$@ डाउनलोड हुआ";
+"Paused at %1$@ of %2$@ (%3$@ kept until Foretype quits)" = "%2$@ में से %1$@ पर पॉज़ (Foretype बंद होने तक %3$@ रखा गया है)";
+"Paused at %1$@ of %2$@ (kept until Foretype quits)" = "%2$@ में से %1$@ पर पॉज़ (Foretype बंद होने तक रखा गया है)";
+"Discard" = "ख़ारिज करें";
+"Verifying the checksum…" = "चेकसम जाँचा जा रहा है…";
+"%1$@ download · %2$@" = "%1$@ डाउनलोड · %2$@";
+"Show in Finder" = "Finder में दिखाएँ";
+"Where suggestions come from" = "सुझाव कहाँ से आते हैं";
+"Engine:" = "इंजन:";
+"Server URL:" = "सर्वर URL:";
+"Model:" = "मॉडल:";
+"API key:" = "API कुंजी:";
+"optional" = "वैकल्पिक";
+"saved; type to replace" = "सहेजी गई; बदलने के लिए टाइप करें";
+"A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers (Ollama, LM Studio, a cloud provider) complete words you have started less well, about half the typing saved. The API key is kept in your Keychain." = "llama-server बिल्टइन इंजन जैसे ही सुझाव देता है। OpenAI-संगत सर्वर (Ollama, LM Studio, कोई क्लाउड प्रदाता) आपके शुरू किए गए शब्दों को उतनी अच्छी तरह पूरा नहीं करते; टाइपिंग की बचत लगभग आधी रह जाती है। API कुंजी आपके कीचेन में रखी जाती है।";
+"Apply" = "लागू करें";
+
+/* Settings ▸ Statistics */
+"Today" = "आज";
+"Last 7 days" = "पिछले 7 दिन";
+"All time" = "अब तक";
+"Keystrokes saved" = "बचाए गए कीस्ट्रोक";
+"Words inserted" = "डाले गए शब्द";
+"Characters inserted" = "डाले गए वर्ण";
+"Suggestions accepted" = "स्वीकार किए गए सुझाव";
+"Next word (Tab)" = "अगला शब्द (Tab)";
+"Whole suggestion" = "पूरा सुझाव";
+"Nothing accepted yet." = "अभी तक कुछ स्वीकार नहीं किया गया।";
+"Counting since %@." = "%@ से गिनती हो रही है।";
+"Keystrokes saved are the characters Foretype typed for you minus the one key press each accept took. Only these numbers are stored (the last 30 days and the totals), never what you typed or where." = "बचाए गए कीस्ट्रोक वे वर्ण हैं जो Foretype ने आपके लिए टाइप किए, हर स्वीकृति पर दबाई गई एक कुंजी घटाकर। केवल ये संख्याएँ सहेजी जाती हैं (पिछले 30 दिनों की और कुल), कभी यह नहीं कि आपने क्या टाइप किया या कहाँ।";
+"Reset Statistics…" = "आँकड़े रीसेट करें…";
+"Reset the statistics?" = "आँकड़े रीसेट करें?";
+"Today's, the last 30 days' and the all-time counts go back to zero." = "आज की, पिछले 30 दिनों की और अब तक की सभी गिनतियाँ शून्य हो जाएँगी।";
+"Reset" = "रीसेट करें";

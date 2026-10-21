@@ -1,0 +1,2 @@
+/* Info.plist values, Hindi. The English ones are in the Info.plist that scripts/build-mac.sh writes. */
+"NSAccessibilityUsageDescription" = "अगले शब्द सुझाने के लिए Foretype वह टेक्स्ट फ़ील्ड पढ़ता है जिसमें आप टाइप कर रहे हैं, और आपके स्वीकार किए गए शब्द टाइप करता है। सब कुछ इसी Mac पर रहता है।";

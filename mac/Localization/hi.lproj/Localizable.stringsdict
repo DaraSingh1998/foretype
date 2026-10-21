@@ -1,0 +1,108 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Counted nouns and sentences (LCount in mac/Sources/Foretype/Localization.swift).
+  The key is the English plural with %@ for the number. Each entry gets the count as
+  %1$ld (it only picks the form; leave it out of the text) and the number, already
+  formatted for the locale, as %2$@. Hindi uses the categories one (0 and 1) and other.
+-->
+<plist version="1.0">
+<dict>
+	<key>%@ keystrokes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ कीस्ट्रोक</string>
+			<key>other</key>
+			<string>%2$@ कीस्ट्रोक</string>
+		</dict>
+	</dict>
+	<key>%@ texts</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ टेक्स्ट</string>
+			<key>other</key>
+			<string>%2$@ टेक्स्ट</string>
+		</dict>
+	</dict>
+	<key>%@ words</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ शब्द</string>
+			<key>other</key>
+			<string>%2$@ शब्द</string>
+		</dict>
+	</dict>
+	<key>Imported %@ passages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ अनुच्छेद इंपोर्ट किया गया</string>
+			<key>other</key>
+			<string>%2$@ अनुच्छेद इंपोर्ट किए गए</string>
+		</dict>
+	</dict>
+	<key>From %@ files. Suggestions lean towards the words you use from the next one on.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ फ़ाइल से। अगले सुझाव से ही सुझावों में आपके अपने शब्द ज़्यादा आएँगे।</string>
+			<key>other</key>
+			<string>%2$@ फ़ाइलों से। अगले सुझाव से ही सुझावों में आपके अपने शब्द ज़्यादा आएँगे।</string>
+		</dict>
+	</dict>
+	<key>notes for %@ apps</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ ऐप के लिए नोट</string>
+			<key>other</key>
+			<string>%2$@ ऐप्स के लिए नोट्स</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
