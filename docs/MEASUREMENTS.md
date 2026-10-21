@@ -328,9 +328,10 @@ replay tool is Rust and this backend lives in the Swift shell.
 
 ### llama-server vocabulary bias
 
-`logit_bias` for the user's single-token words (one `/tokenize` call per profile) is in;
-not yet measured against llama-server (the leave-one-out personalization replay with
-`--backend llama-server` is the way to do it).
+`logit_bias` for the user's single-token words (one `/tokenize` call per profile).
+Leave-one-out over the 12 self-written documents, examples off (vocabulary bias only),
+llama-server 0.7.0 with Qwen3-1.7B: off 40.7%, Balanced 41.0%, Strong 41.3% (in-process,
+Phase 3: 41.0% → 41.2%). Small, as expected on documents that share few words.
 
 ## How to reproduce
 
