@@ -41,6 +41,7 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | OCR + row assembly | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
 | Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
+| Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
 | Pixel caret vs AX caret | `scripts/caret-measure.sh [APP BUNDLE_ID FIXTURE]` | Accessibility and Screen Recording (the terminal's), user idle |
 | Pixel caret in the app (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-pixel-caret.sh [APP BUNDLE_ID FIXTURE]` | same |
 | Model download + verify | `FORETYPE_MODEL_BASE_URL=http://127.0.0.1:PORT FORETYPE_MODELS_DIR=/tmp/x mac/.build/release/Foretype --download-selftest qwen3-0.6b-base-q8` | a local `python3 -m http.server` serving the GGUF |
@@ -248,6 +249,41 @@ suggestions as a fresh context, then the corpus replay, and record both in
 `coreDict` key → a control in the Settings window (`PreferencesWindow.swift`, the pane's
 `build()` and `refresh()`) and, if it is a common one, the menu → `host.settingsChanged()`
 (`Controller.applySettings()`) pushes it and refreshes the window.
+
+**Add or change a UI string.** Write it as `L("English text")` in Swift; a format takes
+numbered arguments, `L("Delete %@?", name)` or `L("%1$@ of %2$@", a, b)`, all strings
+(format numbers with `formatNumber`/`formatPercent` first). A count that changes the noun
+goes through `LCount(n, "%@ files", one: "%@ file")` and needs an entry in every
+`Localizable.stringsdict`, English included (count `%1$ld`, number `%2$@`). Add the
+translation to each `mac/Localization/<lang>.lproj/Localizable.strings`, then run
+`python3 scripts/check-localization.py`. Don't localize `Log.debug` lines, self-test
+output, file paths, bundle IDs or anything sent to the core.
+
+**Add a language.** Create `mac/Localization/<code>.lproj/` (an Apple language code, `hi`,
+`de`, `pt_BR`) with `Localizable.strings` (copy `hi.lproj`'s and translate every value),
+`Localizable.stringsdict` (the plural categories that language has, e.g. `one`/`few`/`many`/
+`other` for Russian) and `InfoPlist.strings`. `build-mac.sh` picks up every `.lproj`
+and lists it in `CFBundleLocalizations`; nothing else changes. Use the terms macOS itself
+uses in that language: the system's own `.loctable` files hold them, e.g.
+`plutil -extract hi xml1 -o - "/System/Library/ExtensionKit/Extensions/SecurityPrivacyExtension.appex/Contents/Resources/Localizable.loctable"`.
+Then check the Settings tabs and the setup window for clipped text (below).
+
+**Try the app in another language.** Launch the bundle (only it has the `.lproj` folders)
+with `-AppleLanguages`, restricted as always, after exporting the defaults domain:
+
+```bash
+defaults export dev.foretype.Foretype /tmp/ft-defaults.plist
+open -n --env FORETYPE_ONLY_APPS=com.apple.TextEdit build/Foretype.app --args -AppleLanguages '(hi)'
+build/ftdrive menu dev.foretype.Foretype                         # titles are now Hindi
+build/ftdrive menu dev.foretype.Foretype "सेटिंग…"                # Settings…
+build/ftdrive press dev.foretype.Foretype "आँकड़े"                 # a Settings tab
+build/ftdrive windows dev.foretype.Foretype                      # CGWindowIDs for screencapture -l
+build/ftdrive menu dev.foretype.Foretype "Foretype बंद करें"       # Quit
+defaults import dev.foretype.Foretype /tmp/ft-defaults.plist
+```
+
+A fresh ad-hoc build has no Accessibility grant, so the setup window opens and the engine
+never starts; that is enough to see every window. `-AppleLanguages '(en)'` gives English.
 
 **Change the prompt format or decoding.** Keep everything per-keystroke at the end of the
 prompt (cache stability). Replay the corpus before and after.

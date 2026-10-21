@@ -138,6 +138,14 @@ accept took). The menu shows "Saved 1,234 keystrokes today · 24,920 in all". On
 numbers are stored (UserDefaults `usageStats`: totals plus one bucket per day for the last
 30 days); never the text, and not the app it went to.
 
+### Languages
+
+Menus, windows and alerts are in **English** and **Hindi (हिन्दी)**. Foretype follows the
+language macOS picks for it: System Settings ▸ General ▸ Language & Region (the order of
+your preferred languages, or a language just for Foretype under Applications). This is the
+interface only; it doesn't change the suggestions. Adding a language is a folder of
+translated strings (`docs/DEVELOPMENT.md`).
+
 ### Latency design
 
 - The prompt ends *before* the partial word. Token healing masks the first decode steps to

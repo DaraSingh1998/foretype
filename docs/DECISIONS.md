@@ -297,3 +297,22 @@ found: the mirror card stays. Soft-wrapped lines are found again only at the nex
 would trade the portable Rust core, GGUF models and the KV rollback work (D21) for an
 Apple-only runtime with no measurable gain.
 
+
+## D33. Localization: English keys, `.lproj` folders copied into the bundle (2026-10-21)
+
+**Decision.** Every UI string is `L("English text")`, looked up in `Bundle.main`, with the
+English text as key and fallback. Translations are hand-kept `.strings`/`.stringsdict`
+files in `mac/Localization/<lang>.lproj`, which `scripts/build-mac.sh` copies into
+`Contents/Resources`. Hindi is the first language besides English.
+**Why.** A SwiftPM `resources:` target puts its bundle at the `.app`'s top level, which
+code signing rejects, and `Bundle.module` would look for it there. Copying `.lproj`
+folders is what Xcode does and needs nothing at run time. English keys keep the code
+readable and make a bare dev binary (no `.lproj`) fall back to English with no extra step.
+Numbers are formatted before they reach a format string, so translations only move
+`%n$@` placeholders; plurals use `.stringsdict` so a language with more forms than English
+only needs its own file. Hindi follows macOS's own Hindi terms (from the system's
+`.loctable` files: सेटिंग, ऐक्सेसिबिलिटी, स्क्रीन रिकॉर्डिंग, कीचेन) so the names in
+Foretype's text match what the user sees in System Settings.
+**Cost.** Keys are English sentences: editing the English text means editing the key in
+every language (`scripts/check-localization.py` lists what is missing). Text from the core
+(error messages) stays English.

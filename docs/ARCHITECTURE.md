@@ -51,6 +51,7 @@ Foretype has two halves joined by a small C ABI:
 | `models/catalog.json` | Downloadable models with pinned SHA-256 |
 | `eval/corpus.jsonl` | 53-document evaluation corpus |
 | `mac/Sources/Foretype/*.swift` | macOS shell (one file per component, see below) |
+| `mac/Localization/*.lproj` | UI translations (`Localizable.strings`, `.stringsdict`, `InfoPlist.strings`); English is the base |
 | `scripts/` | `build-mac.sh`, `package-mac.sh`, e2e tests, `ftdrive.swift` test driver |
 | `packaging/homebrew/` | Cask template |
 | `tools/spike/` | Phase 0 spike: AX probe, llama.cpp benchmarks, replay harness (archival) |
@@ -498,6 +499,39 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
 - **`UpdateController.swift`**: Sparkle 2 when built with `FORETYPE_SPARKLE=1` and the
   Info.plist has `SUFeedURL` and `SUPublicEDKey`; otherwise a no-op.
 - **`AX.swift`**: typed AX helpers and the debug logger.
+- **`Localization.swift`**: `L(_:)`, `L(_:_:)` and `LCount(_:_:one:)`, the lookups for every
+  user-visible string. See *Localization* below.
+
+### Localization
+
+Every string the user sees goes through `L("English text")` (or `L("Format %1$@ … %2$@",
+args…)`), which is `Bundle.main.localizedString(forKey:value:table:)` with the English text
+as both key and fallback. Translations are plain files in the repo,
+`mac/Localization/<lang>.lproj/`:
+
+- `Localizable.strings`: one line per key, `"English" = "translation";`. Formats number
+  their arguments (`%1$@`, `%2$@`) so a translation can reorder them; every argument is a
+  string, numbers and percentages are formatted first (`formatNumber`, `formatPercent`:
+  `NumberFormatter` in the current locale, so Indian grouping and the locale's digits).
+- `Localizable.stringsdict`: counted nouns and sentences (`LCount(n, "%@ files", one: "%@
+  file")`). The entry receives the count as `%1$ld`, which only picks the plural form, and
+  the formatted number as `%2$@`. `en.lproj` has one too; a bare binary without it falls
+  back to the two English forms in the call.
+- `InfoPlist.strings`: `NSAccessibilityUsageDescription`.
+
+`scripts/build-mac.sh` copies each `.lproj` into `Foretype.app/Contents/Resources/` before
+signing and lists them in `CFBundleLocalizations` (`CFBundleDevelopmentRegion` is `en`).
+It is not a SwiftPM resource target: SwiftPM would place `Foretype_Foretype.bundle` at the
+app's top level, where code signing rejects it, and `Bundle.module` would look there. A bare
+`mac/.build/release/Foretype` has no `.lproj` next to it, so every lookup returns the key
+and the app runs in English. macOS picks the language (System Settings ▸ General ▸
+Language & Region, per app under Applications); AppKit's own buttons and panels follow it.
+Not localized: debug logs, self-test output, text from the core (its error messages and
+the model path while loading; the one fixed idle detail, "model unloaded", is mapped in the
+shell), catalog model names and licenses, emoji shortcodes, Keychain item labels (stored
+data), Google Docs' and Chrome's own setting names in the tip cards.
+`scripts/check-localization.py` checks that every key in the code has a translation with
+the same placeholders.
 
 ## Data and privacy
 

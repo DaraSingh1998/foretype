@@ -76,10 +76,10 @@ are kept for if that changes; the core stays portable.
   self-written documents: tuning on those would fit noise); measure the llama-server
   `logit_bias`. Cotypist's history can't be imported (encrypted, D30); Import Writing…
   takes text files instead.
-- **Product**: localization, resume data that survives a relaunch, adding an app to the
+- **Product**: resume data that survives a relaunch, adding an app to the
   per-app list from the Settings window (today only from the menu while that app is in
-  front). (Settings window, statistics, model manager polish and the Apple on-device
-  fallback landed.)
+  front). (Settings window, statistics, model manager polish, the Apple on-device
+  fallback and localization, English and Hindi, landed.)
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.
