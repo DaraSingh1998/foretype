@@ -310,14 +310,21 @@ default.
 
 ### Typo gate and autocorrect (`ft-replay --spell`)
 
-The corpus has no typos, so every block or correction on it is a false one. The macOS spell
-checker (via `tools/spell-map`, the app's own `Speller`, language en_IN) flagged 19 of
-2,792 distinct fragments as impossible; all but the lowercase `malbolge…` and the American
-`apologiz…` are capitalized and pass as likely names. Replaying with the verdicts: 4
-requests blocked, keystrokes saved unchanged at 41.9%. Autocorrect proposed nothing (its
-one candidate, "ROblox" → "Roblox", is capitalized mid-sentence and treated as a name).
-Spell-checker calls cost 0.1–1 ms each off the main thread once warm (about 11 ms for the
-first).
+The corpus has no typos, so every block or correction on it is a false one. Verdicts come
+from the app's own `Speller` (via `tools/spell-map`) in the checker's current language,
+en_IN, with `/usr/share/dict/words` as a second opinion on whether a fragment can still
+become a word. Of 2,792 distinct fragments, 18 are "impossible": all names (Kaczynski,
+Malbolge, Priya, Roblox, Hauts), which the core lets through as capitalized, except the
+lowercase `malbolge` (a programming language). Autocorrect candidates: "apologize" →
+"apologise" (the en_IN dictionary is British), "Baie" → "Babe" (a name at a sentence start
+would be wrongly offered), "ROblox" → "Roblox" (mid-sentence, skipped as a name). Replay
+with the verdicts: keystrokes saved unchanged at 41.9%; 4 requests blocked as typos and 2 corrections offered (both false, on a typo-free corpus; the simulated user ignores them). Spell-checker calls cost 0.1–1 ms each off the main
+thread once warm (about 11 ms for the first).
+
+Two earlier versions were wrong, and the hands-on run (below) caught both. With no
+language passed, the checker accepted a word valid in *any* of the user's ~30 languages,
+so "recie" passed. With only the checker's completion list, real words such as "vom…" and
+"signu…" were blocked.
 
 ### Apple on-device model (`shell` backend)
 
@@ -408,6 +415,34 @@ LibreOffice 26.8.0.3, same Mac and display, the RTF fixture opened from a copy, 
   (the document is zoomed), so the width advance in that font was 205 pt off over a line, and
   in the fallback font 66 pt (21 pt with the learned width scale). `CaretResolver.font` now
   scales a font whose last characters are more than 25% wider or narrower on screen.
+
+### Hands-on run (2026-10-21)
+
+Development build (`FORETYPE_ONLY_APPS` set to the app or the test process), user off the
+keyboard, new documents only:
+
+- **TextEdit** (`scripts/e2e-typing-aids.sh`): all 6 checks pass. The emoji ghost `🎉 :tada:`
+  sits right after `:tad` and Tab replaces the shortcode; `→ receive` is offered after
+  "recieve " (TextEdit's own autocorrect fixes the word on the space as well); "zqxwv" ends
+  in a policy hide; in "We should | the meeting to Thursday." with "m" typed, the card
+  "⇥ ention that" appears under the caret and Tab gives "We should mention the meeting…".
+- **Pixel caret in TextEdit** (`FORETYPE_CARET=pixel scripts/e2e-pixel-caret.sh TextEdit
+  com.apple.TextEdit`): blink detection in 2–5 frames (165–564 ms), verify in one frame
+  (116 ms), the ghost on the right line at the caret.
+- **Fresh Chrome** (`scripts/e2e-chrome-fresh.sh`): suggestion shown (ghost "I think we
+  can" after the caret, in the page's Georgia), primed again after the flag was cleared.
+- **Chrome replacements** (`scripts/e2e-browser-aids.sh`): Tab turned `:tad` into 🎉 and
+  fixed "recieve" (Chrome doesn't autocorrect, so this is Foretype's replace-on-Tab). The
+  first run failed: the model suggested "rec" → "ieve the notes" and type-through carried
+  the misspelling past autocorrect, so typing aids now run before type-through.
+- **Text markers** (`MARKERS=1`): forcing the marker path in Chrome's textarea produced no
+  text (Chrome answers none of the marker attributes there); Safari couldn't be tested (its
+  focus stayed in the address bar). The fallback is unverified and harmless when markers
+  are missing.
+- **VS Code** (user clicked into the chat input): the field is `AXTextArea` labelled
+  "Message input", which the guessed `allow_fields` patterns missed; added for VS Code,
+  Cursor and Windsurf.
+- Not done (screen control declined): LibreOffice with a real click, a Mail draft, Notes.
 
 ## How to reproduce
 

@@ -295,10 +295,10 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   entries need testing app by app.
 - Live screen capture has been checked in the TextEdit end-to-end test (a development
   build under a parent process with Screen Recording); the bundled app needs its own grant.
-- New in this round and checked only by unit tests and replays so far: emoji, autocorrect
-  and the typo gate in a live app, the mid-line card, the code-editor chat patterns
-  (`allow_fields` were written without access to those apps' AX trees), text-marker
-  reads, and the Google Docs and Arc hints.
+- Emoji, autocorrect, the typo gate, the mid-line card and the pixel caret were checked
+  live in TextEdit and Chrome (2026-10-21, `docs/MEASUREMENTS.md`). Not yet live: Cursor and
+  Windsurf chat labels (VS Code's is checked), text-marker reads, the Google Docs and Arc
+  hints, LibreOffice, Mail and Notes.
 - The pixel caret (apps without caret geometry) is measured in TextEdit against its
   Accessibility caret and in LibreOffice Writer; it is untested in Microsoft Teams and
   Obsidian. A caret that never blinks (the "prefer non-blinking cursor" Accessibility

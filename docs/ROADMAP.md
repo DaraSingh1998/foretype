@@ -64,9 +64,10 @@ are kept for if that changes; the core stays portable.
 - **Quality**: a model trained for fill-in-the-middle, so mid-line can use the rest of the
   line (Qwen3's FIM tokens don't work on prose). (Beam search, the typo gate, emoji,
   autocorrect and mid-line landed in `feat/quality`.)
-- **Compatibility**: app-by-app insertion testing to fill `insertion` overrides; check the
-  VS Code/Cursor/Windsurf chat `allow_fields` patterns and text-marker reads in real apps;
-  the overlay checked by eye in Safari, Mail and Notes; the pixel caret locator checked in
+- **Compatibility**: app-by-app insertion testing to fill `insertion` overrides; the chat
+  labels of Cursor and Windsurf (VS Code's "Message input" is checked); text-marker reads in
+  a real WebKit editor (Chrome's textarea answers none); the overlay checked by eye in
+  Safari, Mail and Notes; the pixel caret locator checked in
   Teams and Obsidian/CodeMirror (not tested: Teams is the developer's live chat, Obsidian
   is not installed) and with a non-blinking caret; LibreOffice Writer end to end (it
   reported no `AXFocusedUIElement` for a document opened from outside; a fallback could
