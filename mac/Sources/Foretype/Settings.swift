@@ -52,9 +52,18 @@ final class AppSettings {
         set { d.set(newValue, forKey: "midLine") }
     }
 
+    /// The note for every app: the default one until the user saves their own (an empty one
+    /// too). Saving the default text again goes back to following the defaults, which may
+    /// change in later versions.
     var instructions: String {
-        get { d.string(forKey: "instructions") ?? "" }
-        set { d.set(newValue, forKey: "instructions") }
+        get { d.string(forKey: "instructions") ?? DefaultInstructions.shared.global }
+        set {
+            if newValue == DefaultInstructions.shared.global {
+                d.removeObject(forKey: "instructions")
+            } else {
+                d.set(newValue, forKey: "instructions")
+            }
+        }
     }
 
     /// Apps the user switched off.
@@ -126,10 +135,26 @@ final class AppSettings {
         set { d.set(newValue, forKey: "onboarded") }
     }
 
-    /// Extra instructions per bundle ID.
+    /// Extra instructions per bundle ID: the defaults, overridden by the user's own (an empty
+    /// one switches an app's default off).
     var appInstructions: [String: String] {
-        get { d.dictionary(forKey: "appInstructions") as? [String: String] ?? [:] }
-        set { d.set(newValue, forKey: "appInstructions") }
+        DefaultInstructions.shared.apps.merging(ownAppInstructions) { _, own in own }
+    }
+
+    private var ownAppInstructions: [String: String] {
+        d.dictionary(forKey: "appInstructions") as? [String: String] ?? [:]
+    }
+
+    /// Saves an app's note; the app's default text (or nothing, when it has none) is stored as
+    /// "follow the defaults".
+    func setAppInstructions(_ text: String, for bundle: String) {
+        var own = ownAppInstructions
+        own[bundle] = text == (DefaultInstructions.shared.apps[bundle] ?? "") ? nil : text
+        d.set(own, forKey: "appInstructions")
+    }
+
+    var instructionsAreDefault: Bool {
+        d.object(forKey: "instructions") == nil && ownAppInstructions.isEmpty
     }
 
     var modelPath: String? {

@@ -483,6 +483,49 @@ second run passed. Its screenshots also show a second gray suggestion overlappin
 the developer's own Foretype.app (a main-branch build) was running and suggesting in
 TextEdit at the same time.
 
+## Default instructions (2026-10-22)
+
+Gemma 4 E2B Q4_K_M (the only model installed on the developer's Mac that day), full corpus
+(53 documents, 12,704 characters), built-in engine, Metal, 4 words, greedy, prefetch on,
+instant simulated user, `ft-replay --instructions FILE` (or `--default-instructions`). The
+notes go into the prompt as `[Writer's notes: …]`.
+
+| Notes | Keystrokes saved | Chars per accept | Accepts |
+|---|---:|---:|---:|
+| None (as before; matches the 2026-10-20 row exactly) | 42.8% | 3.78 | 1,954 |
+| "Natural, clear writing that matches the tone of the text so far, with correct spelling and grammar." | **43.5%** | 3.80 | 1,972 |
+| "Write naturally and clearly. Match the tone of the text so far. Use correct spelling and grammar." | 43.3% | 3.80 | 1,967 |
+| "Clear, natural writing in the same tone and language as the text so far." | 43.2% | 3.79 | 1,966 |
+| "I write plainly and naturally, keep the tone of what I have written so far, and use correct spelling and punctuation." | 42.9% | 3.77 | 1,967 |
+| The first note + per-app notes (email, chat, notes, documents, ...) | 43.3% | 3.79 | 1,972 |
+| Per-app notes alone | 42.7% | 3.79 | 1,949 |
+| Shipped defaults (`--default-instructions`), second run | 43.5% | 3.80 | 1,972 |
+
+- Every note for all apps helped; the descriptive one most (+0.7 points), and a second run
+  of it gave the same numbers, so it ships as the default.
+- Per-app style notes ("Email: polite, clear and to the point.", "Chat: short, casual
+  messages, the way people text.", ...) didn't: on the 11 documents from a named app (the
+  others are "a chat app" or "a browser", which have no bundle ID) they helped 3 and hurt 5
+  against the global note alone (`sw-chat-4` 46.2% → 42.5%, `sw-essay-1` 44.6% → 42.9%). The
+  app is already named in `[Written in …]`. None ship.
+- Not measured on the Qwen models (not installed). Latency is unchanged: the notes are part
+  of the cached header, prefilled once per field.
+
+Apple's on-device model (the `shell` backend), 106 points from the corpus (two per document,
+at word boundaries about a third and two thirds in), greedy, a prompt of `[Written in APP]`,
+the optional notes line and the text before the point, scored on whether its first word is
+the word that came next:
+
+| Instructions | Notes | First word right | Words right per point |
+|---|---|---:|---:|
+| Current ("You continue the user's text exactly where it stops. …") | none | 17.0% | 0.20 |
+| Current | default note | **19.8%** | 0.23 |
+| Reworded (bracketed lines are context, follow the notes, same language and tone) | none | 17.9% | 0.20 |
+| Reworded | default note | 19.8% | 0.23 |
+
+- The default note helps the Apple model too; reworded instructions didn't add anything with
+  it, so they were not changed.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

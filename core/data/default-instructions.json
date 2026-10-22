@@ -1,0 +1,5 @@
+{
+  "comment": "The custom instructions a fresh install starts with (core/src/instructions.rs). The prompt carries them as [Writer's notes: global, then the app's note], at most 400 characters. Groups give apps a shared note: {\"kind\": \"email\", \"note\": \"...\", \"apps\": [bundle IDs]}. None ship: on the corpus, per-app style notes helped 3 of 11 documents and hurt 5 (docs/MEASUREMENTS.md). Measure any change with ft-replay --default-instructions.",
+  "global": "Natural, clear writing that matches the tone of the text so far, with correct spelling and grammar.",
+  "groups": []
+}

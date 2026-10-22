@@ -29,6 +29,9 @@
 //!       pass 512 tokens (Gemma 4's sliding window). --fresh-batch N adds a third pass, fresh
 //!       but prefilled in batches of N: it differs from the first fresh pass only in float
 //!       rounding, which shows how much of a mismatch rate is noise rather than rollback.
+//!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
+//!       types with those custom instructions (corpus apps such as "Mail" stand in for their
+//!       bundle IDs); without either, with none.
 
 use std::collections::BTreeMap;
 use std::sync::mpsc;
@@ -37,6 +40,7 @@ use std::time::{Duration, Instant};
 use foretype_core::context::{self, ContextInput};
 use foretype_core::details::UserDetails;
 use foretype_core::engine::{Engine, EngineConfig, GenError, GenOptions};
+use foretype_core::instructions::{self, DefaultInstructions};
 use foretype_core::session::AcceptMode;
 use foretype_core::{words, Core, CoreConfig, Event, Settings, Snapshot};
 
@@ -444,6 +448,28 @@ struct Doc {
     text: String,
 }
 
+/// Bundle IDs of the corpus's named apps, for per-app instructions.
+const CORPUS_APPS: &[(&str, &str)] = &[
+    ("Mail", "com.apple.mail"),
+    ("Slack", "com.tinyspeck.slackmacgap"),
+    ("Teams", "com.microsoft.teams2"),
+    ("Messages", "com.apple.MobileSMS"),
+    ("Notes", "com.apple.Notes"),
+    ("a document", "com.apple.TextEdit"),
+];
+
+/// Settings carrying `notes`: the corpus snapshots use app names as bundle IDs, so each
+/// app's note is also filed under its name.
+fn with_notes(settings: Settings, notes: &DefaultInstructions) -> Settings {
+    let mut apps: std::collections::HashMap<String, String> = notes.apps.clone().into_iter().collect();
+    for (name, bundle) in CORPUS_APPS {
+        if let Some(note) = notes.apps.get(*bundle) {
+            apps.insert(name.to_string(), note.clone());
+        }
+    }
+    Settings { instructions: notes.global.clone(), app_instructions: apps, ..settings }
+}
+
 /// "An email written in Mail:" -> "Mail".
 fn app_of(header: &str) -> String {
     header
@@ -465,7 +491,14 @@ fn main() {
     let model = args[1].clone();
     let length_words: usize = flag("--words").and_then(|s| s.parse().ok()).unwrap_or(4);
     let beam_width: usize = flag("--beam").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let settings = Settings { length_words, beam_width, prefetch: !has("--no-prefetch"), ..Settings::default() };
+    let mut settings = Settings { length_words, beam_width, prefetch: !has("--no-prefetch"), ..Settings::default() };
+    let notes = match flag("--instructions") {
+        Some(p) => Some(instructions::parse(&std::fs::read_to_string(p).expect("read instructions")).expect("instructions json")),
+        None => has("--default-instructions").then(instructions::defaults),
+    };
+    if let Some(n) = &notes {
+        settings = with_notes(settings, n);
+    }
 
     if let Some(corpus) = flag("--corpus") {
         let only = flag("--only").unwrap_or_default();

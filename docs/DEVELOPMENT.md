@@ -91,6 +91,8 @@ $R "$M" --corpus eval/corpus.jsonl --beam 3                             # phrase
 $R "$M" --corpus eval/corpus.jsonl --mid-line-eval --typed 1            # mid-line word accuracy
 $R "$M" --corpus eval/corpus.jsonl --details eval/details.json          # About You fills
 $R "$M" --corpus eval/corpus.jsonl --details eval/details.json --details-in-prompt  # + writer line
+$R "$M" --corpus eval/corpus.jsonl --default-instructions              # with the shipped default notes
+$R "$M" --corpus eval/corpus.jsonl --instructions notes.json            # other notes (same JSON format)
 swiftc -O tools/spell-map/main.swift mac/Sources/Foretype/Speller.swift -o build/spell-map
 build/spell-map eval/corpus.jsonl > build/spell-map.json                # the app's spell verdicts
 $R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo gate + autocorrect
@@ -99,6 +101,11 @@ $R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo g
 Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`,
 `--remote-model NAME` (OpenAI-compatible). `FORETYPE_DEBUG=1` prints per-request prefill
 and generation timings.
+
+Without `--default-instructions` or `--instructions` the replay has no custom instructions,
+so its numbers compare with the older ones in `docs/MEASUREMENTS.md`; the app itself starts
+with the defaults (`core/data/default-instructions.json`). With per-app notes, the corpus
+apps (`Mail`, `Slack`, `Teams`, `Messages`, `Notes`, `a document`) stand in for their bundle IDs.
 
 Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, and
 how many keystrokes were served by `model`, `typeThrough`, `cache`, `details` or `policy`.

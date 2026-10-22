@@ -1,7 +1,8 @@
 import AppKit
 
 /// Edits the custom instructions: one note for every app, plus one for the app the user
-/// was last in (appended after the global note, as Cotypist does).
+/// was last in (appended after the global note, as Cotypist does). Both start as the
+/// defaults (`DefaultInstructions`), which Restore Defaults brings back.
 final class InstructionsWindowController: NSWindowController, NSWindowDelegate {
     private let globalView = NSTextView()
     private let appView = NSTextView()
@@ -41,7 +42,9 @@ final class InstructionsWindowController: NSWindowController, NSWindowDelegate {
         save.keyEquivalent = "\r"
         let cancel = NSButton(title: L("Cancel"), target: self, action: #selector(cancelClicked))
         cancel.keyEquivalent = "\u{1b}"
-        let buttons = NSStackView(views: [NSView(), cancel, save])
+        // Fills in the default notes; Save keeps them (and later versions' defaults).
+        let restore = NSButton(title: L("Restore Defaults"), target: self, action: #selector(restoreClicked))
+        let buttons = NSStackView(views: [restore, NSView(), cancel, save])
         buttons.orientation = .horizontal
 
         var rows: [NSView] = [
@@ -88,6 +91,11 @@ final class InstructionsWindowController: NSWindowController, NSWindowDelegate {
         onSave?(globalView.string.trimmingCharacters(in: .whitespacesAndNewlines),
                 appView.string.trimmingCharacters(in: .whitespacesAndNewlines), appBundle)
         close()
+    }
+
+    @objc private func restoreClicked() {
+        globalView.string = DefaultInstructions.shared.global
+        if let appBundle { appView.string = DefaultInstructions.shared.apps[appBundle] ?? "" }
     }
 
     @objc private func cancelClicked() {

@@ -210,6 +210,14 @@ fragment = " no"                                 ← typed partial word + its le
   spaces to the following word, so a prompt never ends in a bare space.
 - Everything that changes rarely (screen text, examples, header) comes first; everything
   that changes per keystroke comes last.
+- The writer's notes are the user's custom instructions. They start as the defaults in
+  `core/data/default-instructions.json` (`instructions.rs`, `ft_default_instructions`): one
+  note for every app and, by bundle ID, optional notes per kind of app (none ship). The
+  shell stores only what the user changed, so untouched notes follow the defaults of the
+  installed version; an empty note the user saved stays empty.
+- The `shell` backend's Apple model is instruction-tuned, so `AppleModel.swift` gives it
+  fixed instructions of its own (continue the text where it stops, at most `max_words`
+  words, nothing else) and sends this prompt after "Continue this text:".
 
 ### Your details (`details.rs`)
 
@@ -343,6 +351,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_compat_rule(engine, bundle_id)` | Rule JSON for an app |
 | `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization |
 | `ft_model_catalog(ram_gb)` | Model list (no engine needed) |
+| `ft_default_instructions()` | The custom instructions a fresh install starts with, `{"global", "apps": {bundle: note}}` (`core/data/default-instructions.json`; no engine needed) |
 
 **CoreConfig** (`ft_engine_new`): `model_path`, `n_ctx` (2048), `n_gpu_layers` (999),
 `n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`

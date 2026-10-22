@@ -356,8 +356,9 @@ final class GeneralPane: PreferencesPane {
         screenHint.isHidden = allowed || !s.useScreenContext || !Signing.isAdHocBundle
         screenHintRow?.isHidden = screenHint.isHidden
         let global = s.instructions.replacingOccurrences(of: "\n", with: " ")
-        let apps = s.appInstructions.count
+        let apps = s.appInstructions.values.filter { !$0.isEmpty }.count
         var summary = global.isEmpty ? L("No note for all apps") : "\u{201C}\(global)\u{201D}"
+        if s.instructionsAreDefault && !global.isEmpty { summary = L("Default: %@", summary) }
         if apps > 0 { summary += ", " + LCount(apps, "notes for %@ apps", one: "notes for %@ app") }
         instructionsSummary.stringValue = summary
         refreshUpdates()

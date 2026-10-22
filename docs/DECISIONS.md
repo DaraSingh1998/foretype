@@ -403,3 +403,22 @@ means installs stop updating). The feed holds one item: no delta updates and no 
 the feed. Moving to a Developer ID later means one re-grant for everyone. `curl | bash`
 asks users to trust the script; it is published with each release, and it verifies the
 DMG's checksum.
+
+## D38. A default note for every app, measured; no per-app defaults (2026-10-22)
+
+**Decision.** Custom instructions start as defaults from `core/data/default-instructions.json`
+(`ft_default_instructions`): one note for every app, "Natural, clear writing that matches
+the tone of the text so far, with correct spelling and grammar.", and no per-app notes. The
+shell stores only what the user changes: an untouched note follows the installed version's
+defaults, saving the default text again goes back to following them, an empty note the user
+saves stays empty, and Restore Defaults in the editor brings them back.
+**Why.** The note is part of the cached prompt header, so it costs nothing per keystroke, and
+on the corpus it saved 0.7 points more typing with Gemma 4 E2B (42.8% → 43.5%) and raised the
+Apple model's first-word accuracy from 17.0% to 19.8%. Per-app style notes ("Email: polite,
+...") helped 3 of the 11 documents from a named app and hurt 5, so none ship; the format
+keeps groups of apps for a measured per-app default later. The defaults live in the core so
+every shell and `ft-replay --default-instructions` use the same text.
+**Cost.** Measured on one model; the Qwen models (the default tier) weren't installed. Users
+who saved an empty note before this version keep it empty (none expected: no one had saved
+one through the editor on the developer's Mac).
+

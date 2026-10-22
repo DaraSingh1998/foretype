@@ -14,6 +14,7 @@ pub mod emoji;
 pub mod engine;
 pub mod ffi;
 pub mod history;
+pub mod instructions;
 pub mod models;
 pub mod policy;
 pub mod profile;
