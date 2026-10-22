@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.2 (2026-10-22)
+
 ### A waiting update is visible (2026-10-22)
 - With "Install updates automatically" off, a new version no longer shows only as Sparkle's
   window from the daily check. The menu-bar menu shows **Update Available: X.Y.Z —
