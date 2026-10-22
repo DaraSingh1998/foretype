@@ -464,11 +464,23 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   equal to the field frame, outside the field, off-screen, too wide for one character) and
   prefers the previous-character edge. When the two disagree by more than half a line with
   the zero-length rect higher, that's the TextKit bug: it learns a per-app offset and uses
-  it at line starts. Zero-length lower means a soft wrap. `font()` reads `AXFont`: the
+  it at line starts. Zero-length lower means a soft wrap. `font()` reads `AXFont` of the
+  character before the caret (one `AXAttributedStringForRange` over the last ≤ 24): the
   family wins over a fake name (Word); size-only (Chrome) goes to `FontMatcher`, which picks
-  the family whose rendering of the last ≤24 characters matches their on-screen width.
-  The font is scaled when the last ≥ 6 characters are more than 25% wider or narrower on
-  screen than in it (a zoomed document whose app reports the unzoomed size: LibreOffice).
+  the family whose rendering of the measured run matches its on-screen width. The font is
+  scaled when the run (≥ 6 characters) is more than 25% wider or narrower on screen than in
+  it (a zoomed document whose app reports the unzoomed size: LibreOffice), unless the scaled
+  size would not fit the run's line. The run (`measurableRun`) is the characters before the
+  caret after the last newline or tab, in the same `AXFont` as the one before the caret
+  (text typed at 12 pt after 20 pt text), and on the caret's visual line: a range across a
+  soft wrap is as wide as the line (TextEdit: 773 pt for 24 characters, read as a 3.9× zoom),
+  so when its rect is ≥ 1.5 character heights tall a binary search over the characters'
+  rects keeps those on the caret's line. `FocusTracker` reads the font when the caret
+  arrives (another field or line, or a move that isn't typing: a click, an arrow, a
+  deletion) and again on each of the first 6 characters typed there, since typed text can
+  be in other attributes than the text before it (TextEdit's plain text set to 20 pt by a
+  script still types at 12 pt); then it keeps it while typing goes on. A snapshot whose
+  caret didn't move doesn't count (Electron's text arrives before its caret).
   When it finds no caret, the controller asks the pixel caret locator (below).
 - **`PixelCaret.swift`**: the pixel caret locator, for fields where `CaretResolver` finds
   nothing (Teams, LibreOffice) or the app's rule says `"caret": "pixel"`. It captures only

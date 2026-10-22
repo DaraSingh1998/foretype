@@ -328,7 +328,8 @@ final class Controller {
                 // growing field, without the text.
                 let lineLength = snap.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last?.utf16.count ?? 0
                 let field = snap.frame.map { " field=\(Int($0.minY))+\(Int($0.height))" } ?? ""
-                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field) show=\(panel.mode) -> \(what)")
+                let font = snap.font.map { " font=\($0.fontName) \(String(format: "%g", $0.pointSize))" } ?? ""
+                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field)\(font) show=\(panel.mode) -> \(what)")
             }
         case let .status(state, detail):
             Log.debug("engine \(state): \(detail)")

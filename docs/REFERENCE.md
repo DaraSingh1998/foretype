@@ -403,7 +403,8 @@ Settings… and setup. Option-click the icon to pause or resume.
   it whenever you run a dev build on a machine you are also working on. An entry can be a
   pid, to allow one process of an app you also use (a test Chrome next to your own).
 - `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly;
-  `Foretype --font-selftest` checks the width-based font matcher, `Foretype
+  `Foretype --font-selftest` checks the width-based font matcher and the ghost text's font
+  from the text before the caret (a soft wrap, mixed sizes, a zoomed document), `Foretype
   --stats-selftest` the statistics counts, day buckets and reset, and `Foretype
   --caret-selftest` the pixel caret detectors on rendered text (no permissions needed).
   `scripts/caret-measure.sh` compares the pixel caret with the Accessibility caret in a test

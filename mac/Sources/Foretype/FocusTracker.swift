@@ -99,9 +99,11 @@ final class FocusTracker {
     private var heldLagging = false
     private var revision: UInt64 = 0
     private var readPending = false
-    private var fontCache: (key: UInt64, line: Int, font: NSFont?) = (0, -1, nil)
+    private var fontCache: (key: UInt64, line: Int, caret: Int, count: Int, typed: Int, font: NSFont?) = (0, -1, 0, 0, 0, nil)
     private var titleCache: (pid: pid_t, title: String, frame: CGRect?) = (0, "", nil)
     private var fieldInfoCache: (key: UInt64, description: String, url: String, web: Bool) = (0, "", "", false)
+    /// Characters typed after the caret arrives during which its font is read again (above).
+    private static let fontSettleChars = 6
     private static let forceMarkers = ProcessInfo.processInfo.environment["FORETYPE_TEXT_MARKERS"] == "1"
     private var primed: [pid_t: (manual: Bool?, enhanced: Bool?)] = [:]
     private var primedAt: [pid_t: CFAbsoluteTime] = [:]
@@ -457,10 +459,20 @@ final class FocusTracker {
         snap.frame = AX.frame(el)
         snap.caret = CaretResolver.resolve(el, caret: caret, frame: snap.frame, bundleId: snap.bundleId)
         if snap.caret == nil { snap.edgeOutsideFrame = CaretResolver.edgeOutsideFrame(el, caret: caret, frame: snap.frame) }
-        // Fonts are expensive in Safari (~3.5 ms): read once per field and line.
+        // Fonts are expensive in Safari (~3.5 ms). Read when the caret arrives (another field or
+        // line, a click, an arrow, a deletion) and again for the first few characters typed
+        // there: typed text can be in other attributes than the text before it (TextEdit kept
+        // typing at 12 pt after a script set the text to 20 pt), and the zoom check needs a run
+        // of it. Then kept while typing goes on. A snapshot whose caret hasn't moved changes
+        // nothing (Electron updates a field's text before its caret).
         let line = Int((snap.caret?.rect.minY ?? 0) / 4)
-        if fontCache.key != snap.fieldKey || fontCache.line != line {
-            fontCache = (snap.fieldKey, line, CaretResolver.font(el, caret: caret, length: count))
+        let moved = caret - fontCache.caret
+        let typed = moved > 0 && (count < 0 || count - fontCache.count == moved)
+        if fontCache.key != snap.fieldKey || fontCache.line != line || (moved != 0 && !typed) {
+            fontCache = (snap.fieldKey, line, caret, count, 0, CaretResolver.font(el, caret: caret, length: count))
+        } else if typed {
+            let font = fontCache.typed < FocusTracker.fontSettleChars ? CaretResolver.font(el, caret: caret, length: count) : fontCache.font
+            fontCache = (snap.fieldKey, line, caret, count, fontCache.typed + moved, font)
         }
         snap.font = fontCache.font
         emit(snap, reason: reason)
