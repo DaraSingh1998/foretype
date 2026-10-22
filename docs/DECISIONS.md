@@ -289,6 +289,7 @@ background queue. Between checks the ghost text follows the host font, or a gues
 times a learned width scale (about 1 pt off over a line). A caret that does not blink (the
 Accessibility "prefer non-blinking cursor" setting, or an app that never blinks) is never
 found: the mirror card stays. Soft-wrapped lines are found again only at the next pause.
+(D37 adds a one-capture search while typing for new fields, lines and wraps.)
 
 ## D32. Stay on llama.cpp after an MLX comparison (2026-10-21)
 
@@ -403,3 +404,27 @@ means installs stop updating). The feed holds one item: no delta updates and no 
 the feed. Moving to a Developer ID later means one re-grant for everyone. `curl | bash`
 asks users to trust the script; it is published with each release, and it verifies the
 DMG's checksum.
+
+## D37. Pixel caret: one capture while typing where the estimate has no position (2026-10-22)
+
+**Decision.** Once the pixel locator has learned an app's caret (colour and height, D31), a
+field, line or wrapped line it has no position for is searched right away, 40 ms after the
+snapshot, with one capture for every bar of that look; the row the caret moved to picks
+the bar (`PixelCaret.choose`). Within about a word of the field's right edge the same
+search runs on each change, since the host may wrap the word being typed. A suggestion
+with no caret waits for such a search instead of showing the mirror card, and when no word
+fits before the field's edge the first one runs past it. Empty fields are searched (blink)
+on focus. The mirror card is left for when there is no estimate at all: the first field of
+an app before its caret has blinked once.
+**Why.** User report: in Electron chat composers the suggestion appeared in a card above or
+below the line and moved next to the caret only after a pause. Typing keeps the caret
+solid (toolkits restart the blink on input), so once its look is known a blink isn't
+needed to see it; waiting for a pause cost the card on every new line and wrap, and the
+first words of every new message. The report's card under the line had a second cause:
+Chromium's ranges leave out the newline between paragraphs that its value counts, so the
+last letter typed read as text after the caret (fixed in `FocusTracker`).
+**Cost.** One capture of about 45 ms on a background queue per new field, line or wrap, and
+a few per line end, while typing. Never per keystroke on a line whose position is known.
+A `|` in the caret's colour and height alone on the next row could be taken for the caret
+until the next pause's verify. Looks are kept in memory only (stored, they would list the
+apps someone types in), so after a launch each app's first field still waits for a blink.

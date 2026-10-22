@@ -483,6 +483,69 @@ second run passed. Its screenshots also show a second gray suggestion overlappin
 the developer's own Foretype.app (a main-branch build) was running and suggesting in
 TextEdit at the same time.
 
+## Inline ghost text while typing (2026-10-22)
+
+Report: in an Electron chat composer (the Claude app) the suggestion first showed in a card
+above or below the line and moved next to the caret only after a pause.
+
+### What Chromium reports (probe, `scripts/fixtures/composer.html#ce,bg` in a background Chrome)
+
+Chrome 155, throwaway profile, `AXEnhancedUserInterface` set, the fixture typing into its
+contenteditable (one `<p>` per line), read every 150 ms:
+
+| State | `AXNumberOfCharacters` | `AXSelectedTextRange` | `AXStringForRange(0, sel)` | `AXValue` |
+|---|---:|---:|---|---|
+| empty (`<p><br></p>`) | 1 | 1 | `"\n"` | `"\n"` |
+| first line, "Thanks" | 6 | 6 | `"Thanks"` | `"Thanks"` |
+| second paragraph, "…works" ⏎ "Could we move" | 124 | 123 | `"…worksCould we move"` | `"…works\nCould we move"` |
+| list item under a paragraph, "…see" ⏎ "1. Power " | 40 | 39 | `"…see1. Power "` | `"…see\n1. Power "` |
+
+- The ranges leave out the newline between paragraphs that the value and the count have.
+  `AXStringForRange(sel, count − sel)` fails, so Foretype read the text after the caret from
+  `AXValue` at the range index: the last letter typed. Debug log before the fix: `after=a`
+  on every suggestion in the second paragraph and the list item.
+- No text markers (`AXSelectedTextMarkerRange` absent) and `AXBoundsForRange` returns
+  `0,982 0x0`, so there is no AX caret: the pixel locator places the ghost text.
+- List markers ("1. ") are in both the ranges and the value.
+
+### Chat-composer fixture in Foretype (`scripts/e2e-inline-caret.sh ce`)
+
+Development build, `FORETYPE_ONLY_APPS` = the test Chrome's pid, `FORETYPE_CARET=pixel`,
+Gemma 4 E2B Q4_K_M, M3 Pro at 2×. The page types at 110–190 ms per character with no pause
+inside a segment. Counted: every non-empty suggestion drawn (model, type-through, pixel
+moves).
+
+| Segment | Before: inline / card / mirror | Card→inline jumps | After: inline / card / mirror | Jumps |
+|---|---|---:|---|---:|
+| 1 empty composer, first line wraps | 1 / 0 / 37 | 1 | 47 / 0 / 0 | 0 |
+| 2 Enter, second line | 2 / 5 / 1 | 2 | 9 / 0 / 0 | 0 |
+| 3 sent (emptied), new first line | 1 / 0 / 9 | 1 | 10 / 0 / 0 | 0 |
+| 4 numbered list item | 1 / 4 / 5 | 1 | 24 / 0 / 0 | 0 |
+| 5 new field, typed 0.2 s after focus | not reached | | 20 / 0 / 0 | 0 |
+
+- Before (main `24532d2` plus the debug fields; the run stopped in segment 5 when the user
+  came back): the only inline draws were a pause's blink moving the suggestion (once per
+  segment) and one suggestion right after a typed space (`after=U+0020`). Segment 1 had a
+  blink at focus but lost it: the empty composer read as `"\n"` (line 2), the first letter
+  as line 1. The second paragraph and the list item drew the card under the caret
+  (`after=a`, the bug report's picture); once the glued text wrapped past the field's edge,
+  the mirror card. A later partial run (segment 1 only) drew 32 of 32 as the mirror card.
+- After (one full run; two more stopped early when the user came back, with 26 of 26 and
+  44 of 44 inline in segment 1): every suggestion inline. In the full run the locator ran a
+  blink at focus on the empty composer (921 ms, before typing started), then solid searches
+  only: 2 near the right edge on the same row and 1 on the wrapped row (62–101 ms each), 1
+  after Enter (53 ms), 3 near the edge of the second line, 1 when the field was emptied, 1
+  for the list item (44 ms), 1 on focus of the new field (115 ms, as typing started) and 1
+  near its edge. Pause verifies found the caret within 1 pt of the extrapolated position
+  (316 vs 315, 290 vs 289, 479 vs 480).
+- Screenshots taken right after a suggestion was drawn show the gray ghost text right after
+  the caret on its line. The developer's installed 0.1.0 also ran on the test Chrome and
+  shows the old behaviour in the same shots: its mirror card above the field, and in the
+  list item its card under the line at a wrong x.
+- Self-tests: `--caret-selftest` adds 8 bar-choice cases and 6 index-mapping cases, all pass
+  (30 rendered cases unchanged, worst error 0.00 pt); `--font-selftest`, `--ocr-selftest`
+  and `cargo test` (51) pass.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

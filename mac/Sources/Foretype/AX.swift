@@ -74,6 +74,28 @@ enum AX {
         return copyParam(el, "AXStringForRange", makeRange(location, length)) as? String
     }
 
+    /// Where the end of `ranged` (the text before the caret as the ranges read it) falls in
+    /// `value` (UTF-16 index), when `value` is the same text with extra newlines between
+    /// paragraphs (Chromium contenteditables; `FocusTracker.paragraphValue`). Nil when the
+    /// two differ otherwise. A caret at a paragraph boundary is placed before the newline:
+    /// the ranges can't tell the end of one paragraph from the start of the next.
+    static func valueIndex(of ranged: String, in value: String) -> Int? {
+        let r = Array(ranged.utf16), v = Array(value.utf16)
+        var i = 0, j = 0
+        while j < r.count {
+            guard i < v.count else { return nil }
+            if v[i] == r[j] {
+                i += 1
+                j += 1
+            } else if v[i] == 10 {
+                i += 1
+            } else {
+                return nil
+            }
+        }
+        return i
+    }
+
     static func bounds(_ el: AXUIElement, _ location: Int, _ length: Int) -> CGRect? {
         rect(copyParam(el, "AXBoundsForRange", makeRange(location, length)))
     }

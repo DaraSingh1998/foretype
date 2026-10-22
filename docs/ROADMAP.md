@@ -106,11 +106,12 @@ are kept for if that changes; the core stays portable.
   after Foretype first sees it in front: Chrome waits 2 s after `AXEnhancedUserInterface`
   is set before it turns on web content (`docs/MEASUREMENTS.md`). Foretype keeps the flag
   set until it quits, which some window managers dislike.
-- Pixel caret (apps without caret geometry): a new field or line shows the mirror card for
-  about 0.7 s, until the caret first blinks off; a caret that never blinks is never found;
-  between checks the ghost follows a font guess (about 1 pt off over a line without the
-  host font); a soft-wrapped line is found again only at the next pause. Measured in
-  TextEdit against its AX caret (`docs/MEASUREMENTS.md`).
+- Pixel caret (apps without caret geometry): the first field of an app after launch shows
+  the mirror card until its caret first blinks off (about 0.7 s; on focus, so usually before
+  the first keystroke); later fields, new lines and wraps are found while typing with one
+  capture (D37). A caret that never blinks is never found; between checks the ghost follows
+  a font guess (about 1 pt off over a line without the host font). Measured in TextEdit
+  against its AX caret and in a Chrome chat-composer fixture (`docs/MEASUREMENTS.md`).
 - About You fills only at the end of a line, from English cue phrases, and only when what
   was typed is the start of the stored value exactly as written (case aside).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in

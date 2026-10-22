@@ -304,6 +304,13 @@ enum PixelCaret {
 
     /// A bar that looks like `look` within `radius` points of `near` (global), on one frame.
     static func staticBar(_ f: PixelFrame, look: CaretLook, near: CGPoint, radius: CGFloat = .greatestFiniteMagnitude) -> CaretBar? {
+        let p = f.pixel(near)
+        return staticBars(f, look: look).filter { abs(CGFloat($0.x0) - p.x) <= radius * f.scale }
+            .min { abs(CGFloat($0.x0) - p.x) < abs(CGFloat($1.x0) - p.x) }
+    }
+
+    /// Every bar that looks like `look` on one frame, with its centre.
+    static func staticBars(_ f: PixelFrame, look: CaretLook) -> [CaretBar] {
         let n = f.width * f.height
         let contrast = max(1, look.color.distance(look.background))
         let tol = max(24, contrast * 35 / 100)
@@ -328,11 +335,11 @@ enum PixelCaret {
                     && min(sideFill(b, mask: mask, width: f.width, gap: 1, cols: 2, left: true),
                            sideFill(b, mask: mask, width: f.width, gap: 1, cols: 2, left: false)) <= 0.3
             }
-        let p = f.pixel(near)
-        guard var best = candidates.filter({ abs(CGFloat($0.x0) - p.x) <= radius * f.scale })
-            .min(by: { abs(CGFloat($0.x0) - p.x) < abs(CGFloat($1.x0) - p.x) }) else { return nil }
-        best.centerX = centroid(best, strength: strength, width: f.width)
-        return best
+        return candidates.map { b in
+            var b = b
+            b.centerX = centroid(b, strength: strength, width: f.width)
+            return b
+        }
     }
 
     // MARK: - Capture
@@ -436,6 +443,39 @@ enum PixelCaret {
         return nil
     }
 
+    /// One capture of `region` for every bar like `look`, as zero-width rectangles (global).
+    /// The caret is drawn solid while the user types, so no blink is needed to see it.
+    static func solid(pid: pid_t, windowFrame: CGRect?, region: CGRect, look: CaretLook) -> (rects: [CGRect], ms: Double)? {
+        let t0 = CFAbsoluteTimeGetCurrent()
+        guard let f = capture(pid: pid, windowFrame: windowFrame, region: region) else { return nil }
+        let rects = staticBars(f, look: look).map { f.global(x0: $0.centerX, x1: $0.centerX, y0: $0.y0, y1: $0.y1) }
+        return (rects, (CFAbsoluteTimeGetCurrent() - t0) * 1000)
+    }
+
+    /// The caret among the bars `rects` found by one capture. Without a previous position it
+    /// must be the only one. With one (`from`, the caret's last known place): on that row near
+    /// `predictedX` when `direction` is 0 (the line may be about to wrap), else on the nearest
+    /// row below (`direction` 1: a new line or a wrap) or above (-1) that has any; there the
+    /// leftmost at a line start, the rightmost at a line end, or the only one.
+    static func choose(_ rects: [CGRect], from: CGRect?, predictedX: CGFloat?, direction: Int,
+                       lineStart: Bool, lineEnd: Bool) -> CGRect? {
+        guard let from else { return rects.count == 1 ? rects[0] : nil }
+        let h = from.height
+        func sameRow(_ r: CGRect, _ y: CGFloat) -> Bool { abs(r.midY - y) <= h / 2 }
+        if direction == 0, let px = predictedX,
+           let r = rects.filter({ sameRow($0, from.midY) && abs($0.minX - px) <= max(16, h) })
+               .min(by: { abs($0.minX - px) < abs($1.minX - px) }) {
+            return r
+        }
+        let d: CGFloat = direction < 0 ? -1 : 1
+        let beyond = rects.filter { ($0.midY - from.midY) * d > h / 2 }
+        guard let nearest = beyond.min(by: { abs($0.midY - from.midY) < abs($1.midY - from.midY) }) else { return nil }
+        let row = beyond.filter { sameRow($0, nearest.midY) }
+        if lineStart { return row.min { $0.minX < $1.minX } }
+        if lineEnd { return row.max { $0.minX < $1.minX } }
+        return row.count == 1 ? row[0] : nil
+    }
+
     /// A capture around `near` (global), searching `radius` points either side. Typing
     /// normally keeps the caret solid, but not every app restarts the blink on every change
     /// (TextEdit after a programmatic move), so up to `attempts` captures `interval` apart
@@ -476,6 +516,8 @@ final class PixelCaretProvider {
         var font: NSFont?
         /// The AX caret rejected only for lying outside the field frame, to confirm.
         var edgeOutsideFrame: CGRect?
+        /// Nothing but spaces follows the caret on its line.
+        var lineEnd = true
     }
 
     struct Estimate {
@@ -504,10 +546,19 @@ final class PixelCaretProvider {
     private var lastBlink: [UInt64: CFAbsoluteTime] = [:]
     /// Apps whose field frame did not contain the caret (LibreOffice): search the window.
     private var searchWindow: Set<String> = []
+    /// The caret look last learned in each app, for a solid search in its other fields.
+    private var looks: [String: CaretLook] = [:]
+    /// When a solid search last found nothing, per field (not retried for `solidRetry`).
+    private var solidMiss: [UInt64: CFAbsoluteTime] = [:]
+    /// The field and generation of a solid search that is scheduled or running.
+    private var locating: (field: UInt64, gen: Int)?
 
     private let focusDelay = 0.15
     private let verifyPause = 0.25
     private let blinkPause = 0.5
+    /// After a snapshot, before a solid search: the app has drawn the new text by then.
+    private let solidDelay = 0.04
+    private let solidRetry = 0.3
 
     /// The current estimate for `t`, advanced by the text typed since it was measured, or
     /// nil (unknown, another line, or wrapped past the field's edge).
@@ -515,19 +566,35 @@ final class PixelCaretProvider {
         lock.lock()
         let est = estimates[t.fieldKey]
         lock.unlock()
-        guard var est, est.lineStart == t.lineStart else { return nil }
+        guard let est, est.lineStart == t.lineStart else { return nil }
+        let p = project(t, est)
+        guard p.rect.minX < p.right - 1, p.rect.minX > p.left else { return nil }
+        return CaretInfo(rect: p.rect, strategy: p.rect.minX == p.at.minX ? "pixel" : "pixel+advance")
+    }
+
+    /// The estimate where it was measured (`at`, moved with the field) and advanced by the
+    /// text typed since on its line (`rect`, unchecked), and the line's horizontal bounds.
+    private func project(_ t: Target, _ est: Estimate) -> (at: CGRect, rect: CGRect, left: CGFloat, right: CGFloat) {
+        var est = est
         if let a = est.anchor, let f = t.fieldFrame {
             est.x += f.minX - a.x
             est.y += f.minY - a.y
         }
-        let dx = PixelCaretProvider.advance(from: est.lineText, to: t.lineText, font: font(t, est)) * est.widthScale
-        let x = est.x + dx
+        let at = CGRect(x: est.x, y: est.y, width: 0, height: est.height)
+        let dx = est.lineStart == t.lineStart
+            ? PixelCaretProvider.advance(from: est.lineText, to: t.lineText, font: font(t, est)) * est.widthScale : 0
         // The field's horizontal extent bounds the line (LibreOffice's frames are only off vertically).
         let field = t.fieldFrame.flatMap { f in est.x >= f.minX - 4 && est.x <= f.maxX + 4 ? f : nil }
         let right = (field ?? t.windowFrame)?.maxX ?? .greatestFiniteMagnitude
         let left = (field ?? t.windowFrame)?.minX ?? -.greatestFiniteMagnitude
-        guard x < right - 1, x > left else { return nil }
-        return CaretInfo(rect: CGRect(x: x, y: est.y, width: 0, height: est.height), strategy: dx == 0 ? "pixel" : "pixel+advance")
+        return (at, at.offsetBy(dx: dx, dy: 0), left, right)
+    }
+
+    /// Whether a solid search for this field is under way: the controller then waits for it
+    /// (a few tens of milliseconds) rather than showing the mirror card for a moment.
+    func isLocating(_ fieldKey: UInt64) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return locating?.field == fieldKey
     }
 
     /// The font the ghost text uses (GhostPanel's fallback when the host reports none).
@@ -543,8 +610,11 @@ final class PixelCaretProvider {
         return w(b.dropFirst(common.count)) - w(a.dropFirst(common.count))
     }
 
-    /// Called for every snapshot of a field that needs the pixel caret (AX thread).
-    /// Schedules a check once typing pauses; a newer snapshot cancels it.
+    /// Called for every snapshot of a field that needs the pixel caret (AX thread), before
+    /// the snapshot is submitted. Schedules a check once typing pauses; a newer snapshot
+    /// cancels it. Where the estimate gives no position (a new field, another line, a wrap) or
+    /// the line may be about to wrap, and the app's caret look is known, it searches right
+    /// away instead: the caret is solid while the user types, so one capture finds it.
     func note(_ t: Target) {
         lock.lock()
         generation += 1
@@ -552,12 +622,27 @@ final class PixelCaretProvider {
         let newField = t.fieldKey != lastField
         lastField = t.fieldKey
         let est = estimates[t.fieldKey]
+        let look = est?.look ?? looks[t.bundleId]
+        let missed = solidMiss[t.fieldKey].map { CFAbsoluteTimeGetCurrent() - $0 < solidRetry } ?? false
         lock.unlock()
-        if let est, est.lineStart == t.lineStart {
-            if est.lineText != t.lineText { after(verifyPause, gen) { self.verify(t, est, gen) } }
+        var solid: CaretLook?
+        if let est, est.lineStart == t.lineStart, let c = caret(for: t) {
+            let p = project(t, est)
+            // Within about a word of the right edge the host may wrap the word being typed.
+            if est.lineText != t.lineText, !missed, p.right - c.rect.minX < max(40, est.height * 3) {
+                solid = est.look
+            } else if est.lineText != t.lineText {
+                after(verifyPause, gen) { self.verify(t, est, gen) }
+            }
+        } else if let look, !missed {
+            solid = look
         } else {
             after(newField ? focusDelay : blinkPause, gen) { self.blink(t, gen) }
         }
+        lock.lock()
+        locating = solid == nil ? nil : (t.fieldKey, gen)
+        lock.unlock()
+        if let solid { after(solidDelay, gen) { self.locate(t, est, solid, gen) } }
     }
 
     private func after(_ delay: Double, _ gen: Int, _ work: @escaping () -> Void) {
@@ -612,6 +697,49 @@ final class PixelCaretProvider {
         commit(t, hit, gen, how: "blink")
     }
 
+    /// One capture for a solid caret like `look`: the whole field without an estimate, else
+    /// the lines around it, choosing the row the caret moved to (`PixelCaret.choose`). When
+    /// nothing is found it falls back to a blink search at the next pause.
+    private func locate(_ t: Target, _ est: Estimate?, _ look: CaretLook, _ gen: Int) {
+        lock.lock()
+        let wide = searchWindow.contains(t.bundleId)
+        lock.unlock()
+        var from: CGRect?, predicted: CGFloat?, direction = 0
+        var area = region(t, wholeWindow: wide)
+        if let est {
+            let p = project(t, est)
+            if est.lineStart != t.lineStart {
+                from = p.at
+                direction = t.lineStart > est.lineStart ? 1 : -1
+            } else {
+                from = p.rect
+                predicted = p.rect.minX
+                direction = p.rect.minX >= p.right - 1 ? 1 : p.rect.minX <= p.left ? -1 : 0
+            }
+            if let a = area {
+                let h = p.at.height
+                area = a.intersection(CGRect(x: a.minX, y: p.at.minY - 4 * h, width: a.width, height: 9 * h))
+            }
+        }
+        let found = area.flatMap { $0.isNull ? nil : PixelCaret.solid(pid: t.pid, windowFrame: t.windowFrame, region: $0, look: look) }
+        guard current(gen) else { return }
+        let rect = found.flatMap {
+            PixelCaret.choose($0.rects, from: from, predictedX: predicted, direction: direction,
+                              lineStart: t.lineText.isEmpty, lineEnd: t.lineEnd)
+        }
+        guard let rect, let found else {
+            lock.lock()
+            solidMiss[t.fieldKey] = CFAbsoluteTimeGetCurrent()
+            if locating?.gen == gen { locating = nil }
+            lock.unlock()
+            Log.debug("pixel caret: no solid caret found in \(t.bundleId)")
+            // The controller held the suggestion back for this search: show it anyway.
+            onUpdate?(t.fieldKey)
+            return after(blinkPause - solidDelay, gen) { self.blink(t, gen) }
+        }
+        commit(t, PixelCaretHit(rect: rect, look: look, frames: 1, ms: found.ms), gen, how: "solid")
+    }
+
     private func verify(_ t: Target, _ est: Estimate, _ gen: Int) {
         guard let predicted = caret(for: t) else {
             return after(blinkPause - verifyPause, gen) { self.blink(t, gen) }
@@ -643,6 +771,9 @@ final class PixelCaretProvider {
         }
         estimates[t.fieldKey] = Estimate(x: hit.rect.minX, y: hit.rect.minY, height: hit.rect.height, lineStart: t.lineStart,
                                          lineText: t.lineText, look: hit.look, widthScale: scale, anchor: t.fieldFrame?.origin)
+        looks[t.bundleId] = hit.look
+        solidMiss[t.fieldKey] = nil
+        if locating?.gen == gen { locating = nil }
         order.removeAll { $0 == t.fieldKey }
         order.append(t.fieldKey)
         if order.count > 16 { estimates[order.removeFirst()] = nil }

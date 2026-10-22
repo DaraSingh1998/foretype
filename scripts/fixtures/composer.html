@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>composer fixture: waiting</title>
+<style>
+  /* A chat composer like the ones in Electron apps (Claude, Slack): a contenteditable with
+     one <p> per line and a toolbar under it. */
+  body { font: 14px -apple-system, system-ui, sans-serif; margin: 40px; background: #f5f4ef; color: #222; }
+  .composer { width: 560px; margin-bottom: 28px; border: 1px solid #d4d2c8; border-radius: 14px; background: #fff; padding: 12px 16px 8px; }
+  .editor, textarea { outline: none; min-height: 24px; font: 16px -apple-system, system-ui, sans-serif; line-height: 1.5;
+    white-space: pre-wrap; word-wrap: break-word; }
+  textarea { width: 100%; height: 96px; border: 0; resize: none; padding: 0; }
+  .editor p { margin: 0; }
+  .editor ol { margin: 0; padding-left: 26px; }
+  .toolbar { display: flex; gap: 16px; margin-top: 10px; color: #777; font-size: 13px; }
+</style>
+</head>
+<body>
+<p>Foretype inline-caret fixture. It types into its own fields by itself (no keystrokes are
+sent to the system) and pauses while the window is not focused (unless the hash has
+<code>bg</code>). <code>#textarea</code> uses a textarea instead of contenteditable.</p>
+<div id="slot"></div>
+<script>
+  // Continuous typing at 110-190 ms per character (a deterministic pseudo-random pace),
+  // segments 2.5 s apart. The window title names the segment, for the test script's log.
+  const useTextarea = location.hash.includes("textarea");
+  const startAfter = 6000;
+  const slot = document.getElementById("slot");
+  let seed = 7;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  function composer() {
+    const box = document.createElement("div");
+    box.className = "composer";
+    let el;
+    if (useTextarea) {
+      el = document.createElement("textarea");
+    } else {
+      el = document.createElement("div");
+      el.className = "editor";
+      el.contentEditable = "true";
+      el.setAttribute("role", "textbox");
+      el.setAttribute("aria-multiline", "true");
+      el.innerHTML = "<p><br></p>";
+    }
+    const bar = document.createElement("div");
+    bar.className = "toolbar";
+    bar.textContent = "+   Attach   Model";
+    box.append(el, bar);
+    slot.appendChild(box);
+    return el;
+  }
+
+  function focusEnd(el) {
+    el.focus();
+    if (el.setSelectionRange) {
+      el.setSelectionRange(el.value.length, el.value.length);
+    } else {
+      const r = document.createRange();
+      r.selectNodeContents(el.lastElementChild || el);
+      r.collapse(false);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+    }
+  }
+
+  // #bg: type even while the window is in the background (for Accessibility probes).
+  const background = location.hash.includes("bg");
+  async function focused() {
+    while (!background && !document.hasFocus()) await sleep(100);
+  }
+
+  async function type(el, text) {
+    for (const ch of text) {
+      await focused();
+      if (ch === "\n") {
+        document.execCommand(el.tagName === "TEXTAREA" ? "insertLineBreak" : "insertParagraph");
+      } else {
+        document.execCommand("insertText", false, ch);
+      }
+      await sleep(110 + rand() * 80);
+    }
+  }
+
+  async function segment(name, el, text) {
+    document.title = "composer fixture: " + name;
+    await type(el, text);
+    document.title = "composer fixture: " + name + " done";
+    await sleep(2500);
+  }
+
+  function clear(el) {
+    if (el.tagName === "TEXTAREA") el.value = "";
+    else el.innerHTML = "<p><br></p>";
+    focusEnd(el);
+  }
+
+  async function run() {
+    const a = composer();
+    focusEnd(a);
+    // Wait until the window has been focused for startAfter ms in a row.
+    let since = 0;
+    while (since < startAfter) {
+      await sleep(100);
+      since = background || document.hasFocus() ? since + 100 : 0;
+    }
+    // 1: an empty composer, typed into continuously; the first line wraps.
+    await segment("1-wrap", a, "Thanks for the notes from yesterday. I went through all of them this morning and I think the plan mostly works");
+    // 2: a new line (Enter) in the same field, typed straight on.
+    await segment("2-newline", a, "\nCould we move the review to Thursday so that everyone has time to read");
+    // 3: sent: the same field emptied, then a numbered list as in the bug report.
+    clear(a);
+    await sleep(800);
+    if (!useTextarea) {
+      await segment("3-list-intro", a, "Two things I would like to see");
+      document.execCommand("insertParagraph");
+      document.execCommand("insertOrderedList");
+      await segment("4-list-item", a, "Power settings, like the ability to keep the screen on");
+    } else {
+      await segment("3-list-intro", a, "Two things I would like to see\n1. Better battery reports\n2. Power settings, like the ability to keep the screen on");
+    }
+    // 5: a new field (a new chat), typed into 0.2 s after it takes focus.
+    const b = composer();
+    focusEnd(b);
+    await sleep(200);
+    await segment("5-new-field", b, "Hello, could you take a look at the attached file when you get a chance");
+    document.title = "composer fixture: finished";
+  }
+  window.addEventListener("load", run);
+</script>
+</body>
+</html>

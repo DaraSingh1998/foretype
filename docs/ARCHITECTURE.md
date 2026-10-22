@@ -391,7 +391,7 @@ never logs the text. The shell must ignore events whose `revision` is not its la
 | `foretype.ax` | `FocusTracker`: CFRunLoop with AXObserver sources, timers, all AX reads (80 ms global messaging timeout) |
 | `foretype.keys` | `KeyTap`: both event taps; callbacks never block or call Accessibility |
 | `foretype.screen` (queue) | Screen capture completion and Vision OCR |
-| `foretype.caret` (queue) | Pixel caret captures and detection (blocking on ScreenCaptureKit, at typing pauses only) |
+| `foretype.caret` (queue) | Pixel caret captures and detection (blocking on ScreenCaptureKit; at typing pauses, or one capture for a new field, line or wrap) |
 | `foretype.engine` (Rust) | Inference |
 
 ### Components (`mac/Sources/Foretype/`)
@@ -407,7 +407,14 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   title and frame (on focus), and once per element its label/placeholder
   (`description`) and page URL (nearest `AXWebArea` with an http(s) `AXURL`). When
   `AXSelectedTextRange` is missing (some contenteditable editors) it reads through text
-  markers instead (`AX.viaTextMarkers`; `FORETYPE_TEXT_MARKERS=1` forces it).
+  markers instead (`AX.viaTextMarkers`; `FORETYPE_TEXT_MARKERS=1` forces it). In a web
+  field (an `AXWebArea` above it), when `AXStringForRange` can't reach the last character
+  of `AXNumberOfCharacters`, it is a Chromium contenteditable whose value and count have a
+  newline between paragraphs that the ranges leave out (the ranges run paragraphs together
+  and the caret's index falls one character early per paragraph): the text before the caret
+  read through the ranges is aligned with `AXValue` (`AX.valueIndex`, ≤ 50,000 characters)
+  and the text and caret index are taken from the value. Chromium's empty contenteditable
+  (`<p><br></p>`) reads as a newline with the caret after it; it is read as empty.
   `field_key = pid << 32 ^ CFHash(element)`. Primes Chromium
   (`AXEnhancedUserInterface`) and Electron (`AXManualAccessibility`) apps per the compat
   DB and restores the flags on quit. Chrome turns on web content only after the flag has
@@ -455,10 +462,21 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   origin). `caret(for:)` (AX thread, every snapshot) returns it advanced by the width change
   of the line's text before the caret, in the host font (or GhostPanel's fallback font)
   times the learned width scale; nil on another line or past the field's edge. `note()`
-  schedules work on the `foretype.caret` queue only when typing pauses (a newer snapshot
-  cancels it): blink 0.15 s after focus moves to a new field or 0.5 s after the caret
-  changed line, verify 0.25 s after the text on the same line changed (blink if that
-  fails). A result updates the estimate, learns the width scale from the observed travel
+  (before the snapshot is submitted) schedules work on the `foretype.caret` queue; a newer
+  snapshot cancels it. With a position on the same line: verify 0.25 s after the text
+  changed (blink if that fails). With none (a new field, another line, a wrap) and the
+  app's caret look known (the last one learned in that app, kept in memory): a *solid*
+  search 40 ms later, one capture of the field, or of four caret heights either side of the
+  last position, for every bar of that look (`staticBars`). The caret is solid while the
+  user types, so no pause is needed. `PixelCaret.choose` picks the bar: the only one without
+  a position; else the nearest row below (a new line, a wrap) or above (the caret went back
+  a line) that has any, and there the leftmost at a line start, the rightmost when nothing
+  follows the caret on its line, or the only one. Within max(40 pt, 3 caret heights) of the
+  field's right edge the same search runs on each change (the host may wrap the word being
+  typed): a bar near the prediction on the same row re-anchors, else the next row's. A miss
+  isn't retried for 0.3 s and falls back to a blink at the next pause. With no look yet: blink
+  0.15 s after focus moves to a new field (empty ones too) or 0.5 s after the caret changed
+  line. A result updates the estimate, learns the width scale from the observed travel
   (≥ 30 pt, ratio 0.6–1.6) and moves a visible suggestion. If AX had a previous-character
   rect that only the frame check rejected (`edgeOutsideFrame`), the blink search starts on
   that line, and a hit within 1.5 pt of it counts as a match; after two in a row
@@ -466,9 +484,10 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   again with no captures.
 - **`GhostPanel.swift`**: borderless, non-activating, click-through `NSPanel` at
   `.statusBar` level, on all Spaces, excluded from Accessibility. Draws the words that fit
-  before the field's right edge in the host font, gray. Without a caret rect (AX gave none
-  and the pixel locator has no position yet) it shows a "mirror card" (⇥ suggestion) above
-  the field. `advance` shifts the ghost after an accept until the host reports the new
+  before the field's right edge in the host font, gray; when not even the first word fits
+  (the line is about to wrap), the first word runs past the edge. Without a caret rect (AX
+  gave none and the pixel locator has no position yet) it shows a "mirror card"
+  (⇥ suggestion) above the field. `advance` shifts the ghost after an accept until the host reports the new
   caret. Mid-line suggestions show as a card just under the caret (inline ghost text would
   overlap the rest of the line); `showHint` shows a tip card for 8 s without turning on the
   key tap.
@@ -491,7 +510,9 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   shows one-time hints (Google Docs without screen-reader support; Arc and Dia without Text
   Metrics), submits, and asks the screen and caret providers for a refresh. On the main
   thread it drops events whose revision is stale, shows or hides the panel (and moves it
-  when a new pixel position arrives for the same revision), toggles the consuming tap, and
+  when a new pixel position arrives for the same revision, keeping a mid-line card a card;
+  a suggestion with no caret is held back while a solid search runs and shown when it
+  reports: inline, or the card on a miss), toggles the consuming tap, and
   performs key actions. If an accept finds no suggestion (it went stale), it gives the key
   back; a replacement's text is deleted before the insert, and an accept that inserts text
   is counted in `UsageStats`. The engine can be swapped at runtime (`replaceEngine`) when

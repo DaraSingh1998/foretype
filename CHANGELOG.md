@@ -5,6 +5,27 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Ghost text stays at the caret while typing (2026-10-22)
+- Chat composers in Chrome and Electron apps (Claude, Slack): Chromium's caret index and
+  text ranges leave out the line break between paragraphs that its text counts, so on every
+  line after the first the text before the caret ran the paragraphs together and the last
+  letter typed read as text after the caret. The suggestion then showed in a card under the
+  line (or not at all) and moved next to the caret only when you paused. Foretype now lines
+  the two up and reads the right text on every line; an empty composer (which Chromium
+  reports as one line break) counts as empty.
+- Apps with no caret over Accessibility (pixel caret): once an app's caret has been seen, a
+  new field, a new line or a wrapped line is found while you type with one capture (the
+  caret is solid then), instead of showing the card above the field until a pause. Near the
+  field's right edge the same capture follows the line as it wraps. A suggestion waits for
+  that search (a few tens of milliseconds) rather than flashing the card. Empty fields are
+  located on focus, so the first keystroke already has the caret.
+- A corrected pixel position no longer turns a mid-line card into inline text over the rest
+  of the line. When no word fits before the field's edge, the first word runs past it
+  instead of a card above the field.
+- `scripts/e2e-inline-caret.sh` with `scripts/fixtures/composer.html`, a chat composer that
+  types into itself (no keystrokes sent), counts how each suggestion was drawn. The debug log
+  has `show=inline|card|mirror|hidden` and `after=` (what follows the caret on its line).
+
 ## 0.1.0 (2026-10-22)
 
 ### Releases on GitHub and automatic updates (2026-10-22)

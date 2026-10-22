@@ -92,7 +92,7 @@ final class FocusTracker {
     private var readPending = false
     private var fontCache: (key: UInt64, line: Int, font: NSFont?) = (0, -1, nil)
     private var titleCache: (pid: pid_t, title: String, frame: CGRect?) = (0, "", nil)
-    private var fieldInfoCache: (key: UInt64, description: String, url: String) = (0, "", "")
+    private var fieldInfoCache: (key: UInt64, description: String, url: String, web: Bool) = (0, "", "", false)
     private static let forceMarkers = ProcessInfo.processInfo.environment["FORETYPE_TEXT_MARKERS"] == "1"
     private var primed: [pid_t: (manual: Bool?, enhanced: Bool?)] = [:]
     private var primedAt: [pid_t: CFAbsoluteTime] = [:]
@@ -333,7 +333,8 @@ final class FocusTracker {
         // Read for every focused element (once each), so hints can spot pages like Google
         // Docs whose text isn't exposed.
         if fieldInfoCache.key != snap.fieldKey {
-            fieldInfoCache = (snap.fieldKey, FocusTracker.fieldDescription(el), FocusTracker.pageURL(el))
+            let page = FocusTracker.webArea(el)
+            fieldInfoCache = (snap.fieldKey, FocusTracker.fieldDescription(el), page.url, page.web)
         }
         snap.fieldDescription = fieldInfoCache.description
         snap.url = fieldInfoCache.url
@@ -380,6 +381,20 @@ final class FocusTracker {
                 after = after ?? value.substring(with: NSRange(location: caret, length: min(len - caret, 160)))
             }
         }
+        if fieldInfoCache.web {
+            if let p = FocusTracker.paragraphValue(el, caret: caret, count: count) {
+                let s = max(0, p.caret - windowSize) / windowAlign * windowAlign
+                before = p.value.substring(with: NSRange(location: s, length: p.caret - s))
+                after = p.value.substring(with: NSRange(location: p.caret, length: min(p.value.length - p.caret, 160)))
+                snap.caretIndex = p.caret
+            } else if count == 1, caret == 1, before == "\n" {
+                // Chromium's empty contenteditable (`<p><br></p>`) reads as a newline with the
+                // caret after it, though the caret is on the first line.
+                before = ""
+                after = ""
+                snap.caretIndex = 0
+            }
+        }
         snap.textBefore = before ?? ""
         snap.textAfter = (after ?? "").components(separatedBy: CharacterSet.newlines).first ?? ""
 
@@ -402,19 +417,38 @@ final class FocusTracker {
         return String(parts.joined(separator: " | ").prefix(160))
     }
 
-    /// URL of the web page holding the field: walks up to the nearest AXWebArea with a real
-    /// URL (frames such as `about:blank` are skipped; at most 30 levels, once per field).
-    private static func pageURL(_ el: AXUIElement) -> String {
+    /// Whether the field is in a web page (any AXWebArea above it), and the page's URL: the
+    /// nearest AXWebArea with a real URL (frames such as `about:blank` are skipped; at most 30
+    /// levels, once per field).
+    private static func webArea(_ el: AXUIElement) -> (url: String, web: Bool) {
         var node: AXUIElement? = el
+        var web = false
         for _ in 0..<30 {
             guard let n = node else { break }
-            if AX.string(n, kAXRoleAttribute) == "AXWebArea",
-               let u = AX.copy(n, kAXURLAttribute), CFGetTypeID(u) == CFURLGetTypeID() {
-                let s = (u as! URL).absoluteString
-                if s.hasPrefix("http") { return s }
+            if AX.string(n, kAXRoleAttribute) == "AXWebArea" {
+                web = true
+                if let u = AX.copy(n, kAXURLAttribute), CFGetTypeID(u) == CFURLGetTypeID() {
+                    let s = (u as! URL).absoluteString
+                    if s.hasPrefix("http") { return (s, true) }
+                }
             }
             node = AX.element(AX.copy(n, kAXParentAttribute))
         }
-        return ""
+        return ("", web)
+    }
+
+    /// Chromium contenteditables (chat composers in Chrome and Electron apps): `AXValue` and
+    /// `AXNumberOfCharacters` have a newline between paragraphs that the ranges
+    /// (`AXSelectedTextRange`, `AXStringForRange`) leave out. Read through the ranges, the
+    /// paragraphs run together, and the value read at the caret's index starts one character
+    /// early per paragraph above (the last letter typed shows up after the caret). When the
+    /// ranges end short of the count, this maps the caret into the value (`AX.valueIndex`):
+    /// the value and the caret's index in it, or nil.
+    private static func paragraphValue(_ el: AXUIElement, caret: Int, count: Int) -> (value: NSString, caret: Int)? {
+        guard count > 0, count <= 50_000, caret < count, AX.string(el, range: count - 1, 1) == nil,
+              let value = AX.string(el, kAXValueAttribute) as NSString?, value.length == count,
+              let ranged = AX.string(el, range: 0, caret),
+              let i = AX.valueIndex(of: ranged, in: value as String) else { return nil }
+        return (value, i)
     }
 }

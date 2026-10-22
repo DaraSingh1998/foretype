@@ -35,6 +35,9 @@ final class GhostPanel {
     private let panel: NSPanel
     private let view = GhostView()
     private var anchor: (caret: CGRect, font: NSFont)?
+    /// What the panel last drew: `inline`, `card` (under the caret), `mirror` (above the
+    /// field), `hint` or `hidden`. For the debug log.
+    private(set) var mode = "hidden"
 
     init() {
         panel = NonActivatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
@@ -70,6 +73,13 @@ final class GhostPanel {
         return s
     }
 
+    /// The leading spaces and first word of `text`.
+    private static func firstWord(_ text: String) -> String {
+        let start = text.firstIndex { !$0.isWhitespace } ?? text.endIndex
+        let end = text[start...].firstIndex { $0.isWhitespace } ?? text.endIndex
+        return String(text[..<end])
+    }
+
     /// Words of `text` that fit in `width` points.
     private static func fitting(_ text: String, font: NSFont, width: CGFloat) -> String {
         var fit = ""
@@ -97,7 +107,13 @@ final class GhostPanel {
         if let caretRect {
             let x = caretRect.minX + caretRect.width
             let limit = (frame.map { $0.maxX } ?? (displayBounds().first { $0.contains(caretRect.origin) }?.maxX ?? x + 600)) - 4
-            let shown = GhostPanel.fitting(text, font: baseFont, width: max(0, limit - x))
+            var shown = GhostPanel.fitting(text, font: baseFont, width: max(0, limit - x))
+            if shown.trimmingCharacters(in: .whitespaces).isEmpty {
+                // No whole word fits before the field's edge (the line is about to wrap): the
+                // first word may run past it, which beats a card away from the caret.
+                let screenRight = (displayBounds().first { $0.contains(caretRect.origin) }?.maxX ?? x + 600) - 4
+                shown = GhostPanel.fitting(GhostPanel.firstWord(text), font: baseFont, width: max(0, screenRight - x))
+            }
             if !shown.trimmingCharacters(in: .whitespaces).isEmpty {
                 var attr = GhostPanel.attributed(shown, font: baseFont, card: false)
                 if shown == text, tag != nil {
@@ -109,6 +125,7 @@ final class GhostPanel {
                 view.card = false
                 view.text = attr
                 anchor = (caretRect, baseFont)
+                mode = "inline"
                 place(GhostPanel.cocoaRect(fromAX: axRect))
                 return
             }
@@ -125,6 +142,7 @@ final class GhostPanel {
         view.card = true
         view.text = attr
         anchor = nil
+        mode = "mirror"
         place(GhostPanel.cocoaRect(fromAX: axRect))
     }
 
@@ -141,6 +159,7 @@ final class GhostPanel {
         view.card = true
         view.text = attr
         anchor = nil
+        mode = "hint"
         place(GhostPanel.cocoaRect(fromAX: axRect))
         hintGeneration += 1
         let gen = hintGeneration
@@ -165,6 +184,7 @@ final class GhostPanel {
         view.card = true
         view.text = attr
         anchor = nil
+        mode = "card"
         place(GhostPanel.cocoaRect(fromAX: axRect))
     }
 
@@ -190,6 +210,7 @@ final class GhostPanel {
 
     func hide() {
         anchor = nil
+        mode = "hidden"
         if panel.isVisible { panel.orderOut(nil) }
     }
 }

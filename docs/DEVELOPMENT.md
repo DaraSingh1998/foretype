@@ -56,6 +56,7 @@ scripts/sparkle-local-test.sh                                   # silent update 
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
 | Terminal end-to-end | `FORETYPE_MODEL=... scripts/e2e-terminal.sh` | Accessibility, user idle |
 | Fresh Chrome end-to-end (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-chrome-fresh.sh` | Accessibility, user idle |
+| Inline ghost text while typing in a chat composer with no AX caret (wrap, new line, list, new field) | `FORETYPE_MODEL=... scripts/e2e-inline-caret.sh [ce\|textarea]` | Accessibility and Screen Recording, user idle (throwaway Chrome profile; the page types into itself) |
 | Cache rollback | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache [--long]` | a model |
 | Sparkle update | `scripts/sparkle-local-test.sh`, then Check for Updates… in the printed app | nothing (`RELEASING.md`) |
 | Benchmark a Mac | `scripts/bench-mac.sh [--only sw-]`, `ENERGY=1` for mJ per suggestion | the catalog models |
@@ -196,8 +197,19 @@ aborts after 2 s.
   suggestion (normally 2–3 s, see `docs/MEASUREMENTS.md`), screenshots the window region
   to `build/e2e-chrome/1-fresh.png`, then clears `AXEnhancedUserInterface` from outside and
   checks that Foretype primes again.
+- `e2e-inline-caret.sh [ce|textarea]`: sends no keystrokes. A throwaway-profile Chrome opens
+  `scripts/fixtures/composer.html`, a chat composer (one `<p>` per line, like ProseMirror)
+  that types into itself 6 s after its window is focused, at 110–190 ms per character, and
+  pauses while it isn't: a first line that wraps, Enter and a second line, the field
+  emptied, a numbered list, then a new field typed into 0.2 s after it takes focus.
+  `FORETYPE_CARET=pixel` (the default here) forces the pixel caret as in apps with no AX
+  caret. The window title names the segment; the script logs it, screenshots the window
+  region about every second and counts how each suggestion was drawn per segment (the
+  `show=inline|card|mirror` debug field) and the card-to-inline jumps. Add `bg` to the page's
+  hash (`composer.html#ce,bg`) to have it type in a background window, for Accessibility
+  probes that shouldn't take the front.
 
-**Before running either, tell the user** (they take over the keyboard focus), and if
+**Before running any of them, tell the user** (they take over the keyboard focus), and if
 Cotypist is running, ask before quitting it (it also intercepts Tab). TextEdit sometimes
 opens an empty "Untitled" window on activation; close unmodified untitled windows
 afterwards.
@@ -213,15 +225,19 @@ look.
 
 ```
 [  9.400] accept word via keystrokes " do"
-[  7.544] rev 27 model 83ms TextEdit caret=prevEdge(zeroHigh) 686,384 h14 -> " do the first part"
+[  7.544] rev 27 model 83ms TextEdit caret=prevEdge(zeroHigh) 686,384 h14 show=inline -> " do the first part"
 [foretype] rev=27 prefill=1 tok/1.4ms gen=6 total=82.0ms queue+total=83.1ms stop=words " do the first part"
 screen: 412 chars from Microsoft Teams in 210 ms
 ```
 
 `caret=` shows the strategy (`prevEdge`, `prevEdge(zeroHigh)`, `zero`, `zero+offset`,
-`zero(wrapped)`, `pixel`, `pixel+advance`, `none` → mirror card). The pixel caret locator
-logs `pixel caret (blink|verify): X,Y hH in N frames M ms, width scale S` and `pixel caret:
-no blinking caret found in BUNDLE`. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's own logs.
+`zero(wrapped)`, `pixel`, `pixel+advance`, `none` → mirror card), `after=` the characters
+after the caret on its line when there are any (letters as `a`, others as `U+XXXX`) and
+`show=` how the suggestion was drawn (`inline`, `card` under the caret, `mirror` above the
+field, `hidden`). The pixel caret locator logs `pixel caret (blink|verify|solid): X,Y hH in
+N frames M ms, width scale S`, `pixel caret: no blinking caret found in BUNDLE` and `pixel
+caret: no solid caret found in BUNDLE`; `rev N pixel caret moved the suggestion: show=...`
+when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's own logs.
 
 ## macOS permissions and signing (TCC)
 
@@ -273,6 +289,13 @@ no blinking caret found in BUNDLE`. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's ow
 - Accessibility alone is enough for both event taps (no Input Monitoring) on macOS 27.
 - Screen Recording: macOS 15+ re-prompts monthly. Only the bundled app requests it.
 - AppleScript control of Terminal triggers an Automation consent prompt; avoid it in tests.
+- **Keychain prompts.** A development binary reading Keychain items that the installed app
+  created makes macOS ask for the login password: the item's access list names only the app
+  that made it. On launch that's the About You key when `about-you.bin` exists, and the
+  history key when personalization is on in the binary's defaults domain. The binary blocks
+  in `Keychain.get` until someone answers. Run development binaries with
+  `FORETYPE_ABOUT_YOU='{}'` (empty details, the store untouched), as `e2e-inline-caret.sh`
+  does, and never type the password into a prompt a test raised.
 - On macOS 27, system-wide `AXFocusedApplication` always fails (`cannotComplete`); the
   tracker uses `NSWorkspace.frontmostApplication` and `AXUIElementCreateApplication(pid)`.
 
