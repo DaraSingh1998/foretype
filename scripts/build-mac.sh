@@ -79,6 +79,7 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>LSUIElement</key><true/>
   <key>NSHumanReadableCopyright</key><string>Foretype contributors. MIT or Apache-2.0.</string>
   <key>NSAccessibilityUsageDescription</key><string>Foretype reads the text field you are typing in to suggest the next words, and types the words you accept. Everything stays on this Mac.</string>
+  <key>NSContactsUsageDescription</key><string>Foretype reads your own card (My Card) once, when you ask it to fill in Settings ▸ About You. Nothing leaves this Mac.</string>
 ${SPARKLE_KEYS}
 </dict>
 </plist>
@@ -103,6 +104,7 @@ if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then
   sign "$FW"
 fi
 rmdir "$APP/Contents/Frameworks" 2>/dev/null || true
-sign --identifier dev.foretype.Foretype "$APP"
+# The entitlement lets a hardened-runtime build read the user's own Contacts card (About You).
+sign --identifier dev.foretype.Foretype --entitlements "$ROOT/mac/Foretype.entitlements" "$APP"
 codesign --verify --strict --deep "$APP"
 echo "built $APP ($VERSION build $BUILD, signed: $IDENTITY)"

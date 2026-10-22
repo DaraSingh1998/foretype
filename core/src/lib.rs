@@ -9,6 +9,7 @@
 
 pub mod backend;
 pub mod context;
+pub mod details;
 pub mod emoji;
 pub mod engine;
 pub mod ffi;
@@ -28,6 +29,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 use crate::context::{ContextInput, Prompt};
+use crate::details::UserDetails;
 use crate::engine::{Engine, EngineConfig, GenError, GenOptions};
 use crate::history::{History, Record};
 use crate::policy::CompatDb;
@@ -218,7 +220,7 @@ pub enum Event {
     Suggestion {
         revision: u64,
         text: String,
-        /// model | typeThrough | cache | pending | policy | dismissed | error | emoji | autocorrect
+        /// model | typeThrough | cache | pending | policy | dismissed | error | emoji | autocorrect | details
         source: &'static str,
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
@@ -231,7 +233,8 @@ pub enum Event {
         /// Text just before the caret that accepting deletes first (emoji, autocorrect).
         #[serde(skip_serializing_if = "Option::is_none")]
         replace: Option<String>,
-        /// What a replacement stands for, for display (`:tada:`, the misspelled word).
+        /// What a replacement stands for, for display (`:tada:`, the misspelled word), or which
+        /// of the user's details a `details` fill is (`email`, `name`, …).
         #[serde(skip_serializing_if = "Option::is_none")]
         label: Option<String>,
     },
@@ -289,6 +292,13 @@ struct Shared {
     mid_line_ok: AtomicBool,
     /// The shell's completer for the "shell" backend.
     completer: backend::CompleterSlot,
+    /// The user's own details (`ft_engine_set_details`), for fills.
+    details: RwLock<UserDetails>,
+    /// The prompt header's writer line; empty unless the user allowed it.
+    writer: RwLock<String>,
+    /// Completions come from an HTTP server, which may not be on this Mac: the writer line
+    /// is never sent there.
+    remote_http: bool,
 }
 
 fn debug() -> bool {
@@ -326,6 +336,9 @@ impl Core {
             examples: Mutex::new(HashMap::new()),
             mid_line_ok: AtomicBool::new(false),
             completer: backend::CompleterSlot::default(),
+            details: RwLock::new(UserDetails::default()),
+            writer: RwLock::new(String::new()),
+            remote_http: matches!(config.backend.as_str(), "llama-server" | "openai"),
         });
         let engine_cfg = EngineConfig {
             model_path: config.model_path.clone(),
@@ -358,6 +371,18 @@ impl Core {
         *self.shared.settings.write().unwrap() = settings;
         self.shared.session.lock().unwrap().clear();
         self.shared.examples.lock().unwrap().clear();
+    }
+
+    /// The user's own details: offered as fills when the text asks for one, and (when
+    /// `in_prompt` is set and the backend is on this Mac) named in the prompt header.
+    pub fn set_details(&self, details: UserDetails) {
+        let writer = if details.in_prompt && !self.shared.remote_http { details.writer() } else { String::new() };
+        if debug() {
+            eprintln!("[foretype] details: {details:?}, writer line {}", if writer.is_empty() { "off" } else { "on" });
+        }
+        *self.shared.details.write().unwrap() = details;
+        *self.shared.writer.write().unwrap() = writer;
+        self.shared.session.lock().unwrap().clear();
     }
 
     /// (records, distinct words) in the personalization history.
@@ -503,6 +528,22 @@ impl Core {
         });
     }
 
+    /// Offers one of the user's details. Not logged: the value is personal.
+    fn emit_fill(&self, snap: &Snapshot, fill: details::Fill) {
+        self.shared.session.lock().unwrap().set_fill(snap.field_key, &snap.text_before, &fill.replace, &fill.text, fill.field.whole());
+        (self.shared.sink)(&Event::Suggestion {
+            revision: snap.revision,
+            text: fill.text,
+            source: "details",
+            reason: None,
+            ms: None,
+            prefilled: None,
+            stop: None,
+            replace: (!fill.replace.is_empty()).then_some(fill.replace),
+            label: Some(fill.field.key().to_string()),
+        });
+    }
+
     /// Handles a field change. Returns synchronously for policy decisions and reused
     /// suggestions; otherwise queues inference (latest wins) and emits a `pending` hide.
     pub fn submit(&self, mut snap: Snapshot) {
@@ -560,7 +601,7 @@ impl Core {
             session.clear();
         }
         let examples = self.examples_for(&snap, &settings);
-        let prompt = build_prompt(&snap, &settings, &examples);
+        let prompt = build_prompt(&snap, &settings, &examples, &self.shared.writer.read().unwrap());
         self.enqueue(Job {
             kind: JobKind::Complete,
             revision: rev,
@@ -573,9 +614,17 @@ impl Core {
         self.emit_suggestion(rev, String::new(), "pending", None);
     }
 
-    /// Emoji shortcodes, autocorrect and the typo gate, which answer without the model.
-    /// `Some(())` means an event was emitted.
+    /// The user's details, emoji shortcodes, autocorrect and the typo gate, which answer
+    /// without the model. `Some(())` means an event was emitted.
     fn typing_aids(&self, snap: &Snapshot, settings: &Settings) -> Option<()> {
+        // First: a detail being typed ("priya.ra") is no typo, and its value is exact.
+        if line_suffix(snap).is_empty() {
+            let fill = details::fill(&snap.text_before, &self.shared.details.read().unwrap());
+            if let Some(fill) = fill {
+                self.emit_fill(snap, fill);
+                return Some(());
+            }
+        }
         if settings.emoji {
             if let Some(typed) = emoji::typed_shortcode(&snap.text_before) {
                 match emoji::lookup(&typed[1..]) {
@@ -648,7 +697,7 @@ impl Core {
     pub fn warm(&self, snap: Snapshot) {
         let settings = self.settings();
         let examples = self.examples_for(&snap, &settings);
-        let prompt = build_prompt(&snap, &settings, &examples);
+        let prompt = build_prompt(&snap, &settings, &examples, &self.shared.writer.read().unwrap());
         let mut pending = self.shared.pending.lock().unwrap();
         if pending.is_none() {
             *pending = Some(Job {
@@ -732,7 +781,7 @@ fn line_suffix(snap: &Snapshot) -> &str {
 /// Most of the line after the caret a mid-line prompt carries.
 const MAX_SUFFIX_CHARS: usize = 200;
 
-fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String]) -> Prompt {
+fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String], writer: &str) -> Prompt {
     let instructions = settings.instructions_for(&snap.bundle_id);
     let mut prompt = context::build(
         &ContextInput {
@@ -740,6 +789,7 @@ fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String]) -> Pr
             window_title: &snap.window_title,
             url: &snap.url,
             instructions: &instructions,
+            writer,
             screen_context: &snap.screen_context,
             examples,
             text_before: &snap.text_before,
@@ -940,7 +990,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             let mut next = job.snapshot.clone();
                             next.text_before = format!("{}{}", job.text_before, shown);
                             let examples = shared.examples.lock().unwrap().get(&job.field_key).cloned().unwrap_or_default();
-                            let prompt = build_prompt(&next, &settings, &examples);
+                            let writer = shared.writer.read().unwrap().clone();
+                            let prompt = build_prompt(&next, &settings, &examples, &writer);
                             let busy = || {
                                 shared.shutdown.load(Ordering::SeqCst)
                                     || shared.pending.lock().map(|p| p.is_some()).unwrap_or(true)
@@ -1124,6 +1175,87 @@ mod tests {
         assert_eq!(suggestion_for(&rx, 3).1, "pending", "contains digits");
         c.submit(Snapshot { revision: 4, ..snap(1, "I will recie") });
         assert_eq!(suggestion_for(&rx, 4).1, "pending", "not checked: no gate");
+    }
+
+    fn my_details() -> UserDetails {
+        UserDetails {
+            name: "Priya Raman".into(),
+            email: "priya.raman@example.com".into(),
+            phone: "+91 98765 43210".into(),
+            job_title: "Product Manager".into(),
+            ..UserDetails::default()
+        }
+    }
+
+    #[test]
+    fn details_fill_the_exact_value() {
+        let (c, rx) = core_with_events();
+        c.set_details(my_details());
+        c.submit(Snapshot { revision: 1, ..snap(1, "Thanks Sam. My email is ") });
+        let (text, source, replace, _) = suggestion_for(&rx, 1);
+        assert_eq!((text.as_str(), source, replace), ("priya.raman@example.com", "details", None));
+        assert_eq!(c.accept(AcceptMode::NextWord).unwrap().insert, "priya.raman@example.com");
+        // Typed through: still the exact rest, and the typo gate doesn't block it.
+        c.submit(Snapshot { revision: 2, spell_fragment: "typo".into(), ..snap(1, "Thanks Sam. My email is priya.ra") });
+        assert_eq!(suggestion_for(&rx, 2).0, "man@example.com");
+        // A phone number is one unit too; a name goes word by word.
+        c.submit(Snapshot { revision: 3, ..snap(1, "Call me on ") });
+        assert_eq!(c.accept(AcceptMode::NextWord).unwrap().insert, "+91 98765 43210");
+        c.submit(Snapshot { revision: 4, ..snap(1, "See you.\n\nBest regards,\n") });
+        assert_eq!(suggestion_for(&rx, 4).0, "Priya Raman");
+        assert_eq!(c.accept(AcceptMode::NextWord).unwrap().insert, "Priya");
+    }
+
+    #[test]
+    fn details_fill_carries_its_label() {
+        let (c, rx) = core_with_events();
+        c.set_details(my_details());
+        c.submit(Snapshot { revision: 1, ..snap(1, "my name is pri") });
+        loop {
+            if let Event::Suggestion { revision: 1, text, source, replace, label, .. } = rx.recv_timeout(Duration::from_secs(2)).unwrap() {
+                assert_eq!((text.as_str(), source), ("Priya Raman", "details"));
+                assert_eq!((replace.as_deref(), label.as_deref()), (Some("pri"), Some("name")));
+                break;
+            }
+        }
+    }
+
+    #[test]
+    fn details_never_fill_where_suggestions_are_off() {
+        let (c, rx) = core_with_events();
+        c.submit(Snapshot { revision: 1, ..snap(1, "My email is ") });
+        assert_eq!(suggestion_for(&rx, 1).1, "pending", "no details set: the model as usual");
+        c.set_details(my_details());
+        c.submit(Snapshot { revision: 2, subrole: "AXSecureTextField".into(), ..snap(1, "My email is ") });
+        assert_eq!(suggestion_for(&rx, 2).3.as_deref(), Some("secureField"));
+        c.submit(Snapshot { revision: 3, secure_input: true, ..snap(1, "My email is ") });
+        assert_eq!(suggestion_for(&rx, 3).1, "policy");
+        c.configure(Settings { disabled_apps: vec!["com.apple.mail".into()], ..Settings::default() });
+        c.submit(Snapshot { revision: 4, ..snap(1, "My email is ") });
+        assert_eq!(suggestion_for(&rx, 4).3.as_deref(), Some("appDisabledByUser"));
+        c.configure(Settings::default());
+        c.submit(Snapshot { revision: 5, text_after: "and more text here".into(), ..snap(1, "My email is ") });
+        assert_ne!(suggestion_for(&rx, 5).1, "details", "mid-line");
+        c.submit(Snapshot { revision: 6, ..snap(1, "My email is x") });
+        assert_eq!(suggestion_for(&rx, 6).1, "pending", "typed something else");
+        c.set_details(UserDetails::default());
+        c.submit(Snapshot { revision: 7, ..snap(1, "My email is ") });
+        assert_eq!(suggestion_for(&rx, 7).1, "pending", "switched off");
+    }
+
+    #[test]
+    fn writer_line_only_when_allowed_and_local() {
+        let c = core();
+        c.set_details(my_details());
+        assert_eq!(*c.shared.writer.read().unwrap(), "", "off by default");
+        c.set_details(UserDetails { in_prompt: true, ..my_details() });
+        assert_eq!(*c.shared.writer.read().unwrap(), "Priya Raman (Product Manager)");
+        let remote = Core::new(
+            CoreConfig { backend: "openai".into(), backend_url: "http://127.0.0.1:9".into(), ..CoreConfig::default() },
+            Box::new(|_| {}),
+        );
+        remote.set_details(UserDetails { in_prompt: true, ..my_details() });
+        assert_eq!(*remote.shared.writer.read().unwrap(), "", "never sent to a server");
     }
 
     #[test]

@@ -134,6 +134,24 @@ pub unsafe extern "C" fn ft_engine_configure(engine: *mut FtEngine, settings_jso
     }
 }
 
+/// Sets the user's own details: `{"name","email","phone","company","job_title","address",
+/// "website","in_prompt"}` (all optional; empty strings for fields the user switched off, all
+/// empty to turn the feature off). Returns false if the JSON does not parse.
+///
+/// # Safety
+/// `engine` must be live; `details_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_set_details(engine: *mut FtEngine, details_json: *const c_char) -> bool {
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(details_json)) else { return false };
+    match serde_json::from_str::<crate::details::UserDetails>(s) {
+        Ok(d) => {
+            e.core.set_details(d);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Compatibility rule for a bundle ID as JSON (`disabled`, `insertion`, `prime`, `note`).
 ///
 /// # Safety

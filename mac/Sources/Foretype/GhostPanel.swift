@@ -58,9 +58,16 @@ final class GhostPanel {
         return CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
     }
 
-    private static func attributed(_ text: String, font: NSFont, card: Bool) -> NSAttributedString {
+    private static func attributed(_ text: String, font: NSFont, card: Bool, tag: String? = nil) -> NSAttributedString {
         let color = card ? NSColor.secondaryLabelColor : NSColor(white: 0.5, alpha: 0.85)
-        return NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
+        let s = NSMutableAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
+        if let tag, !tag.isEmpty {
+            // What a fill is ("your email"): smaller and fainter than the text Tab inserts.
+            let small = NSFont.systemFont(ofSize: max(9, font.pointSize * 0.72))
+            s.append(NSAttributedString(string: "  \(tag)", attributes: [.font: small, .foregroundColor: color.withAlphaComponent(0.55),
+                                                                         .baselineOffset: (font.pointSize - small.pointSize) * 0.15]))
+        }
+        return s
     }
 
     /// Words of `text` that fit in `width` points.
@@ -79,7 +86,9 @@ final class GhostPanel {
         return fit
     }
 
-    func show(text: String, caret: CaretInfo?, frame: CGRect?, font: NSFont?, midLine: Bool = false) {
+    /// `tag` labels a fill of one of the user's details; it is drawn only when the whole text
+    /// fits.
+    func show(text: String, caret: CaretInfo?, frame: CGRect?, font: NSFont?, midLine: Bool = false, tag: String? = nil) {
         let caretRect = caret?.rect
         let baseFont = font ?? NSFont.systemFont(ofSize: max(11, (caretRect?.height ?? 16) * 0.78))
         if midLine, let caretRect {
@@ -90,7 +99,11 @@ final class GhostPanel {
             let limit = (frame.map { $0.maxX } ?? (displayBounds().first { $0.contains(caretRect.origin) }?.maxX ?? x + 600)) - 4
             let shown = GhostPanel.fitting(text, font: baseFont, width: max(0, limit - x))
             if !shown.trimmingCharacters(in: .whitespaces).isEmpty {
-                let attr = GhostPanel.attributed(shown, font: baseFont, card: false)
+                var attr = GhostPanel.attributed(shown, font: baseFont, card: false)
+                if shown == text, tag != nil {
+                    let tagged = GhostPanel.attributed(shown, font: baseFont, card: false, tag: tag)
+                    if tagged.size().width <= limit - x { attr = tagged }
+                }
                 let size = attr.size()
                 let axRect = CGRect(x: x, y: caretRect.midY - size.height / 2, width: ceil(size.width) + 2, height: ceil(size.height))
                 view.card = false
@@ -103,7 +116,7 @@ final class GhostPanel {
         // Mirror card: above the field (or below the caret line when the field is unknown).
         guard let anchorRect = frame ?? caretRect else { return hide() }
         let cardFont = NSFont.systemFont(ofSize: min(max(baseFont.pointSize, 12), 15))
-        let attr = GhostPanel.attributed("\u{21E5} " + text.trimmingCharacters(in: .whitespaces), font: cardFont, card: true)
+        let attr = GhostPanel.attributed("\u{21E5} " + text.trimmingCharacters(in: .whitespaces), font: cardFont, card: true, tag: tag)
         let size = attr.size()
         let w = ceil(size.width) + view.padding.width * 2
         let h = ceil(size.height) + view.padding.height * 2

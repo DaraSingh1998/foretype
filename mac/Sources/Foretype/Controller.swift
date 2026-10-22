@@ -35,8 +35,13 @@ final class Controller {
     private let lock = NSLock()
     private var latest = FieldSnapshot()
     /// Main thread: the suggestion on screen and its field, to move it when the pixel caret
-    /// locator reports a new position.
-    private var shown: (fieldKey: UInt64, text: String)?
+    /// locator reports a new position. `detail` is set for a fill of one of the user's details.
+    private var shown: (fieldKey: UInt64, text: String, detail: AboutYou.Field?)?
+
+    /// The user's details for the core (`AboutYou.coreJSON`); sent again to a new engine.
+    var detailsJSON = "{}" {
+        didSet { engine.setDetails(detailsJSON) }
+    }
 
     init(engine: EngineBridge, settings: AppSettings, stats: UsageStats) {
         _engine = engine
@@ -54,6 +59,7 @@ final class Controller {
         lock.lock(); rules.removeAll(); lock.unlock()
         old.onEvent = nil
         new.configure(coreSettingsJSON())
+        new.setDetails(detailsJSON)
         hide()
         DispatchQueue.global(qos: .utility).async { old.shutdown() }
     }
@@ -75,6 +81,7 @@ final class Controller {
         power.onChange = { [weak self] _ in self?.applySettings() }
         power.start()
         engine.configure(coreSettingsJSON())
+        engine.setDetails(detailsJSON)
         let ok = keys.start()
         tracker.start()
         return ok
@@ -159,7 +166,8 @@ final class Controller {
         DispatchQueue.main.async { [weak self] in
             guard let self, let shown = self.shown, shown.fieldKey == fieldKey, self.panel.isVisible,
                   self.latestSnapshot.revision == updated.revision else { return }
-            self.panel.show(text: shown.text, caret: updated.caret, frame: self.panelFrame(updated), font: updated.font)
+            self.panel.show(text: shown.text, caret: updated.caret, frame: self.panelFrame(updated), font: updated.font,
+                            tag: shown.detail?.tag)
         }
     }
 
@@ -217,6 +225,8 @@ final class Controller {
         case let .suggestion(revision, text, source, ms, replace, label):
             let snap = latestSnapshot
             guard revision == snap.revision else { return }
+            // One of the user's own details: tagged on screen, never written to the log.
+            let detail = source == "details" ? AboutYou.Field(rawValue: label) : nil
             if text.isEmpty {
                 hide()
             } else {
@@ -225,13 +235,15 @@ final class Controller {
                     : source == "emoji" ? " \(text) \(label)" : " → \(text.trimmingCharacters(in: .whitespaces))"
                 let midLine = !(snap.textAfter.split(separator: "\n", omittingEmptySubsequences: false).first ?? "")
                     .trimmingCharacters(in: .whitespaces).isEmpty
-                panel.show(text: display, caret: snap.caret, frame: panelFrame(snap), font: snap.font, midLine: midLine && replace.isEmpty)
-                shown = (snap.fieldKey, display)
+                panel.show(text: display, caret: snap.caret, frame: panelFrame(snap), font: snap.font, midLine: midLine && replace.isEmpty,
+                           tag: detail?.tag)
+                shown = (snap.fieldKey, display, detail)
                 keys.setSuggestionVisible(panel.isVisible)
             }
             if Log.enabled, source != "pending" {
                 let caret = snap.caret.map { "\($0.strategy) \(Int($0.rect.minX)),\(Int($0.rect.minY)) h\(Int($0.rect.height))" } ?? "none"
-                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret) -> \(text.debugDescription)")
+                let what = source == "details" ? "<\(label), redacted>" : text.debugDescription
+                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret) -> \(what)")
             }
         case let .status(state, detail):
             Log.debug("engine \(state): \(detail)")
@@ -255,16 +267,17 @@ final class Controller {
                 return
             }
             let strategy = insertionStrategy(for: latestSnapshot.bundleId)
+            let detail = shown?.detail
             if !r.replace.isEmpty { Inserter.deleteBackward(r.replace.count) }
             Inserter.insert(r.insert, strategy: strategy)
             // Replacements (emoji, corrections) stand for text already typed: not typing saved.
             if r.replace.isEmpty { stats.record(inserted: r.insert, all: action == .acceptAll) }
-            Log.debug("accept \(action == .acceptAll ? "all" : "word") via \(strategy.rawValue) \(r.insert.debugDescription)")
+            Log.debug("accept \(action == .acceptAll ? "all" : "word") via \(strategy.rawValue) \(detail.map { "<\($0.rawValue), redacted>" } ?? r.insert.debugDescription)")
             if r.remaining.isEmpty {
                 hide()
             } else {
                 panel.advance(inserted: r.insert, remaining: r.remaining)
-                shown = panel.isVisible ? (latestSnapshot.fieldKey, r.remaining) : nil
+                shown = panel.isVisible ? (latestSnapshot.fieldKey, r.remaining, detail) : nil
                 keys.setSuggestionVisible(panel.isVisible)
             }
         case .dismiss:

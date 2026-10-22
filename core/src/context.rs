@@ -12,6 +12,9 @@ pub struct ContextInput<'a> {
     pub window_title: &'a str,
     pub url: &'a str,
     pub instructions: &'a str,
+    /// Who is writing ("Priya Raman (Product Manager, Northwind)"), from the user's own
+    /// details when they allow it; empty otherwise.
+    pub writer: &'a str,
     /// On-screen text near the field (OCR of the focused window), refreshed by the shell
     /// only on focus changes and typing pauses so the header stays stable while typing.
     pub screen_context: &'a str,
@@ -90,6 +93,10 @@ fn header(input: &ContextInput) -> String {
         h.push_str(&examples.join("\n---\n"));
         h.push_str("\n[End of earlier writing]\n\n");
     }
+    let writer = truncate_chars(input.writer.trim(), 160);
+    if !writer.is_empty() {
+        h.push_str(&format!("[Written by {writer}]\n"));
+    }
     if !place.is_empty() {
         h.push_str(&format!("[Written in {place}]\n"));
     }
@@ -154,6 +161,7 @@ mod tests {
             window_title: "Re: planning",
             url: "",
             instructions: "",
+            writer: "",
             screen_context: "",
             examples: &[],
             text_before: text,
@@ -203,6 +211,18 @@ mod tests {
         assert!(p.prefix.starts_with(
             "[Earlier writing by the same person in Mail]\nThanks Priya (noted), talk Thursday.\n[End of earlier writing]\n\n[Written in Mail"
         ));
+    }
+
+    #[test]
+    fn writer_line_before_the_place() {
+        let mut i = input("Best,\nPri");
+        i.writer = "Priya Raman (Product Manager, Northwind)";
+        let p = build(&i, 2000);
+        assert_eq!(
+            p.prefix,
+            "[Written by Priya Raman (Product Manager, Northwind)]\n[Written in Mail \u{2014} Re: planning]\n\nBest,\n"
+        );
+        assert_eq!(p.fragment, "Pri");
     }
 
     #[test]

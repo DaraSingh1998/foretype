@@ -41,6 +41,7 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | OCR + row assembly | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
 | Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
+| About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
 | Typing aids in TextEdit (emoji, autocorrect, typo gate, mid-line) | `FORETYPE_MODEL=... scripts/e2e-typing-aids.sh` | Accessibility, user idle |
 | Emoji/autocorrect Tab replacement in a web field | `FORETYPE_MODEL=... [MARKERS=1] scripts/e2e-browser-aids.sh` | Accessibility, user idle (throwaway Chrome profile) |
@@ -62,7 +63,9 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 Unit tests cover word splitting, prompt stability, the screen and examples sections,
 session reuse, the policy gate and agent prompts, the compat DB, the encrypted history
 (round trip, wrong key, no plaintext on disk), the profile, example selection, the
-recorder, the catalog, word limiting and the HTTP backend config.
+recorder, the catalog, word limiting, the HTTP backend config, and the About You fills
+(every cue kind, sign-offs, case mismatch, nothing to fill, secure fields, disabled apps,
+mid-line, the writer line only for local backends).
 
 ### ft-replay
 
@@ -83,6 +86,8 @@ $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 4 --chars 200   # cache 
 $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 3 --long        # same, prompts past 512 tokens
 $R "$M" --corpus eval/corpus.jsonl --beam 3                             # phrase beam search
 $R "$M" --corpus eval/corpus.jsonl --mid-line-eval --typed 1            # mid-line word accuracy
+$R "$M" --corpus eval/corpus.jsonl --details eval/details.json          # About You fills
+$R "$M" --corpus eval/corpus.jsonl --details eval/details.json --details-in-prompt  # + writer line
 swiftc -O tools/spell-map/main.swift mac/Sources/Foretype/Speller.swift -o build/spell-map
 build/spell-map eval/corpus.jsonl > build/spell-map.json                # the app's spell verdicts
 $R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo gate + autocorrect
@@ -93,7 +98,9 @@ Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, 
 and generation timings.
 
 Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, and
-how many keystrokes were served by `model`, `typeThrough`, `cache` or `policy`.
+how many keystrokes were served by `model`, `typeThrough`, `cache`, `details` or `policy`.
+With `--details`, the simulated user takes a fill other than a name only if all of it is
+what comes next (one Tab inserts all of it).
 
 ### Driving Foretype's own windows
 

@@ -22,6 +22,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     private var onboarding: OnboardingWindowController?
     private var preferences: PreferencesWindowController?
     private var updater: UpdateController?
+    /// Settings ▸ About You. Read from its encrypted file only if one exists, so the Keychain
+    /// is never touched for users who haven't entered anything. FORETYPE_ABOUT_YOU (testing)
+    /// replaces it and keeps the store untouched.
+    private(set) var aboutYou = AboutYou.fromEnvironment() ?? (AboutYouStore.exists ? AboutYouStore.load() : AboutYou())
+    private let aboutYouFromEnvironment = AboutYou.fromEnvironment() != nil
+    private var aboutYouSave: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -179,6 +185,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         }
         let c = Controller(engine: engine, settings: settings, stats: stats)
         c.onStatus = onStatus
+        c.detailsJSON = aboutYou.coreJSON()
         if !c.start() {
             engineState = "error"
             engineDetail = L("Could not create event taps (Accessibility permission?)")
@@ -187,6 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        if let pending = aboutYouSave, !pending.isCancelled { pending.perform() }
         controller?.shutdown()
         models.saveForRelaunch()
     }
@@ -657,6 +665,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             if controller?.engine.clearHistory() != true {
                 try? FileManager.default.removeItem(atPath: HistoryStore.path)
             }
+        }
+        preferences?.refresh()
+    }
+
+    /// Applies at once; the encrypted file is written half a second after the last change.
+    func setAboutYou(_ details: AboutYou) {
+        guard details != aboutYou else { return }
+        aboutYou = details
+        controller?.detailsJSON = details.coreJSON()
+        aboutYouSave?.cancel()
+        if aboutYouFromEnvironment { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.aboutYouSave = nil
+            if !AboutYouStore.save(self.aboutYou) {
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = L("Couldn't save your details")
+                alert.informativeText = L("Foretype needs a key in your Keychain to store your details encrypted. They are used until you quit.")
+                alert.runModal()
+            }
+        }
+        aboutYouSave = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: item)
+    }
+
+    func confirmClearAboutYou() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = L("Delete your details?")
+        alert.informativeText = L("Foretype forgets the details you entered in About You. This can't be undone.")
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: L("Delete"))
+        alert.addButton(withTitle: L("Cancel"))
+        if alert.runModal() == .alertFirstButtonReturn {
+            aboutYouSave?.cancel()
+            aboutYouSave = nil
+            aboutYou = AboutYou()
+            if !aboutYouFromEnvironment { AboutYouStore.delete() }
+            controller?.detailsJSON = aboutYou.coreJSON()
         }
         preferences?.refresh()
     }

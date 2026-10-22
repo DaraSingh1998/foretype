@@ -316,3 +316,35 @@ Foretype's text match what the user sees in System Settings.
 **Cost.** Keys are English sentences: editing the English text means editing the key in
 every language (`scripts/check-localization.py` lists what is missing). Text from the core
 (error messages) stays English.
+
+## D34. About You: deterministic fills, one identity, encrypted file (2026-10-22)
+
+**Decision.** The user's own details (name, email, phone, company, job title, address,
+website; one set per macOS account, the user's choice over several identities picked per
+app) are filled in by rules in the core (`details.rs`), not by the model: a cue phrase on
+the caret's line ("my email is", "Email:" at a line start, the line after "Regards,")
+offers the exact value as a `details` suggestion, only when it matches what was typed.
+The model sees them only through a `[Written by …]` header line (name, job title,
+company), on by default with its own switch and never sent to an HTTP backend. The shell stores them in `about-you.bin`, sealed with
+ChaCha20-Poly1305 under a Keychain key, and passes them through a new FFI call
+(`ft_engine_set_details`) rather than the settings JSON.
+**Why.** A value like an email address or phone number must be exact; a base model asked to
+continue "My email is" invents a plausible address, and a writer line in the header only
+makes that more likely to be the user's, never certain. Rules are exact, instant, work
+with every backend (including Apple's model and servers) and are easy to test, including
+the cases that must stay empty. They sit with the other typing aids, before the typo gate
+(an address being typed is no typo) and are recomputed per keystroke, so they need no
+cache or type-through. A cue list stays small and conservative because a wrong fill is
+worse than none: "I'm", "it's", "Title:" and "Role:" are left out. A name goes word by word
+(people often sign with the first name only); other details take one Tab. The writer line
+was to stay off unless the corpus replay showed it doesn't hurt; it didn't (41.9% → 42.2%
+with fills, 42.0% with fills alone, `docs/MEASUREMENTS.md`), and it never leaves the Mac,
+so it is on. A separate FFI call keeps the details out of
+`Settings` (serialized, cloned per keystroke, and the thing one would log), and lets the
+shell send them only when they change. The file follows the writing history's pattern
+(D14) instead of Keychain-only storage so the feature works the same way the user already
+knows from personalization and keeps one small Keychain item; the Keychain is read at
+launch only if the file exists.
+**Cost.** English cue phrases only. A fill shows only at the end of a line. Phone numbers
+must be typed the way they are stored ("+91 98765…" doesn't match "98765…"). Several
+identities would need a picker and per-app mapping; the JSON shape leaves room for it.

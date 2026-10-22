@@ -91,6 +91,29 @@ replayed with the other 11 as history; Qwen3-1.7B): keystrokes saved went from 4
 the earlier-writing examples contribute most of the gain. Those documents share few names
 and phrases; real histories repeat more, so treat this as a floor.
 
+### About you
+
+Settings ▸ **About You** holds your own name, email, phone, company, job title, address and
+website (one set per macOS account), with a switch for the feature and one per detail.
+**Fill from My Card in Contacts…** copies your Contacts card into the empty fields (macOS
+asks for Contacts access once, only when you click it).
+
+- **Fill**: when the text before the caret clearly asks for a detail, the ghost text is the
+  exact value, tagged "your email": `My email is `, `Call me on `, `I work at `, `Email:` or
+  `Phone:` at the start of a line, and your name on the line after a sign-off (`Regards,`,
+  `Thanks,`, `Cheers,`, `--`). It only offers a value that matches what you have started
+  typing, and is recomputed on every keystroke. One Tab inserts the whole detail, except
+  a name, which goes word by word so Tab can take just your first name. No model is
+  involved, so it works with every backend.
+- **Writer line** (on, with its own switch): with the built-in or Apple model, name, job
+  title and company go into the prompt header as `[Written by …]`, so continuations use
+  your name. Never sent to a server you configured. On the corpus replay it didn't hurt
+  (41.9% → 42.2% keystrokes saved with fills and the writer line, 42.0% with fills alone).
+- **Privacy**: stored in `~/Library/Application Support/Foretype/about-you.bin`, sealed with
+  ChaCha20-Poly1305 under a key in your login Keychain, never in preferences; nothing leaves
+  the Mac. Never filled in secure fields or apps where suggestions are off. Debug logs show
+  only which detail was offered, never its value. **Clear All…** deletes the file and key.
+
 ### Custom instructions
 
 **Custom Instructions…** in the menu edits a note for all apps (who you are, tone,
@@ -117,11 +140,12 @@ All of these can be turned off in Settings → General.
 ### Settings window
 
 **Settings…** in the menu (Cmd-, while the menu or one of Foretype's windows is open)
-shows every setting in five tabs; changes apply at once, the same way as from the menu:
+shows every setting in six tabs; changes apply at once, the same way as from the menu:
 
 - **General**: suggestions on/off, length (2, 4, 7 or 10 words), stop at the end of a
   sentence, screen context (with the Screen Recording status), custom instructions.
 - **Personalization**: learn from my writing, strength, what was learned, delete history.
+- **About You**: your own details for exact fills, the writer line, fill from Contacts.
 - **Apps**: every app you switched off (or switched on where it is off by default), with
   Remove to return it to its default.
 - **Model**: the catalog and every other GGUF in the Models folder, each with its size on

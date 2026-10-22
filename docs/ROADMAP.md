@@ -76,7 +76,10 @@ are kept for if that changes; the core stays portable.
 - **Personalization**: per-app retrieval tuning (needs a larger personal corpus than the 12
   self-written documents: tuning on those would fit noise). Cotypist's history can't be
   imported (encrypted, D30); Import Writing… takes text files instead. (The llama-server
-  `logit_bias` landed and was measured: 40.7% → 41.0–41.3%.)
+  `logit_bias` landed and was measured: 40.7% → 41.0–41.3%.) About You: cue phrases in
+  other languages (English only), several identities picked per app, a signature block
+  after the name (job title, company), phone numbers matched ignoring spaces and the
+  country code. (One set of details with exact fills and a writer line landed.)
 - **Product**: more languages (English and Hindi so far). (Settings window, statistics,
   model manager polish, downloads that resume after a relaunch, adding an app from the
   Settings window, the Apple on-device fallback and localization landed.)
@@ -104,6 +107,8 @@ are kept for if that changes; the core stays portable.
   between checks the ghost follows a font guess (about 1 pt off over a line without the
   host font); a soft-wrapped line is found again only at the next pause. Measured in
   TextEdit against its AX caret (`docs/MEASUREMENTS.md`).
+- About You fills only at the end of a line, from English cue phrases, and only when what
+  was typed is the start of the stored value exactly as written (case aside).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in
   engine (no token healing).
 - Ad-hoc builds lose the Accessibility grant on every update until releases are signed

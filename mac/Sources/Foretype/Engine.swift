@@ -3,7 +3,7 @@ import Foundation
 
 enum EngineEvent {
     /// `replace`: text before the caret an accept deletes first (emoji, autocorrect), with
-    /// `label` saying what it stands for.
+    /// `label` saying what it stands for; for a `details` fill, `label` names the detail.
     case suggestion(revision: UInt64, text: String, source: String, ms: Double?, replace: String, label: String)
     case status(state: String, detail: String)
 }
@@ -98,6 +98,13 @@ final class EngineBridge {
     func configure(_ json: String) -> Bool {
         guard let handle else { return false }
         return ft_engine_configure(handle, json)
+    }
+
+    /// The user's own details (`AboutYou.coreJSON`), for fills and the prompt's writer line.
+    @discardableResult
+    func setDetails(_ json: String) -> Bool {
+        guard let handle else { return false }
+        return ft_engine_set_details(handle, json)
     }
 
     func historyStats() -> (records: Int, words: Int) {

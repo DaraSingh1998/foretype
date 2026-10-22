@@ -43,6 +43,7 @@ Foretype has two halves joined by a small C ABI:
 | `core/src/policy.rs` | The gate, compatibility DB types, agent-prompt detection |
 | `core/src/history.rs` | Encrypted writing history (ChaCha20-Poly1305) |
 | `core/src/profile.rs` | Vocabulary profile and example selection |
+| `core/src/details.rs` | The user's own details: fill cues and the prompt's writer line |
 | `core/src/models.rs` | Model catalog (`models/catalog.json`) and tier choice |
 | `core/src/ffi.rs`, `core/include/foretype_core.h` | C ABI |
 | `core/src/bin/ft-replay.rs` | Headless replay and evaluation tool |
@@ -50,7 +51,9 @@ Foretype has two halves joined by a small C ABI:
 | `compat/apps.json` | Per-app rules (CC0) |
 | `models/catalog.json` | Downloadable models with pinned SHA-256 |
 | `eval/corpus.jsonl` | 53-document evaluation corpus |
+| `eval/details.json` | Users' details per corpus document, for `ft-replay --details` |
 | `mac/Sources/Foretype/*.swift` | macOS shell (one file per component, see below) |
+| `mac/Foretype.entitlements` | Signing entitlements (Contacts, for About You's "Fill from My Card") |
 | `mac/Localization/*.lproj` | UI translations (`Localizable.strings`, `.stringsdict`, `InfoPlist.strings`); English is the base |
 | `scripts/` | `build-mac.sh`, `package-mac.sh`, e2e tests, `ftdrive.swift` test driver |
 | `packaging/homebrew/` | Cask template |
@@ -93,7 +96,8 @@ In order; the first rule that applies decides:
 8. **Type-through**: the text extends the shown suggestion's base by a prefix of the
    suggestion, or backspaces up to 24 characters into it → emit the rest (`typeThrough`),
    no inference.
-9. **Typing aids** (no model): an `:name` emoji shortcode at a word start → the best
+9. **Typing aids** (no model): one of the user's details the text asks for, at the end of
+   a line → its exact value (`details`; see *Your details* below); an `:name` emoji shortcode at a word start → the best
    gemoji match as a replacement (`emoji`; no match → hide, `shortcode`); a misspelled word
    just finished (`spell_word`/`spell_correction` from the shell) → its correction as a
    replacement (`autocorrect`), unless it is capitalized mid-sentence, an acronym, has
@@ -188,6 +192,7 @@ In order; the first rule that applies decides:
 ...
 [End of earlier writing]
 
+[Written by Priya Raman (Product Manager, Acme)]      ← the user's details (About You), local models only
 [Written in Mail — Re: planning (mail.example.com)]   ← app, window title (≤80), URL host
 [Writer's notes: …]                                   ← global + per-app instructions (≤400)
 
@@ -205,6 +210,33 @@ fragment = " no"                                 ← typed partial word + its le
   spaces to the following word, so a prompt never ends in a bare space.
 - Everything that changes rarely (screen text, examples, header) comes first; everything
   that changes per keystroke comes last.
+
+### Your details (`details.rs`)
+
+The shell sends the user's details with `ft_engine_set_details` (fields switched off arrive
+empty; all empty means off). `fill(text_before, details)` looks only at the caret's line:
+
+- **Sign-off**: the line before is a sign-off on its own (`Regards`, `Best regards`,
+  `Thanks`, `Cheers`, `Sincerely`, `--`, … with an optional `,` or `!`) → the name, with the
+  current line as its typed start.
+- **Cue phrases** (about 150, matched case-insensitively, `’` as `'`): `Word` cues anywhere
+  after a word boundary (`my email is`, `call me on`, `i work at`, `reach me at` → email or
+  phone, whichever matches); `LineStart` labels after optional indentation or a bullet
+  (`Email:`, `Phone:`, `Address:`); `AfterGreeting` (`Hi Sam, this is` → name). The cue must
+  end a word and be followed only by spaces and the typed start of the value; the cue
+  nearest the caret wins. Ambiguous phrases (`I'm `, `it's`, `Title:`, `Role:`) are left
+  out.
+- **Match**: the typed start must be a prefix of the value: same case → the rest as a
+  continuation (with a leading space when the cue has none yet); other case → the whole
+  value replacing the typed start. A value already typed in full, unset, multi-line or
+  over 300 characters → nothing, and the pipeline goes on (emoji, autocorrect, model).
+- Skipped mid-line. Runs before the typo gate (an email address is no typo).
+- Session: a fill is not cached and not typed through (it is recomputed per keystroke). A
+  name is accepted word by word; every other detail is `whole`: one Tab inserts all of it.
+- **Writer line**: with `in_prompt` and a local backend (built-in or the shell's Apple
+  model, never `llama-server`/`openai`), `[Written by Name (Job title, Company)]` goes into
+  the header before `[Written in …]`. `UserDetails`'s `Debug` prints only which fields are
+  set.
 
 ### Emoji (`emoji.rs`, `core/data/emoji.tsv`)
 
@@ -228,6 +260,8 @@ dismissal marker.
   "", replace }` and the shell deletes `replace` (Backspace per character) before
   inserting; replacements are never typed through or cached.
 - `remember`: cache-only insert used by the prefetch.
+- **Fills** (`set_fill`): one of the user's details, a continuation or (case differs) a
+  replacement; `whole` makes either key accept all of it. Not cached, not typed through.
 
 ### Compatibility database (`compat/apps.json`, `policy.rs`)
 
@@ -304,6 +338,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_accept(engine, mode)` | 0 next word, 1 all → `{"insert","remaining","replace"}` or NULL (delete `replace` before the caret first) |
 | `ft_engine_dismiss(engine, field_key, text_before)` | Esc |
 | `ft_engine_configure(engine, settings_json)` | Replace settings |
+| `ft_engine_set_details(engine, details_json)` | The user's own details (below); returns false if the JSON doesn't parse |
 | `ft_engine_set_completer(engine, callback, ctx)` | Completer for the `shell` backend (request JSON in, malloc'd text out) |
 | `ft_engine_compat_rule(engine, bundle_id)` | Rule JSON for an app |
 | `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization |
@@ -320,6 +355,9 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 `personal_examples` (true), `emoji` (true), `autocorrect` (true), `typo_gate` (true),
 `mid_line` (false), `beam_width` (1).
 
+**UserDetails** (`ft_engine_set_details`): `name`, `email`, `phone`, `company`, `job_title`,
+`address`, `website` (strings, empty = unset or switched off), `in_prompt` (false).
+
 **Snapshot** (`submit`/`warm`): `revision`, `field_key`, `bundle_id`, `app_name`,
 `window_title`, `url`, `role`, `subrole`, `role_description`, `description` (label or
 placeholder), `text_before`, `text_after` (rest of the caret line), `screen_context`,
@@ -332,12 +370,16 @@ placeholder), `text_before`, `text_after` (rest of the caret line), `screen_cont
 {"type":"suggestion","revision":42,"text":" going next week","source":"model","ms":71.2,"prefilled":1,"stop":"words"}
 {"type":"suggestion","revision":43,"text":"","source":"policy","reason":"secureField"}
 {"type":"suggestion","revision":44,"text":"🎉","source":"emoji","replace":":ta","label":":tada:"}
+{"type":"suggestion","revision":45,"text":"ya.raman@example.com","source":"details","label":"email"}
 {"type":"status","state":"ready","detail":"loaded in 846 ms"}
 ```
 
 `source`: `model`, `typeThrough`, `cache`, `pending`, `policy`, `dismissed`, `error`,
-`emoji`, `autocorrect`. An empty `text` means hide. `replace` (with `label`) marks a
-replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace` on accept. The shell must ignore events whose `revision` is not its latest.
+`emoji`, `autocorrect`, `details`. An empty `text` means hide. `replace` (with `label`) marks a
+replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace` on accept. For
+`details`, `label` names the detail (`name`, `email`, `phone`, `company`, `job_title`,
+`address`, `website`); the shell draws a small tag ("your email") after the ghost text and
+never logs the text. The shell must ignore events whose `revision` is not its latest.
 
 ## macOS shell
 
@@ -465,6 +507,16 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
   suggestions on the current line; Ctrl+Opt+Cmd + key above Tab snoozes the app for 5
   minutes. `PowerMonitor` polls the power source every 30 s; on battery the core gets an
   80 ms debounce and no prefetch.
+- **`AboutYou.swift`**: `AboutYou` (the user's details, master switch, writer-line
+  switch (on by default), per-detail switches; `coreJSON()` sends switched-off details empty),
+  `AboutYouStore` (`~/Library/Application Support/Foretype/about-you.bin`: the JSON sealed
+  with CryptoKit ChaCha20-Poly1305, mode 0600; 256-bit key in the Keychain account
+  `about-you-key`, created on the first save, read at launch only if the file exists;
+  emptying every field or Clear All deletes both), `MeCard` (Contacts' "me" card, read only
+  when the user clicks Fill from My Card; hidden in a bare binary, which has no Contacts
+  usage string). `AppDelegate` keeps the details in memory, sends them to the engine at
+  once (`Controller.detailsJSON`, again after an engine swap) and saves 0.5 s after the last
+  change. `--about-selftest` checks the JSON and the sealing with a key in memory.
 - **`Settings.swift`**: `AppSettings` (UserDefaults: enabled, lengthWords,
   stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
   useScreenContext, personalize, strength, backend, backendURL, backendModel, modelPath,
@@ -483,8 +535,8 @@ replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace
   files with their allocated size, totals its disk use, and deletes only GGUF or `.part`
   files directly inside it. Progress reaches the UI in 0.5% steps.
 - **`PreferencesWindow.swift`**: the Settings window, an `NSTabViewController` in toolbar
-  style that sizes the window to each pane (General, Personalization, Apps, Model,
-  Statistics; programmatic `NSStackView`/`NSGridView` layout). It changes settings through
+  style that sizes the window to each pane (General, Personalization, About You, Apps,
+  Model, Statistics; programmatic `NSStackView`/`NSGridView` layout). It changes settings through
   `PreferencesHost`, which `AppDelegate` implements with the menu's own code paths
   (`Controller.applySettings`, `startEngine`/`replaceEngine` for model and server changes).
   The menu calls `refresh()` after its own changes so both stay in step.
@@ -540,6 +592,8 @@ the same placeholders.
 | Text of the focused field | In memory; into the prompt. Never logged unless `FORETYPE_DEBUG` (suggestions only) |
 | Screen text (OCR) | In memory per field; image discarded immediately |
 | Writing history (opt-in) | `history.bin`, encrypted, key in the Keychain; deleted from the menu |
+| Your details (About You) | `about-you.bin`, encrypted, key in the Keychain; in the core's memory for fills; in the prompt only with the writer line on and a local model; never logged (debug logs name the detail, not its value); Clear All deletes file and key |
+| Contacts | Your own card, read once when you click Fill from My Card |
 | Statistics | Counts only (accepts, words, characters, keystrokes saved; per day for 30 days and in total) in UserDefaults `usageStats`; reset in Settings |
 | Clipboard | Read only to restore it after a paste, only with "always allow" access |
 | Network | Model downloads (Hugging Face), Sparkle update checks (release builds), and the user's own server if one is configured. Nothing else |

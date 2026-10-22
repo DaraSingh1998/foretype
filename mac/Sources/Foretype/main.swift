@@ -6,6 +6,9 @@ if CommandLine.arguments.contains("--ocr-selftest") {
 if CommandLine.arguments.contains("--font-selftest") {
     exit(FontMatcher.selfTest() ? 0 : 1)
 }
+if CommandLine.arguments.contains("--about-selftest") {
+    exit(AboutYouStore.selfTest() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--stats-selftest") {
     exit(UsageStats.selfTest() ? 0 : 1)
 }

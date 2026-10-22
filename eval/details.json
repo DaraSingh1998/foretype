@@ -1,0 +1,6 @@
+{
+  "*": {"name": "Alex Morgan", "email": "alex.morgan@example.com", "phone": "+1 415 555 0134", "company": "Northwind Labs", "job_title": "Operations Lead", "address": "500 Market Street, San Francisco, CA 94105", "website": "https://alexmorgan.example.com"},
+  "sw-email-1": {"name": "Anna Lindberg", "email": "anna.lindberg@example.com", "phone": "+46 70 555 01 23", "company": "Brightwell Studio", "job_title": "Head of Operations"},
+  "sw-email-3": {"name": "Ravi Menon", "email": "ravi.menon@example.com", "phone": "+91 55550 12345", "company": "Northwind Labs", "job_title": "Office Manager"},
+  "sw-support-1": {"name": "Emily Carter", "email": "emily@harborgoods.example", "company": "Harbor Goods", "job_title": "Customer Support Specialist"}
+}

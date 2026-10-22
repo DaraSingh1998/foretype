@@ -12,7 +12,13 @@
 Each line has `id`, `register`, `header` (for example "An email written in Mail:", used to
 name the app) and `text`.
 
+`details.json`: the user's own details (Settings ▸ About You) for `ft-replay --details`, by
+document id: the three self-written documents that end with a signature get their signer
+(fictional), `*` gives every other document one more fictional person. Example values only
+(`example.com`, 555 numbers).
+
 Run it through the engine with:
 
     core/target/release/ft-replay MODEL.gguf --corpus eval/corpus.jsonl
     core/target/release/ft-replay MODEL.gguf --corpus eval/corpus.jsonl --only sw- --personal-loo
+    core/target/release/ft-replay MODEL.gguf --corpus eval/corpus.jsonl --details eval/details.json

@@ -33,6 +33,11 @@ void ft_engine_dismiss(FtEngine *engine, uint64_t field_key, const char *text_be
 
 bool ft_engine_configure(FtEngine *engine, const char *settings_json);
 
+/// The user's own details: {"name","email","phone","company","job_title","address","website",
+/// "in_prompt"}. Fields the user switched off are empty; all empty turns fills off. Filled in
+/// as "details" suggestions when the text asks for one; never logged.
+bool ft_engine_set_details(FtEngine *engine, const char *details_json);
+
 /// Installs the completer used when the config's backend is "shell".
 void ft_engine_set_completer(FtEngine *engine, FtCompleteCallback callback, void *ctx);
 

@@ -11,6 +11,9 @@
 //!   ft-replay MODEL --corpus CORPUS.jsonl [--words N] [--no-prefetch] [--only PREFIX] [--think MS]
 //!       --think: simulated reaction time between seeing a suggestion and the next key
 //!       (default 0: an instant user, which never lets a prefetch finish)
+//!   ft-replay MODEL --corpus CORPUS.jsonl --details eval/details.json [--details-in-prompt]
+//!       the user's own details per document id ("*" for the others; see eval/details.json):
+//!       fills ("Regards,\n" -> the name), and with --details-in-prompt the writer line too.
 //!   ft-replay MODEL --corpus CORPUS.jsonl --personal-loo [--only sw-] [--strength 0|1|2] [--no-examples]
 //!       leave-one-out personalization: each document is replayed with the other selected
 //!       documents as the user's writing history, with and without personalization.
@@ -32,6 +35,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use foretype_core::context::{self, ContextInput};
+use foretype_core::details::UserDetails;
 use foretype_core::engine::{Engine, EngineConfig, GenError, GenOptions};
 use foretype_core::session::AcceptMode;
 use foretype_core::{words, Core, CoreConfig, Event, Settings, Snapshot};
@@ -185,9 +189,11 @@ impl Replayer {
             let rev = self.rev;
             self.core.submit(snap(rev, &typed));
             let mut suggestion = String::new();
+            // A detail other than a name is accepted whole: take it only if all of it is next.
+            let mut whole = false;
             loop {
                 match self.rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, reason, replace, .. }) if revision == rev => {
+                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, reason, replace, label, .. }) if revision == rev => {
                         if source == "pending" {
                             continue;
                         }
@@ -202,6 +208,7 @@ impl Replayer {
                             st.model_ms.push(ms.unwrap_or(0.0));
                             st.prefills.push(prefilled.unwrap_or(0) as f64);
                         }
+                        whole = source == "details" && label.as_deref() != Some("name");
                         suggestion = text;
                         break;
                     }
@@ -216,7 +223,7 @@ impl Replayer {
                 std::thread::sleep(self.think);
             }
             let upcoming: String = chars[i..end].iter().collect();
-            let next = words::take_words(&suggestion, 1);
+            let next = if whole { suggestion.as_str() } else { words::take_words(&suggestion, 1) };
             if !next.is_empty() && upcoming.starts_with(next) {
                 if let Some(insert) = self.core.accept(AcceptMode::NextWord).map(|a| a.insert) {
                     if self.verbose {
@@ -289,6 +296,7 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
                     window_title: "",
                     url: "",
                     instructions: "",
+                    writer: "",
                     screen_context: &lead,
                     examples: &[],
                     text_before: typed,
@@ -389,7 +397,16 @@ fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
                 let typed_part: String = word.chars().take(typed).collect();
                 let before = format!("{}{}", &d.text[..line_start + ws], typed_part);
                 let mut prompt = context::build(
-                    &ContextInput { app_name: &app, window_title: "", url: "", instructions: "", screen_context: "", examples: &[], text_before: &before },
+                    &ContextInput {
+                        app_name: &app,
+                        window_title: "",
+                        url: "",
+                        instructions: "",
+                        writer: "",
+                        screen_context: "",
+                        examples: &[],
+                        text_before: &before,
+                    },
                     1600,
                 );
                 prompt.suffix = line[we..].chars().take(200).collect();
@@ -513,9 +530,16 @@ fn main() {
             on.print(&format!("personalization on (strength {strength})"));
             return;
         }
+        // --details: the user's details for each document, by id ("*" for the rest).
+        let details: Option<std::collections::HashMap<String, UserDetails>> = flag("--details")
+            .map(|p| serde_json::from_str(&std::fs::read_to_string(p).expect("read details")).expect("details json"));
         let mut total = Stats::default();
         let t = Instant::now();
         for (i, d) in docs.iter().enumerate() {
+            if let Some(all) = &details {
+                let mine = all.get(&d.id).or_else(|| all.get("*")).cloned().unwrap_or_default();
+                r.core.set_details(UserDetails { in_prompt: has("--details-in-prompt"), ..mine });
+            }
             total.add(&r.replay(&snap_for(i, d), &d.text, 0, usize::MAX));
         }
         total.print(&format!("{} docs in {:.0}s", docs.len(), t.elapsed().as_secs_f64()));

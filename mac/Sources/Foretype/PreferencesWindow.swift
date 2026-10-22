@@ -24,6 +24,11 @@ protocol PreferencesHost: AnyObject {
     func importWriting()
     /// Picks an application and flips its default (off, or on where it is off by default).
     func addAppException()
+    /// The user's own details (Settings ▸ About You). A change applies at once and is saved
+    /// encrypted shortly after.
+    var aboutYou: AboutYou { get }
+    func setAboutYou(_ details: AboutYou)
+    func confirmClearAboutYou()
 }
 
 /// The Settings window (menu: Settings…, Cmd-,): everything in the menu-bar menu plus the
@@ -41,11 +46,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         let statistics = StatisticsPane(title: L("Statistics"), host: host)
         let panes: [PreferencesPane] = [GeneralPane(title: L("General"), host: host),
                                         PersonalizationPane(title: L("Personalization"), host: host),
+                                        AboutYouPane(title: L("About You"), host: host),
                                         AppsPane(title: L("Apps"), host: host), model, statistics]
         let tabs = PreferencesTabController()
         tabs.tabStyle = .toolbar
         tabs.transitionOptions = []
-        let symbols = ["gearshape", "person.crop.circle", "square.grid.2x2", "cpu", "chart.bar"]
+        let symbols = ["gearshape", "person.crop.circle", "person.text.rectangle", "square.grid.2x2", "cpu", "chart.bar"]
         for (pane, symbol) in zip(panes, symbols) {
             let item = NSTabViewItem(viewController: pane)
             item.label = pane.title ?? ""
@@ -396,6 +402,124 @@ final class PersonalizationPane: PreferencesPane {
     @objc private func deleteHistory() { host?.confirmDeleteHistory() }
 
     @objc private func importWriting() { host?.importWriting() }
+}
+
+// MARK: About You
+
+final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
+    private let enabled = NSButton(checkboxWithTitle: L("Fill in my details as I type"), target: nil, action: nil)
+    private let inPrompt = NSButton(checkboxWithTitle: L("Also tell the model my name, job title and company"), target: nil, action: nil)
+    private let fromContacts = NSButton(title: L("Fill from My Card in Contacts\u{2026}"), target: nil, action: nil)
+    private let contactsNote = PreferencesPane.note(L("Fills only the empty fields. macOS asks once for access to Contacts."), width: 400)
+    private var fields: [AboutYou.Field: NSTextField] = [:]
+    private var uses: [AboutYou.Field: NSButton] = [:]
+
+    override func build() {
+        for b in [enabled, inPrompt] {
+            b.target = self
+            b.action = #selector(toggled(_:))
+        }
+        fromContacts.target = self
+        fromContacts.action = #selector(fillFromContacts)
+        let clear = NSButton(title: L("Clear All\u{2026}"), target: self, action: #selector(clearAll))
+        let w: CGFloat = 400
+        var rows: [[NSView]] = [
+            [NSGridCell.emptyContentView, enabled, NSGridCell.emptyContentView],
+            [NSGridCell.emptyContentView, Self.note(L("When you type \u{201C}My email is\u{201D}, \u{201C}Call me on\u{201D} or end a letter with \u{201C}Regards,\u{201D}, Foretype offers your own detail, exactly, as ghost text. Tab inserts it. Stored encrypted on this Mac (key in your Keychain); nothing leaves it."), width: w), NSGridCell.emptyContentView],
+        ]
+        for f in AboutYou.Field.allCases {
+            let t = NSTextField(string: "")
+            t.delegate = self
+            t.usesSingleLineMode = true
+            t.cell?.isScrollable = true
+            t.widthAnchor.constraint(equalToConstant: 310).isActive = true
+            if f == .address { t.placeholderString = L("Street, city, postcode") }
+            let use = NSButton(checkboxWithTitle: L("Use"), target: self, action: #selector(toggled(_:)))
+            fields[f] = t
+            uses[f] = use
+            rows.append([Self.formLabel(f.label), t, use])
+        }
+        rows += [
+            [NSGridCell.emptyContentView, inPrompt, NSGridCell.emptyContentView],
+            [NSGridCell.emptyContentView, Self.note(L("So suggestions use your name. Only with the built-in or Apple model; never sent to a server."), width: w), NSGridCell.emptyContentView],
+            [NSGridCell.emptyContentView, Self.hstack([fromContacts, clear]), NSGridCell.emptyContentView],
+            [NSGridCell.emptyContentView, contactsNote, NSGridCell.emptyContentView],
+        ]
+        let grid = Self.form(rows)
+        for r in [0, 1] + Array(rows.count - 4 ..< rows.count) {
+            grid.mergeCells(inHorizontalRange: NSRange(location: 1, length: 2), verticalRange: NSRange(location: r, length: 1))
+        }
+        let contacts = MeCard.available
+        fromContacts.isHidden = !contacts
+        contactsNote.isHidden = !contacts
+        grid.row(at: rows.count - 1).isHidden = !contacts
+        add(grid)
+    }
+
+    override func refresh() {
+        guard let host else { return }
+        let v = host.aboutYou
+        enabled.state = v.enabled ? .on : .off
+        inPrompt.state = v.inPrompt ? .on : .off
+        inPrompt.isEnabled = v.enabled
+        for f in AboutYou.Field.allCases {
+            // Leave the field the user is typing in alone.
+            if let t = fields[f], t.currentEditor() == nil, t.stringValue != v[f] { t.stringValue = v[f] }
+            uses[f]?.state = v.uses(f) ? .on : .off
+            uses[f]?.isEnabled = v.enabled
+        }
+    }
+
+    func controlTextDidChange(_ note: Notification) {
+        guard let host, let t = note.object as? NSTextField, let f = fields.first(where: { $0.value === t })?.key else { return }
+        var v = host.aboutYou
+        v[f] = t.stringValue
+        host.setAboutYou(v)
+    }
+
+    @objc private func toggled(_ sender: NSButton) {
+        guard let host else { return }
+        var v = host.aboutYou
+        if sender === enabled {
+            v.enabled = enabled.state == .on
+        } else if sender === inPrompt {
+            v.inPrompt = inPrompt.state == .on
+        } else if let f = uses.first(where: { $0.value === sender })?.key {
+            v.setUses(f, sender.state == .on)
+        }
+        host.setAboutYou(v)
+        refresh()
+    }
+
+    @objc private func fillFromContacts() {
+        MeCard.read { [weak self] result in
+            guard let self, let host = self.host else { return }
+            let alert = NSAlert()
+            switch result {
+            case let .success(card):
+                var v = host.aboutYou
+                var filled = 0
+                for (f, value) in card where v[f].trimmingCharacters(in: .whitespaces).isEmpty {
+                    v[f] = value
+                    filled += 1
+                }
+                host.setAboutYou(v)
+                self.refresh()
+                guard filled == 0 else { return }
+                alert.messageText = L("Nothing new on your card")
+                alert.informativeText = L("Your card in Contacts has nothing for the fields that are still empty.")
+            case .failure(.denied):
+                alert.messageText = L("Foretype can't read your Contacts")
+                alert.informativeText = L("Allow it in System Settings \u{25B8} Privacy & Security \u{25B8} Contacts, then try again.")
+            case .failure(.noCard):
+                alert.messageText = L("No card in Contacts is marked as yours")
+                alert.informativeText = L("In Contacts, select your card and choose Card \u{25B8} Make This My Card.")
+            }
+            if let window = self.view.window { alert.beginSheetModal(for: window) } else { alert.runModal() }
+        }
+    }
+
+    @objc private func clearAll() { host?.confirmClearAboutYou() }
 }
 
 // MARK: Apps

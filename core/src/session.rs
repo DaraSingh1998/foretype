@@ -34,6 +34,8 @@ pub struct Session {
     suggestion: String,
     /// Non-empty when `suggestion` replaces this text at the end of `base`.
     replace: String,
+    /// Accepted in one go whatever the mode (a detail such as an email address).
+    whole: bool,
     cache: VecDeque<(u64, String, String)>,
     /// Text the user dismissed a suggestion for; no new suggestion until it changes.
     dismissed: Option<(u64, String)>,
@@ -45,6 +47,7 @@ impl Session {
         self.base = base.to_string();
         self.suggestion = suggestion.to_string();
         self.replace.clear();
+        self.whole = false;
         if !suggestion.is_empty() {
             self.cache.retain(|(k, b, _)| !(*k == field_key && b == base));
             self.cache.push_back((field_key, base.to_string(), suggestion.to_string()));
@@ -61,6 +64,7 @@ impl Session {
         self.base = base.to_string();
         self.suggestion = suggestion.to_string();
         self.replace.clear();
+        self.whole = false;
     }
 
     /// Caches a suggestion for `base` without showing it (prefetch).
@@ -82,12 +86,22 @@ impl Session {
         self.base = base.to_string();
         self.suggestion = text.to_string();
         self.replace = replace.to_string();
+        self.whole = false;
+    }
+
+    /// Shows one of the user's details: the rest of it after what was typed, or (when
+    /// `replace` is set) all of it in place of a start typed in another case. Not cached:
+    /// it is recomputed on every keystroke. `whole` accepts it in one go.
+    pub fn set_fill(&mut self, field_key: u64, base: &str, replace: &str, text: &str, whole: bool) {
+        self.set_replacement(field_key, base, replace, text);
+        self.whole = whole;
     }
 
     pub fn clear(&mut self) {
         self.suggestion.clear();
         self.base.clear();
         self.replace.clear();
+        self.whole = false;
     }
 
     pub fn dismiss(&mut self, field_key: u64, text_before: &str) {
@@ -114,7 +128,7 @@ impl Session {
     /// the suggestion typed (or a few characters backspaced). Returns what is still left to
     /// show and re-bases the session on the new text.
     pub fn type_through(&mut self, field_key: u64, text_before: &str) -> Option<String> {
-        if field_key != self.field_key || self.suggestion.is_empty() || !self.replace.is_empty() {
+        if field_key != self.field_key || self.suggestion.is_empty() || !self.replace.is_empty() || self.whole {
             return None;
         }
         let remaining = if let Some(typed) = text_before.strip_prefix(self.base.as_str()) {
@@ -146,12 +160,13 @@ impl Session {
 
     /// Text to insert for an accept, advancing the session past it so a second Tab pressed
     /// before the host app reports the edit still inserts the following word. A replacement
-    /// is accepted whole whatever the mode.
+    /// or a whole fill is accepted whole whatever the mode.
     pub fn accept(&mut self, mode: AcceptMode) -> Option<Accepted> {
         if self.suggestion.is_empty() {
             return None;
         }
-        if !self.replace.is_empty() {
+        if !self.replace.is_empty() || self.whole {
+            self.whole = false;
             let replace = std::mem::take(&mut self.replace);
             let insert = std::mem::take(&mut self.suggestion);
             let kept = self.base.len().saturating_sub(replace.len());
@@ -218,6 +233,21 @@ mod tests {
         assert_eq!(s.accept(AcceptMode::All), None);
         s.set(1, "Hi", " there");
         assert_eq!(s.accept(AcceptMode::All).unwrap().replace, "");
+    }
+
+    #[test]
+    fn whole_fill_takes_one_tab_and_a_name_goes_word_by_word() {
+        let mut s = Session::default();
+        s.set_fill(1, "Call me on ", "", "+91 98765 43210", true);
+        assert_eq!(s.type_through(1, "Call me on +"), None, "recomputed per keystroke instead");
+        assert_eq!(s.accept(AcceptMode::NextWord), Some(ok("+91 98765 43210", "")));
+        assert_eq!(s.accept(AcceptMode::NextWord), None);
+        s.set_fill(1, "Regards,\n", "", "Priya Raman", false);
+        assert_eq!(s.accept(AcceptMode::NextWord), Some(ok("Priya", " Raman")));
+        s.set_fill(1, "my name is pri", "pri", "Priya Raman", false);
+        let a = s.accept(AcceptMode::NextWord).unwrap();
+        assert_eq!((a.insert.as_str(), a.replace.as_str()), ("Priya Raman", "pri"));
+        assert_eq!(s.cached(1, "Call me on "), None);
     }
 
     #[test]

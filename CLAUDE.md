@@ -92,6 +92,7 @@ downloading any model** (name, size, source).
 | `FORETYPE_ONLY_APPS` | Comma-separated bundle IDs or pids; nothing else is read, primed or intercepted |
 | `FORETYPE_DEBUG` | Logs snapshots, caret strategy, suggestions, latency to stderr |
 | `FORETYPE_INSERTION` | Forces `keystrokes`, `paste`, `paste-long` or `first-word-then-paste` |
+| `FORETYPE_ABOUT_YOU` | JSON of About You details (`{"name":…,"email":…}`) used instead of the stored ones, which are left untouched (testing) |
 | `FORETYPE_MODELS_DIR`, `FORETYPE_MODEL_BASE_URL` | Model folder and download host (tests) |
 | `FORETYPE_LLAMA_LOGS` | Keep llama.cpp's own logging |
 | `FORETYPE_TEXT_MARKERS` | `1` reads web fields through text markers even when ranges work (testing) |

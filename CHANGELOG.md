@@ -5,6 +5,24 @@ roadmap phase.
 
 ## Unreleased
 
+### About You: your own details, filled in exactly (2026-10-22)
+- New Settings tab **About You**: name, email, phone, company, job title, address and
+  website, with a master switch and a switch per detail, and **Fill from My Card in
+  Contacts…** (asks for Contacts access only when clicked).
+- When the text clearly asks for a detail ("My email is ", "Call me on ", "Email:" at a line
+  start, the line after "Regards,"), the ghost text is the exact value with a small tag
+  ("your email"); Tab inserts it. It must match what was already typed; a name goes word by
+  word, every other detail in one Tab. No model involved (`core/src/details.rs`, new FFI
+  call `ft_engine_set_details`, new suggestion source `details`).
+- A writer line in the prompt (`[Written by Name (Job title, Company)]`), on by default
+  with its own switch, only for the built-in and Apple models (never sent to a server).
+  Corpus replay: 41.9% keystrokes saved before, 42.0% with fills, 42.2% with fills and the
+  writer line.
+- Stored encrypted (`about-you.bin`, ChaCha20-Poly1305, key in the Keychain); never in
+  UserDefaults; values never in debug logs. Hindi translations included.
+- `ft-replay --details eval/details.json [--details-in-prompt]` replays the corpus with a
+  user's details; `Foretype --about-selftest` checks the store and the JSON sent to the core.
+
 ### Localization (2026-10-21)
 - The app's interface is localizable and translated into Hindi (हिन्दी): the menu-bar
   menu, every Settings tab, the setup window, Custom Instructions, alerts, the import panel,

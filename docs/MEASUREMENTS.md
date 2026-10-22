@@ -444,6 +444,34 @@ keyboard, new documents only:
   Cursor and Windsurf.
 - Not done (screen control declined): LibreOffice with a real click, a Mail draft, Notes.
 
+## About You (2026-10-22)
+
+Qwen3-1.7B Q4_K_M, full corpus (53 documents, 12,704 characters), built-in engine, Metal,
+4 words, greedy, prefetch on, instant simulated user. `eval/details.json` gives the three
+self-written documents that end in a signature (Anna, Ravi, Emily) their fictional signer
+and every other document one more fictional person, so the writer line names someone
+unrelated to the text in 50 of 53 documents. A fill other than a name is taken only if all
+of it comes next (one Tab inserts all of it).
+
+| Run | Keystrokes saved | Chars per accept | Accepts | Model p50 / p90 | `details` events |
+|---|---:|---:|---:|---:|---:|
+| Before (main, `c295eb4`) | 41.9% | 3.68 | 1,985 | 80 / 118 ms | |
+| After, no details | 41.9% | 3.68 | 1,985 | 73 / 99 ms | 0 |
+| After, fills (`--details eval/details.json`) | 42.0% | 3.68 | 1,987 | 75 / 112 ms | 5 |
+| After, fills + writer line (`--details-in-prompt`) | 42.2% | 3.69 | 1,991 | 76 / 108 ms | 5 |
+
+- Without details the core behaves exactly as before (same accepts; one model request
+  fewer from timing).
+- The fills fire only where a signature follows a sign-off ("Best regards,\nAnna"): the
+  name is offered on the empty line and Tab takes the first name in all three documents,
+  where the model had guessed other names. The corpus has no "my email is" style text, so
+  the other cues never fire on it; the unit tests cover them (`core/src/details.rs`).
+- The writer line didn't hurt, even naming the wrong person in 50 documents (+0.2 points
+  over fills alone, within run-to-run noise), so it ships on, with its own switch.
+- On the 12 self-written documents alone (`--only sw-`): 41.0% → 41.1%.
+- Latency differences are noise between runs (no change to the inference path); fills
+  answer synchronously without the model.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with
