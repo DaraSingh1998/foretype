@@ -2,9 +2,13 @@
 # Builds the Rust core and the Swift shell, then assembles build/Foretype.app.
 #
 # Environment:
-#   FORETYPE_SIGN_IDENTITY       Code-signing identity, e.g. "Developer ID Application: Name (TEAMID)".
-#                                Unset = ad-hoc. A stable identity also keeps the Accessibility grant
-#                                across rebuilds (ad-hoc grants are tied to one exact build).
+#   FORETYPE_SIGN_IDENTITY       Code-signing identity, e.g. "Developer ID Application: Name (TEAMID)"
+#                                (hardened runtime and secure timestamp), or "-" to force ad hoc.
+#                                Unset = "Foretype Local Dev" if scripts/make-dev-cert.sh has created it
+#                                (self-signed, no hardened runtime), else ad hoc. Ad-hoc grants
+#                                (Accessibility, Screen Recording) are tied to one exact build; a
+#                                certificate keeps them across rebuilds.
+#   FORETYPE_SIGN_KEYCHAIN       Keychain file to find the identity in, instead of the search list.
 #   FORETYPE_SPARKLE=1           Link and embed the Sparkle 2 updater.
 #   FORETYPE_FEED_URL            Appcast URL (Info.plist SUFeedURL).
 #   FORETYPE_SPARKLE_PUBLIC_KEY  EdDSA public key from Sparkle's generate_keys (SUPublicEDKey).
@@ -13,7 +17,22 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export MACOSX_DEPLOYMENT_TARGET=14.0
-IDENTITY="${FORETYPE_SIGN_IDENTITY:--}"
+LOCAL_IDENTITY="Foretype Local Dev"
+# SHA-1 of the local identity, if present. Not `find-identity -v`: the certificate is
+# self-signed and untrusted, which codesign and TCC don't mind but -v filters out.
+local_identity() {
+  security find-identity -p codesigning ${FORETYPE_SIGN_KEYCHAIN:+"$FORETYPE_SIGN_KEYCHAIN"} 2>/dev/null \
+    | awk -v n="\"$LOCAL_IDENTITY\"" 'index($0, n) { print $2; exit }'
+}
+LOCAL_HASH="$(local_identity)"
+IDENTITY="${FORETYPE_SIGN_IDENTITY:-${LOCAL_HASH:--}}"
+if [ "$IDENTITY" = "-" ]; then
+  KIND=adhoc
+elif [ "$IDENTITY" = "$LOCAL_IDENTITY" ] || [ "$IDENTITY" = "$LOCAL_HASH" ]; then
+  KIND=local
+else
+  KIND=release
+fi
 SPARKLE="${FORETYPE_SPARKLE:-0}"
 SCRATCH="$ROOT/mac/.build"
 [ "$SPARKLE" = 1 ] && SCRATCH="$ROOT/mac/.build-sparkle"
@@ -86,11 +105,16 @@ ${SPARKLE_KEYS}
 PLIST
 plutil -lint "$APP/Contents/Info.plist" >/dev/null
 
-# The hardened runtime enforces library validation, and ad-hoc signatures carry no Team ID,
-# so an ad-hoc app with Sparkle.framework embedded would fail to launch ("Library missing").
-# Notarization needs the runtime but also a Developer ID, so only real identities get it.
+# The hardened runtime enforces library validation, and neither ad-hoc nor self-signed
+# signatures carry a Team ID, so such an app with Sparkle.framework embedded would fail to
+# launch ("Library missing"). Notarization needs the runtime but also a Developer ID, so only
+# a real identity (FORETYPE_SIGN_IDENTITY) gets it, and the secure timestamp with it.
 OPTS=()
-[ "$IDENTITY" != "-" ] && OPTS=(--options runtime --timestamp)
+case "$KIND" in
+  release) OPTS=(--options runtime --timestamp) ;;
+  local) OPTS=(--timestamp=none) ;;
+esac
+[ "$KIND" != adhoc ] && [ -n "${FORETYPE_SIGN_KEYCHAIN:-}" ] && OPTS+=(--keychain "$FORETYPE_SIGN_KEYCHAIN")
 sign() { codesign --force ${OPTS[@]+"${OPTS[@]}"} --sign "$IDENTITY" "$@"; }
 if [ -d "$APP/Contents/Frameworks/Sparkle.framework" ]; then
   # Inside-out, as Sparkle's documentation describes for apps signed outside Xcode.
@@ -107,4 +131,9 @@ rmdir "$APP/Contents/Frameworks" 2>/dev/null || true
 # The entitlement lets a hardened-runtime build read the user's own Contacts card (About You).
 sign --identifier dev.foretype.Foretype --entitlements "$ROOT/mac/Foretype.entitlements" "$APP"
 codesign --verify --strict --deep "$APP"
-echo "built $APP ($VERSION build $BUILD, signed: $IDENTITY)"
+case "$KIND" in
+  adhoc) SIGNED="ad hoc; re-add Accessibility and Screen Recording after each rebuild, or run scripts/make-dev-cert.sh once" ;;
+  local) SIGNED="$LOCAL_IDENTITY, self-signed; grants carry over to the next build" ;;
+  release) SIGNED="$IDENTITY, hardened runtime" ;;
+esac
+echo "built $APP ($VERSION build $BUILD, signed: $SIGNED)"

@@ -57,10 +57,14 @@ not been run yet.
 
 ## Without a Developer ID
 
-`scripts/package-mac.sh` with no environment builds an ad-hoc-signed, unnotarized DMG. It
-runs on your own Mac, but Gatekeeper blocks it on others (right-click → Open, or
-`xattr -dr com.apple.quarantine /Applications/Foretype.app`), and the Accessibility grant
-has to be renewed after every update because ad-hoc signatures change with each build.
+`scripts/package-mac.sh` with no environment builds an unnotarized DMG, signed with the
+self-signed "Foretype Local Dev" identity if `scripts/make-dev-cert.sh` has created it, else
+ad hoc. It runs on your own Mac, but Gatekeeper blocks it on others (right-click → Open, or
+`xattr -dr com.apple.quarantine /Applications/Foretype.app`). Ad hoc, the Accessibility and
+Screen Recording grants have to be renewed after every update because the signature changes
+with each build; with the local identity they carry over on this Mac. Neither gets the
+hardened runtime (library validation would reject Sparkle.framework without a Team ID), and
+the DMG itself is signed only when `FORETYPE_SIGN_IDENTITY` is set.
 
 ## Testing updates locally (no Developer ID needed)
 
@@ -76,7 +80,8 @@ HTTP; `build-mac.sh` adds an ATS local-networking exception only when the feed U
 correct for update", replaces the app in place and relaunches it. With ad-hoc builds it also
 logs "Code signature of the new version doesn't match the old version": ad-hoc signatures
 are tied to each build's cdhash, so only the EdDSA check applies; Developer ID builds pass
-both. The test app shares the bundle ID `dev.foretype.Foretype`, so back up and restore its
+both, and so should builds signed with "Foretype Local Dev" (same certificate both times;
+not tried yet). The test app shares the bundle ID `dev.foretype.Foretype`, so back up and restore its
 defaults (`defaults export` / `import`) if you also use a development build.
 
 Verified on 2026-10-20 (macOS 27.0.1, Sparkle 2.10.0): 0.0.1 → 0.0.2 installed and

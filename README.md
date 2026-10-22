@@ -240,7 +240,8 @@ paused download, or quitting, deletes what it had downloaded.
 Requirements: Xcode command-line tools, Rust (`brew install rust cmake`).
 
 ```bash
-scripts/build-mac.sh          # build/Foretype.app (ad-hoc signed unless FORETYPE_SIGN_IDENTITY is set)
+scripts/make-dev-cert.sh      # optional, once: a local signing identity so rebuilds keep their permissions
+scripts/build-mac.sh          # build/Foretype.app (FORETYPE_SIGN_IDENTITY, else "Foretype Local Dev", else ad hoc)
 scripts/package-mac.sh        # build/Foretype-<version>.dmg, plus notarization, appcast item and cask when configured
 ```
 
@@ -318,10 +319,13 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   scratch folder).
 - CI (`.github/workflows/ci.yml`, manual trigger only for now) runs the unit tests, builds the app, runs the self-tests
   and replays the self-written corpus documents with the 0.6B model on CPU. `ft-replay ... --screen FILE` adds screen text to a replay.
-- **Accessibility grants and ad-hoc signing:** macOS ties the grant to the exact build, so
-  every rebuild of an ad-hoc-signed `Foretype.app` needs the Accessibility entry removed
-  and re-added. Sign with a stable identity (`FORETYPE_SIGN_IDENTITY`) to avoid that. A
-  bare `mac/.build/release/Foretype` started from a terminal uses the terminal's own grant.
+- **Permissions and ad-hoc signing:** macOS ties the Accessibility and Screen Recording
+  grants of an ad-hoc-signed `Foretype.app` to that exact build, so after every rebuild the
+  entries look on but don't apply until they are removed with − and added again. Run
+  `scripts/make-dev-cert.sh` once (it adds a self-signed "Foretype Local Dev" certificate to
+  your login keychain and asks first) and `build-mac.sh` signs with it, so rebuilds keep
+  the grants; see `docs/DEVELOPMENT.md`. A bare `mac/.build/release/Foretype` started from
+  a terminal uses the terminal's own grant.
 
 ## Known limitations (MVP)
 

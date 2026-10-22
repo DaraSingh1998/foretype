@@ -12,6 +12,8 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let axStatus = NSTextField(labelWithString: "")
     private let screenStatus = NSTextField(labelWithString: "")
     private let modelStatus = NSTextField(labelWithString: "")
+    private let axHint = OnboardingWindowController.hint()
+    private let screenHint = OnboardingWindowController.hint()
     private let progress = NSProgressIndicator()
     private let axButton = NSButton(title: L("Open Settings"), target: nil, action: nil)
     private let screenButton = NSButton(title: L("Allow"), target: nil, action: nil)
@@ -32,6 +34,15 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// The ad-hoc build's "remove it with − and add it again" note under a permission.
+    private static func hint() -> NSTextField {
+        let h = NSTextField(wrappingLabelWithString: Signing.staleGrantHint)
+        h.font = .systemFont(ofSize: 11)
+        h.textColor = .secondaryLabelColor
+        h.isHidden = true
+        return h
+    }
 
     private func row(_ title: String, _ detail: String, status: NSTextField, button: NSButton, extra: NSView? = nil) -> NSView {
         let t = NSTextField(labelWithString: title)
@@ -76,9 +87,9 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         let rows: [NSView] = [
             intro,
             row(L("Accessibility (required)"), L("Lets Foretype read the text field you are typing in and type the words you accept."),
-                status: axStatus, button: axButton),
+                status: axStatus, button: axButton, extra: axHint),
             row(L("Screen Recording (optional)"), L("Reads text near the field, such as the message you are answering, for better suggestions. Images are never stored."),
-                status: screenStatus, button: screenButton),
+                status: screenStatus, button: screenButton, extra: screenHint),
             row(L("Language model"),
                 rec.map { L("%1$@, %2$@. %3$@, downloaded from Hugging Face and checked against a pinned SHA-256.", $0.name, $0.sizeText, $0.license) }
                     ?? L("No model in the catalog for this Mac."), status: modelStatus, button: modelButton, extra: progress),
@@ -124,11 +135,13 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         axStatus.stringValue = ax ? "\u{2713} " + L("Granted") : L("Not granted yet")
         axStatus.textColor = ax ? .systemGreen : .secondaryLabelColor
         axButton.isEnabled = !ax
+        axHint.isHidden = ax || !Signing.isAdHocBundle
 
         let screen = ScreenContextProvider.hasPermission
         screenStatus.stringValue = screen ? "\u{2713} " + L("Granted") : (settings.useScreenContext ? L("Not granted") : L("Off"))
         screenStatus.textColor = screen ? .systemGreen : .secondaryLabelColor
         screenButton.isEnabled = !screen
+        screenHint.isHidden = screen || !settings.useScreenContext || !Signing.isAdHocBundle
 
         if settings.backend != "local" {
             modelStatus.stringValue = L("Using your server: %@", settings.backendURL)

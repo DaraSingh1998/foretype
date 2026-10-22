@@ -28,7 +28,7 @@ Private GitHub repo: `DaraSingh1998/foretype`. Phases 1–4 of the roadmap are d
 ```bash
 export MACOSX_DEPLOYMENT_TARGET=14.0
 cargo test --release --manifest-path core/Cargo.toml        # 25+ unit tests, no model needed
-scripts/build-mac.sh                                          # core + Swift shell + build/Foretype.app (ad-hoc signed)
+scripts/build-mac.sh                                          # core + Swift shell + build/Foretype.app ("Foretype Local Dev" if present, else ad hoc)
 mac/.build/release/Foretype --font-selftest                   # no permissions needed
 mac/.build/release/Foretype --ocr-selftest                    # no permissions needed
 cargo build --release --bins --manifest-path core/Cargo.toml  # ft-replay
@@ -75,9 +75,14 @@ downloading any model** (name, size, source).
 ## macOS gotchas (see docs/DEVELOPMENT.md)
 
 - A bare `mac/.build/release/Foretype` started from a terminal **inherits that terminal's
-  Accessibility grant** (the responsible process). A bundled, ad-hoc-signed
-  `build/Foretype.app` is its own identity and needs its Accessibility entry removed and
-  re-added after every rebuild. There is no stable signing identity on this Mac yet.
+  Accessibility grant** (the responsible process). A bundled `build/Foretype.app` is its
+  own identity. Signed ad hoc, its Accessibility and Screen Recording entries must be
+  removed with − and re-added after every rebuild (tccd: "Failed to match existing code
+  requirement"). `scripts/make-dev-cert.sh` (the user runs it once; it changes the login
+  keychain, so never run it yourself) creates the self-signed "Foretype Local Dev"
+  identity; `build-mac.sh` then signs with it and the grants survive rebuilds. Such a
+  build is live as soon as it opens, so launch it with
+  `open -n --env FORETYPE_ONLY_APPS=...` like any dev build.
 - On macOS 27, system-wide `AXFocusedApplication` always fails; use the frontmost pid.
 - TextKit fields report the zero-length caret rect one line too high; TextEdit reports a
   zero-length marked range at all times; Chrome reports a font size but no name.
@@ -97,4 +102,4 @@ downloading any model** (name, size, source).
 | `FORETYPE_LLAMA_LOGS` | Keep llama.cpp's own logging |
 | `FORETYPE_TEXT_MARKERS` | `1` reads web fields through text markers even when ranges work (testing) |
 | `FORETYPE_CARET` | `pixel` or `ax`: forces the pixel caret locator on or off for every app (testing) |
-| Build: `FORETYPE_SIGN_IDENTITY`, `FORETYPE_SPARKLE`, `FORETYPE_FEED_URL`, `FORETYPE_SPARKLE_PUBLIC_KEY`, `FORETYPE_NOTARY_PROFILE`, `FORETYPE_VERSION`, `SPARKLE_BIN` | See `RELEASING.md` |
+| Build: `FORETYPE_SIGN_IDENTITY` (`-` forces ad hoc), `FORETYPE_SIGN_KEYCHAIN`, `FORETYPE_SPARKLE`, `FORETYPE_FEED_URL`, `FORETYPE_SPARKLE_PUBLIC_KEY`, `FORETYPE_NOTARY_PROFILE`, `FORETYPE_VERSION`, `SPARKLE_BIN` | See `RELEASING.md` |
