@@ -253,3 +253,10 @@ pub unsafe extern "C" fn ft_engine_open_history(engine: *mut FtEngine, path: *co
 pub extern "C" fn ft_model_catalog(ram_gb: u32) -> *mut c_char {
     to_c(serde_json::to_string(&crate::models::catalog(ram_gb)).unwrap_or_else(|_| "[]".into()))
 }
+
+/// The custom instructions a fresh install starts with: `{"global": "...", "apps": {"<bundle
+/// id>": "..."}}`. Needs no engine.
+#[no_mangle]
+pub extern "C" fn ft_default_instructions() -> *mut c_char {
+    to_c(serde_json::to_string(&crate::instructions::defaults()).unwrap_or_else(|_| "{}".into()))
+}

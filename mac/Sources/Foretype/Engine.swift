@@ -143,3 +143,17 @@ final class EngineBridge {
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
 }
+
+/// The custom instructions a fresh install starts with (`core/data/default-instructions.json`).
+struct DefaultInstructions: Decodable {
+    let global: String
+    /// By bundle ID, added after `global` in that app.
+    let apps: [String: String]
+
+    static let shared: DefaultInstructions = {
+        let none = DefaultInstructions(global: "", apps: [:])
+        guard let raw = ft_default_instructions() else { return none }
+        defer { ft_string_free(raw) }
+        return (try? JSONDecoder().decode(DefaultInstructions.self, from: Data(String(cString: raw).utf8))) ?? none
+    }()
+}

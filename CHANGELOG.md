@@ -41,6 +41,15 @@ the release notes are taken from it.
   has `show=inline|card|mirror|hidden`, `after=` (what follows the caret on its line),
   `line=` (the caret line's start index) and `field=` (the field's top and height).
 
+### Default custom instructions (2026-10-22)
+- Custom instructions start with a note for every app: "Natural, clear writing that matches
+  the tone of the text so far, with correct spelling and grammar." On the test corpus it
+  saved 0.7 points more typing (42.8% → 43.5%, Gemma 4 E2B) and made Apple's model guess the
+  next word right more often (17.0% → 19.8%). Change or clear it in Custom Instructions;
+  **Restore Defaults** brings it back, and Settings marks it "Default" while untouched.
+- The defaults are in `core/data/default-instructions.json` (`ft_default_instructions`), and
+  `ft-replay --default-instructions` / `--instructions FILE` replays with them.
+
 ## 0.1.0 (2026-10-22)
 
 ### Releases on GitHub and automatic updates (2026-10-22)

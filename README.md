@@ -131,7 +131,10 @@ asks for Contacts access once, only when you click it).
 
 **Custom Instructions…** in the menu edits a note for all apps (who you are, tone,
 spelling) and one for the app you were last in, appended after it. Both go into the prompt
-header.
+header. The note for all apps starts as a short default ("Natural, clear writing that
+matches the tone of the text so far, with correct spelling and grammar."), which saved
+0.7 points more typing on the test corpus than no note. Change or clear it; **Restore
+Defaults** brings it back.
 
 ### Typing aids
 

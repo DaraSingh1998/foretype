@@ -736,11 +736,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         w.onSave = { [weak self] global, appText, bundle in
             guard let self else { return }
             self.settings.instructions = global
-            if let bundle {
-                var all = self.settings.appInstructions
-                all[bundle] = appText.isEmpty ? nil : appText
-                self.settings.appInstructions = all
-            }
+            if let bundle { self.settings.setAppInstructions(appText, for: bundle) }
             self.settingsChanged()
         }
         instructionsWindow = w

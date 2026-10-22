@@ -170,6 +170,8 @@
 "Edit…" = "संपादित करें…";
 "A note about you and how you write, for all apps and for the app you were last in." = "आपके और आपकी लेखन-शैली के बारे में एक नोट, सभी ऐप्स के लिए और उस ऐप के लिए जिसमें आप पिछली बार थे।";
 "No note for all apps" = "सभी ऐप्स के लिए कोई नोट नहीं";
+"Default: %@" = "डिफ़ॉल्ट: %@";
+"Restore Defaults" = "डिफ़ॉल्ट वापस लाएँ";
 "Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes." = "Tab अगला शब्द लेता है, Tab के ऊपर वाली कुंजी पूरा सुझाव लेती है, Esc उसे हटा देता है और Option-Tab असली Tab टाइप करता है। Ctrl + Tab के ऊपर वाली कुंजी वहाँ भी सुझाव देती है जहाँ Foretype आमतौर पर चुप रहता है; Ctrl-Option-Command + वही कुंजी उस ऐप को 5 मिनट के लिए स्नूज़ करती है।";
 
 /* Suggestion lengths and personalization strengths (Settings.swift) */
