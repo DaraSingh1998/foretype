@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.0 (2026-10-22)
+
 ### Releases on GitHub and automatic updates (2026-10-22)
 - `scripts/release.sh X.Y.Z` sets the version, dates this file, commits, tags `vX.Y.Z` and,
   after asking, pushes. `.github/workflows/release.yml` (macos-26) then runs the core tests,
