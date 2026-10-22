@@ -138,6 +138,9 @@
 "Using %@" = "%@ का उपयोग हो रहा है";
 "Not downloaded" = "डाउनलोड नहीं किया गया";
 
+/* Under a permission that isn't granted, on ad-hoc builds (Signing.swift; setup window and Settings ▸ General) */
+"Already on in System Settings? This build is signed ad hoc, so the old entry doesn't apply to it: remove Foretype from the list with −, then add it again." = "सिस्टम सेटिंग में पहले से चालू है? यह बिल्ड ऐड-हॉक साइन किया गया है, इसलिए पुरानी प्रविष्टि इस पर लागू नहीं होती: Foretype को सूची से − दबाकर हटाएँ, फिर दोबारा जोड़ें।";
+
 /* Settings window tabs (PreferencesWindow.swift) */
 "General" = "सामान्य";
 "Apps" = "ऐप्स";

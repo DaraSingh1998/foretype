@@ -17,7 +17,8 @@ targets the host macOS and the Swift link warns ("built for newer macOS version"
 export MACOSX_DEPLOYMENT_TARGET=14.0
 cargo build --release --manifest-path core/Cargo.toml          # libforetype_core.a + ft-replay
 (cd mac && swift build -c release)                              # mac/.build/release/Foretype
-scripts/build-mac.sh                                            # both, then build/Foretype.app (ad-hoc signed)
+scripts/make-dev-cert.sh                                        # once, run it yourself: stable local signing identity (below)
+scripts/build-mac.sh                                            # both, then build/Foretype.app ("Foretype Local Dev" if present, else ad hoc)
 FORETYPE_SPARKLE=1 scripts/build-mac.sh                         # with Sparkle (fetched by SwiftPM, .build-sparkle/)
 scripts/package-mac.sh                                          # DMG (+ notarization etc. when configured, see RELEASING.md)
 ```
@@ -158,7 +159,9 @@ TITLE` (presses that window's close button; an unmodified document closes silent
   bytes from 127.0.0.1 with Range support and point `FORETYPE_MODEL_BASE_URL` at it; the
   download fails its checksum at the end, as it should. A bundled build that has no
   Accessibility grant (every fresh ad-hoc build) never starts the engine, so it reads
-  nothing; export the defaults domain first and restore it afterwards.
+  nothing; export the defaults domain first and restore it afterwards. A build signed with
+  "Foretype Local Dev" keeps its grant and does start the engine: launch it with
+  `open -n --env FORETYPE_ONLY_APPS=...`, or build with `FORETYPE_SIGN_IDENTITY=-`.
 
 ### End-to-end scripts
 
@@ -217,10 +220,44 @@ no blinking caret found in BUNDLE`. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's ow
   a bare `mac/.build/release/Foretype` run from the Claude app's terminal uses Claude's
   Accessibility, clipboard and Screen Recording grants. That's the easy dev loop (but always
   with `FORETYPE_ONLY_APPS`).
-- **Bundled app.** `build/Foretype.app` is its own identity (`dev.foretype.Foretype`). With
-  ad-hoc signing the grant is tied to the exact build's cdhash: after every rebuild, remove
-  the Accessibility entry with − and add it again (toggling isn't enough). A stable signing
-  identity (`FORETYPE_SIGN_IDENTITY`) fixes this. There is none on the developer Mac yet.
+- **Bundled app.** `build/Foretype.app` is its own identity (`dev.foretype.Foretype`), and
+  TCC ties each grant to the app's designated requirement. An ad-hoc signature's requirement
+  is the build's cdhash, so after every rebuild the entries under Accessibility and Screen
+  Recording still look on but no longer apply. tccd logs `Failed to match existing code
+  requirement for subject dev.foretype.Foretype and service kTCCServiceAccessibility` (or
+  `kTCCServiceScreenCapture`); see it with
+  `log stream --predicate 'subsystem == "com.apple.TCC"' --info`. Fix: remove the entry with
+  − and add the app again (toggling isn't enough). On ad-hoc builds the setup window and
+  Settings ▸ General say so under a permission that isn't granted.
+- **Stable local identity (one-time setup).** `scripts/make-dev-cert.sh` creates
+  "Foretype Local Dev", a self-signed code-signing certificate and key, in the login
+  keychain. Run it yourself: it prints every command and asks first, changes no trust
+  settings, needs no admin password, and `--remove` deletes it again. `build-mac.sh` then
+  signs with it whenever it is present, and the designated requirement becomes
+  `identifier "dev.foretype.Foretype" and certificate leaf = H"<certificate SHA-1>"`, the
+  same for every build:
+
+  ```bash
+  scripts/make-dev-cert.sh
+  scripts/build-mac.sh                     # "signed: Foretype Local Dev, self-signed; ..."
+  codesign -dr - build/Foretype.app        # designated => identifier ... and certificate leaf = H"..."
+  tccutil reset Accessibility dev.foretype.Foretype    # one last time: drop the ad-hoc entries
+  tccutil reset ScreenCapture dev.foretype.Foretype
+  open build/Foretype.app                  # allow both again; later rebuilds keep them
+  ```
+
+  Keychain Access shows the certificate as "not trusted"; neither codesign nor TCC checks
+  trust (a hash match is enough), so it isn't added to the trust settings. If the first
+  build asks whether codesign may use the key, enter the login password and click Always
+  Allow. To check that a new build still satisfies an old grant without System Settings,
+  save `codesign -dr - build/Foretype.app` before the rebuild and run
+  `codesign -v -R '=<the text after "designated => ">' build/Foretype.app` after it:
+  that is the check tccd makes. `FORETYPE_SIGN_IDENTITY=-` forces ad hoc for one build.
+- **No hardened runtime for local builds.** The runtime enforces library validation, which
+  only accepts libraries with the app's Team ID. Ad-hoc and self-signed signatures have
+  none, so an app with Sparkle.framework embedded fails to launch ("Library missing").
+  `build-mac.sh` adds `--options runtime --timestamp` only for an identity passed in
+  `FORETYPE_SIGN_IDENTITY` (Developer ID), which notarization needs anyway.
 - SwiftPM's linker-signed ad-hoc binaries can never be granted ("Failed to match existing
   code requirement"); `build-mac.sh` re-signs fully.
 - Accessibility alone is enough for both event taps (no Input Monitoring) on macOS 27.
@@ -286,7 +323,10 @@ defaults import dev.foretype.Foretype /tmp/ft-defaults.plist
 ```
 
 A fresh ad-hoc build has no Accessibility grant, so the setup window opens and the engine
-never starts; that is enough to see every window. `-AppleLanguages '(en)'` gives English.
+never starts; that is enough to see every window. A build signed with "Foretype Local Dev"
+keeps its grant, so the engine starts too, restricted to TextEdit by `FORETYPE_ONLY_APPS`;
+build with `FORETYPE_SIGN_IDENTITY=-` to see the setup window. `-AppleLanguages '(en)'`
+gives English.
 
 **Change the prompt format or decoding.** Keep everything per-keystroke at the end of the
 prompt (cache stability). Replay the corpus before and after.
@@ -298,7 +338,7 @@ prompt (cache stability). Replay the corpus before and after.
 | `GGML_ASSERT([rsets->data count] == 0)` at exit | A llama context outlived the Metal device; `Engine::drop` frees context, model, backend in order. Call `ft_engine_free` before exit |
 | Link error `___isPlatformVersionAtLeast` in tests | `core/build.rs` must link `libclang_rt.osx.a` |
 | "was built for newer 'macOS' version" | Build the core with `MACOSX_DEPLOYMENT_TARGET=14.0` |
-| Bundled app does nothing | Accessibility not granted for this exact build; re-add it |
+| Bundled app does nothing, or keeps asking for Screen Recording although it is on | The grant belongs to another ad-hoc build: remove the entry with − and add it again, or run `scripts/make-dev-cert.sh` once |
 | No suggestions in Chrome | Check `AXEnhancedUserInterface` priming; Arc/Dia need chrome://accessibility "Text Metrics" |
 | `osascript` → `AppleEvent timed out (-1712)` | A pending Automation consent dialog; avoid AppleScript to that app |
 | e2e "focus left TextEdit" at start | Activation delayed; the script uses `open -a` and waits 5 s |

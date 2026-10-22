@@ -251,6 +251,8 @@ final class GeneralPane: PreferencesPane {
     private let midLine = NSButton(checkboxWithTitle: L("Suggest in the middle of a line (experimental)"), target: nil, action: nil)
     private let screenStatus = NSTextField(labelWithString: "")
     private let screenAllow = NSButton(title: L("Allow Screen Recording\u{2026}"), target: nil, action: nil)
+    private let screenHint = PreferencesPane.note(Signing.staleGrantHint, width: 400)
+    private var screenHintRow: NSGridRow?
     private let instructionsSummary = NSTextField(labelWithString: "")
 
     override func build() {
@@ -288,9 +290,11 @@ final class GeneralPane: PreferencesPane {
             [Self.formLabel(L("Screen context:")), screen],
             [NSGridCell.emptyContentView, Self.note(L("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away."), width: w)],
             [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow])],
+            [NSGridCell.emptyContentView, screenHint],
             [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
             [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
         ])
+        screenHintRow = grid.cell(for: screenHint)?.row
         add(grid, spacingAfter: 18)
         add(Self.separator())
         add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes.")))
@@ -310,6 +314,8 @@ final class GeneralPane: PreferencesPane {
         screenStatus.stringValue = allowed ? "\u{2713} " + L("Screen Recording allowed") : L("Screen Recording not allowed yet")
         screenStatus.textColor = allowed ? .systemGreen : .secondaryLabelColor
         screenAllow.isHidden = allowed || !s.useScreenContext
+        screenHint.isHidden = allowed || !s.useScreenContext || !Signing.isAdHocBundle
+        screenHintRow?.isHidden = screenHint.isHidden
         let global = s.instructions.replacingOccurrences(of: "\n", with: " ")
         let apps = s.appInstructions.count
         var summary = global.isEmpty ? L("No note for all apps") : "\u{201C}\(global)\u{201D}"

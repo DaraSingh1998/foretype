@@ -106,5 +106,6 @@ are kept for if that changes; the core stays portable.
   TextEdit against its AX caret (`docs/MEASUREMENTS.md`).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in
   engine (no token healing).
-- Ad-hoc builds lose the Accessibility grant on every update until releases are signed
-  with a Developer ID.
+- Ad-hoc builds lose the Accessibility and Screen Recording grants on every update until
+  releases are signed with a Developer ID. Local builds keep them once
+  `scripts/make-dev-cert.sh` has created the "Foretype Local Dev" identity (D34).

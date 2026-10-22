@@ -316,3 +316,25 @@ Foretype's text match what the user sees in System Settings.
 **Cost.** Keys are English sentences: editing the English text means editing the key in
 every language (`scripts/check-localization.py` lists what is missing). Text from the core
 (error messages) stays English.
+
+## D34. Local builds sign with a self-signed "Foretype Local Dev" identity (2026-10-22)
+
+**Decision.** `scripts/make-dev-cert.sh` (run by the developer, once per Mac) puts a
+self-signed code-signing certificate and key in the login keychain; `scripts/build-mac.sh`
+signs with `FORETYPE_SIGN_IDENTITY` if set, else with that identity if present, else ad hoc.
+Only an explicit identity (Developer ID) gets the hardened runtime and a secure timestamp.
+**Why.** TCC stores the designated requirement of the app it granted. Ad hoc, that is the
+build's cdhash, so every rebuild silently loses Accessibility and Screen Recording: the
+toggle in System Settings looks on and tccd logs "Failed to match existing code
+requirement". With a certificate the requirement is `identifier "dev.foretype.Foretype"
+and certificate leaf = H"..."`, the same for every build (checked with `codesign -v -R`
+across two builds). The certificate stays untrusted: codesign signs with it and the
+requirement is a hash match, so no trust settings or admin password are needed. The
+hardened runtime stays off because library validation needs a Team ID, which neither ad-hoc
+nor self-signed signatures have; with it, Sparkle.framework fails to load. The script only
+prints and asks: it changes the user's keychain, which tooling and agents must not do on
+their own.
+**Cost.** One more step for a new developer (optional; ad hoc still works), and one last
+remove/re-add of the grants when switching from ad hoc. A bundle that keeps its grant is
+live as soon as it opens, so UI-only tests launch it with `FORETYPE_ONLY_APPS` or build
+with `FORETYPE_SIGN_IDENTITY=-`.

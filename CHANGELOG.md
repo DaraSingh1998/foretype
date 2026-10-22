@@ -5,6 +5,21 @@ roadmap phase.
 
 ## Unreleased
 
+### Local builds keep their permissions (2026-10-22)
+- `scripts/make-dev-cert.sh` creates "Foretype Local Dev", a self-signed code-signing
+  identity, in the login keychain (you run it once; it prints each command and asks first;
+  `--remove` deletes it). `scripts/build-mac.sh` signs with `FORETYPE_SIGN_IDENTITY` if set
+  (`-` forces ad hoc), else with "Foretype Local Dev" if present, else ad hoc as before. The
+  designated requirement is then the bundle ID plus the certificate, the same for every
+  build, so Accessibility and Screen Recording grants survive rebuilds instead of silently
+  failing to match (tccd: "Failed to match existing code requirement"). The hardened
+  runtime still applies only to an explicit (Developer ID) identity: library validation
+  would reject Sparkle.framework without a Team ID. `FORETYPE_SIGN_KEYCHAIN` points both
+  scripts at another keychain file.
+- On ad-hoc builds, the setup window and Settings ▸ General explain under a permission that
+  isn't granted that an entry already on in System Settings belongs to an older build and
+  must be removed with − and added again (English and Hindi).
+
 ### Localization (2026-10-21)
 - The app's interface is localizable and translated into Hindi (हिन्दी): the menu-bar
   menu, every Settings tab, the setup window, Custom Instructions, alerts, the import panel,
