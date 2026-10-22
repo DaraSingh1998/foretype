@@ -26,18 +26,18 @@ bilkul zaroor jaroor zaroori zaruri jaruri shayad matlab yaani yani
 aur lekin magar phir fir firse phirse dobara bhi sirf bas toh tho agar warna varna isliye
 isiliye taki jabse tabse tak liye saath sath bina wapas vapas andar bahar upar neeche niche
 aage peeche piche paas
-abhi aaj kal parso baad pehle pahle jaldi der din raat subah shaam waqt hamesha
+abhi aaj kal parso baad pehle pahle pichle mahine jaldi der din raat subah shaam waqt hamesha
 bahut bohot bohat bahot thoda thodi thode zyada jyada kam kaafi kafi ekdum ek
 yaar yar bhai bhaiya didi dost arre arey oye chalo chal chale chalte chalega chalegi
 karo karna karni karne karta karti karte kiya kiye kar karenge karunga karungi karega karegi
 kardo karlo karke dena dedo diya diye dunga dungi dega degi
 dekho dekh dekha dekhi dekhe dekhte dekhna dekhenge suno suna sunna suniye bolo bol bola boli
 bolna bolte bata batao bataya batana batata batati pata pta samajh samjha samjhe samjho socho
-socha soch
+socha soch bana phas
 jana jaana jao jaa ja gaya gayi gaye gya gyi jayega jaega jaayega jayegi jaegi jayenge jaenge
 jaate jaata jaati aana aao aaja aaya aayi aaye aya ayi aaoge aaunga aayega aate aata aati
 raha rahi rahe rha rhi rhe reh rehna rehta rehti rehte
-milte milna mila mili milenge milega milo milta milti lena lelo liya lunga lungi lega
+milte milna mila mili milenge milega milo milta milti lena lelo liya lunga lungi lega lete
 chahiye chahie chaiye chahta chahti chahte sakta sakti sakte paya paaya pao
 khana khaana khaya khao peena piya pani paani chai ghar kaam baat baatein baaki baki paisa
 paise dil pyaar pyar khush khushi dukh pareshan mazaa maza mazza dhyan dhyaan
@@ -90,7 +90,7 @@ mod tests {
     fn knows_words_and_prefixes() {
         assert!(is_word("nahi") && is_word("accha") && is_word("yaar") && is_word("kya"));
         assert!(!is_word("main") && !is_word("the") && !is_word("recieve"));
-        assert!(has_prefix("jald") && has_prefix("dekht") && has_prefix("zaro"));
+        assert!(has_prefix("jald") && has_prefix("dekht") && has_prefix("zaro") && has_prefix("pichl"));
         assert!(!has_prefix("recie") && !has_prefix("zzq"));
     }
 
