@@ -53,6 +53,11 @@ signing in.
 
 ## Publishing a version
 
+Before the first release, or after changing the workflow, do a dry run: `gh workflow run
+release.yml --repo DaraSingh1998/foretype --ref main`. It builds, signs and packages exactly as
+a release does and uploads the DMG and `appcast.xml` as a workflow artifact, but publishes
+nothing.
+
 1. Describe the changes under `## Unreleased` in `CHANGELOG.md` (the release notes are taken
    from there) and commit them on `main`.
 2. Run the checks below.

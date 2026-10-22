@@ -142,7 +142,8 @@ build runs). Notarization needs a Developer ID; none exists on the developer Mac
 ## D18. CI is manual-only
 
 macOS runner minutes are billed at 10× on a private repo. `ci.yml` runs on
-`workflow_dispatch` only. Restore push triggers only when the user asks.
+`workflow_dispatch` only. Restore push triggers only when the user asks. (2026-10-22: the
+repository is public, so minutes are free; the triggers stay manual until asked.)
 
 ## D19. Development safety on a shared Mac
 

@@ -2,6 +2,9 @@
 # core tests, builds the app with the Sparkle updater, signs it with the self-signed "Foretype"
 # identity, packages the DMG, signs it for Sparkle, writes appcast.xml and creates the GitHub
 # release. Installed apps read .../releases/latest/download/appcast.xml and update themselves.
+# Run by hand (Actions > Release > Run workflow, or `gh workflow run release.yml`), it is a dry
+# run: the same build, signing and packaging, uploaded as a workflow artifact; nothing is
+# published.
 #
 # Repository secrets (RELEASING.md):
 #   SIGNING_P12           base64 of the "Foretype" identity backup (scripts/make-signing-cert.sh)
@@ -12,6 +15,7 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -30,6 +34,7 @@ jobs:
           fetch-depth: 0  # the build number is the commit count
 
       - name: Check the tag
+        if: github.ref_type == 'tag'
         run: |
           V="$(sed -n 's/^version = "\(.*\)"/\1/p' core/Cargo.toml | head -1)"
           [ "v$V" = "$GITHUB_REF_NAME" ] || { echo "core/Cargo.toml says $V but the tag is $GITHUB_REF_NAME"; exit 1; }
@@ -86,7 +91,18 @@ jobs:
           # The update must verify against the public key the apps carry.
           grep -q "$(cat packaging/sparkle-public-key.txt)" build/Foretype.app/Contents/Info.plist
 
+      - name: Dry run files
+        if: github.ref_type != 'tag'
+        uses: actions/upload-artifact@v4
+        with:
+          name: foretype-dry-run
+          path: |
+            build/Foretype-*.dmg
+            build/Foretype-*.dmg.sha256
+            build/appcast.xml
+
       - name: Publish
+        if: github.ref_type == 'tag'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

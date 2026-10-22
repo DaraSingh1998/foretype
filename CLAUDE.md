@@ -7,7 +7,8 @@ platform plumbing; a **Swift macOS shell** (`mac/`) captures the focused field, 
 overlay and types accepted text. The product is macOS only for now (user decision, 2026-10-19):
 Windows and Linux shells are deferred, but the core stays portable so they remain possible.
 
-Private GitHub repo: `DaraSingh1998/foretype`. Phases 1–4 of the roadmap are done (see
+Public GitHub repo: `DaraSingh1998/foretype` (public since 2026-10-22; commits use the noreply
+address, and GitHub rejects pushes that expose a private email). Phases 1–4 of the roadmap are done (see
 `docs/ROADMAP.md`).
 
 ## Read first
@@ -45,10 +46,10 @@ downloading any model** (name, size, source).
 - **Branch per phase or feature** (`phase3/kv-snapshots`, `fix/...`, `docs/...`). Merge into
   `main` and push only when the user says so. Use the user's configured git identity and
   the commit attribution line the system provides.
-- **CI is manual-only on purpose** (`workflow_dispatch`): macOS runner minutes are billed at
-  10× on this private repo. Don't add push or pull_request triggers unless asked. The one
-  exception is `.github/workflows/release.yml`, which publishes a release when a `v*` tag is
-  pushed.
+- **CI is manual-only** (`workflow_dispatch`). That was for cost while the repo was private
+  (macOS minutes billed at 10×); public repos run Actions for free, but don't add push or
+  pull_request triggers unless asked. The one exception is `.github/workflows/release.yml`,
+  which publishes a release when a `v*` tag is pushed (run by hand, it is a dry run).
 - **Releases** (`RELEASING.md`): `scripts/release.sh X.Y.Z` commits, tags and, after asking,
   pushes; the workflow publishes and every installed copy updates itself. Never push a `v*`
   tag or answer its push prompt without the user saying so. The signing backup
