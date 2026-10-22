@@ -124,6 +124,15 @@ pub fn limit(s: &str, max_words: usize, stop_at_sentence: bool, truncated: bool)
     cut.trim_end().to_string()
 }
 
+/// True if `text` has a word equal to `lower` (lowercased), or starting with it when
+/// `prefix` is set: a word the user typed earlier in the field and kept.
+pub fn has_word(text: &str, lower: &str, prefix: bool) -> bool {
+    text.split(|c: char| !is_word_char(c)).any(|w| {
+        let w = w.to_lowercase();
+        if prefix { w.starts_with(lower) } else { w == lower }
+    })
+}
+
 /// True when `s` ends a sentence: `.` `!` `?` `…`, or the danda `।` and double danda `॥` of
 /// Hindi and other Indic scripts.
 pub fn ends_sentence(s: &str) -> bool {
@@ -175,6 +184,14 @@ mod tests {
         assert_eq!(limit("tes. Then we go on", 4, true, false), "tes.");
         assert_eq!(limit(" the reconcil", 4, true, true), " the");
         assert_eq!(limit(" one two three four five", 4, true, true), " one two three four");
+    }
+
+    #[test]
+    fn finds_words_already_in_the_text() {
+        let t = "Ask Rohit about the dashbord, it's Rohit's.";
+        assert!(has_word(t, "dashbord", false) && has_word(t, "rohit", false) && has_word(t, "it's", false));
+        assert!(has_word(t, "dashb", true) && !has_word(t, "dashb", false));
+        assert!(!has_word(t, "dash", false) && !has_word(t, "board", true) && !has_word("", "a", true));
     }
 
     #[test]

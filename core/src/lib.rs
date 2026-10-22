@@ -13,6 +13,7 @@ pub mod details;
 pub mod emoji;
 pub mod engine;
 pub mod ffi;
+pub mod hinglish;
 pub mod history;
 pub mod instructions;
 pub mod models;
@@ -668,8 +669,8 @@ impl Core {
             }
         }
         if settings.typo_gate && snap.spell_fragment == "typo" && !snap.force {
-            let (_, fragment) = words::split_fragment(&snap.text_before);
-            if !self.plausible_word(words::fragment_word(fragment)) {
+            let (before, fragment) = words::split_fragment(&snap.text_before);
+            if !self.plausible_word(words::fragment_word(fragment), before) {
                 self.emit_suggestion(snap.revision, String::new(), "policy", Some("typo".into()));
                 return Some(());
             }
@@ -679,18 +680,24 @@ impl Core {
 
     /// A fragment the spell checker doesn't know may still be a real word: names and
     /// brands (capitalized), acronyms and codes (digits, all caps), very short fragments,
-    /// and the user's own vocabulary.
-    fn plausible_word(&self, w: &str) -> bool {
+    /// romanized Hindi, a word typed earlier in the field (`before`), and the user's own
+    /// vocabulary.
+    fn plausible_word(&self, w: &str, before: &str) -> bool {
         let mut chars = w.chars();
         let Some(first) = chars.next() else { return true };
         if w.chars().count() < 3 || first.is_uppercase() || w.chars().any(|c| c.is_ascii_digit()) {
             return true;
         }
-        self.shared.profile.lock().unwrap().has_prefix(&w.to_lowercase())
+        let lower = w.to_lowercase();
+        hinglish::has_prefix(&lower)
+            || hinglish::in_context(before)
+            || words::has_word(before, &lower, true)
+            || self.shared.profile.lock().unwrap().has_prefix(&lower)
     }
 
     /// `(replace, insert)` for the misspelled word just finished, when it should be fixed:
-    /// not a name in mid-sentence, not an acronym or code, not one of the user's own words.
+    /// not a name in mid-sentence, not an acronym or code, not romanized Hindi or a word in
+    /// Hinglish text, not a word kept earlier in the field, not one of the user's own words.
     fn correction(&self, snap: &Snapshot) -> Option<(String, String)> {
         let (word, fix) = (snap.spell_word.as_str(), snap.spell_correction.as_str());
         if word.is_empty() || fix.is_empty() || word == fix {
@@ -708,10 +715,14 @@ impl Core {
         let before = pre.trim_end();
         let sentence_start = before.is_empty() || words::ends_sentence(before) || pre.trim_end_matches([' ', '\t']).ends_with('\n');
         let capitalized = word.chars().next().is_some_and(char::is_uppercase);
+        let lower = word.to_lowercase();
         if (capitalized && !sentence_start)
             || word.chars().any(|c| c.is_ascii_digit())
             || word.chars().filter(|c| c.is_alphabetic()).all(char::is_uppercase)
-            || self.shared.profile.lock().unwrap().knows(&word.to_lowercase())
+            || hinglish::is_word(&lower)
+            || hinglish::in_context(before)
+            || words::has_word(before, &lower, false)
+            || self.shared.profile.lock().unwrap().knows(&lower)
         {
             return None;
         }
@@ -1264,6 +1275,47 @@ mod tests {
         assert_eq!(suggestion_for(&rx, 3).1, "pending", "contains digits");
         c.submit(Snapshot { revision: 4, ..snap(1, "I will recie") });
         assert_eq!(suggestion_for(&rx, 4).1, "pending", "not checked: no gate");
+    }
+
+    #[test]
+    fn hinglish_is_neither_gated_nor_corrected() {
+        let (c, rx) = core_with_events();
+        let fix = |rev, text: &str, word: &str, correction: &str| Snapshot {
+            revision: rev,
+            spell_word: word.into(),
+            spell_correction: correction.into(),
+            ..snap(1, text)
+        };
+        let typo = |rev, text: &str| Snapshot { revision: rev, spell_fragment: "typo".into(), ..snap(1, text) };
+        // A listed word, even as the first word of the field.
+        c.submit(fix(1, "hain ", "hain", "hair"));
+        assert_ne!(suggestion_for(&rx, 1).1, "autocorrect", "a listed word");
+        c.submit(typo(2, "ok jald"));
+        assert_eq!(suggestion_for(&rx, 2).1, "pending", "the start of a listed word");
+        // In Hinglish text, unlisted words are spared too.
+        c.submit(fix(3, "Haan yaar, kal scene banate ", "banate", "banter"));
+        assert_ne!(suggestion_for(&rx, 3).1, "autocorrect", "a word in Hinglish text");
+        c.submit(typo(4, "Haan yaar, kal scene banat"));
+        assert_eq!(suggestion_for(&rx, 4).1, "pending", "a fragment in Hinglish text");
+        // English typos in English text are still fixed and gated.
+        c.submit(fix(5, "Thanks for the notes, I will recieve ", "recieve", "receive"));
+        assert_eq!(suggestion_for(&rx, 5).1, "autocorrect");
+        c.submit(typo(6, "Thanks for the notes, I will recie"));
+        assert_eq!(suggestion_for(&rx, 6).3.as_deref(), Some("typo"));
+    }
+
+    #[test]
+    fn a_word_kept_earlier_in_the_field_is_known() {
+        let (c, rx) = core_with_events();
+        c.submit(Snapshot {
+            revision: 1,
+            spell_word: "dashbord".into(),
+            spell_correction: "dashboard".into(),
+            ..snap(1, "Ask Rohit about the dashbord. The dashbord ")
+        });
+        assert_ne!(suggestion_for(&rx, 1).1, "autocorrect", "kept the first time");
+        c.submit(Snapshot { revision: 2, spell_fragment: "typo".into(), ..snap(1, "We use kubectx daily. Run kubec") });
+        assert_eq!(suggestion_for(&rx, 2).1, "pending", "the start of a word already in the field");
     }
 
     fn my_details() -> UserDetails {
