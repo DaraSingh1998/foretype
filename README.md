@@ -4,11 +4,20 @@ Free, open-source, on-device inline autocomplete for every app: gray "ghost text
 your caret, Tab to take the next word, the key above Tab to take all of it. A Cotypist-style
 tool built so the engine can be shared across macOS, Windows and Linux.
 
+**Install** (Apple silicon, macOS 14 or later):
+
+```bash
+curl -fsSL https://github.com/DaraSingh1998/foretype/releases/latest/download/install.sh | bash
+```
+
+or download the DMG from [Releases](https://github.com/DaraSingh1998/foretype/releases/latest).
+More in [Install](#install).
+
 Status: **phases 1–4 done** (Mac MVP, compatibility, personalization, packaging); macOS
 only. Works end to end with a local Qwen3 base model in every app except those off by
 default (code editors, password managers, remote desktops, spreadsheets). In Terminal and
-iTerm it suggests only on AI-agent prompts (Claude Code, Codex, ...). No release is tagged
-yet (signing and notarization need a Developer ID).
+iTerm it suggests only on AI-agent prompts (Claude Code, Codex, ...). Releases are published
+on GitHub and update themselves.
 
 **Docs:** [Architecture](docs/ARCHITECTURE.md) · [Decisions](docs/DECISIONS.md) ·
 [Development](docs/DEVELOPMENT.md) · [Measurements](docs/MEASUREMENTS.md) ·
@@ -192,16 +201,53 @@ p90 106–119 ms, 1 token prefilled per keystroke (p50).
 
 ## Install
 
-- **DMG:** download `Foretype-<version>.dmg` from the releases page, drag Foretype to
-  Applications, open it. (Release builds are signed and notarized; see `RELEASING.md`.)
-- **Homebrew:** `brew install --cask foretype` once the cask is published.
-- **From source:** see Build below.
+Requirements: Apple silicon (M1 or later), macOS 14 (Sonoma) or later, 8 GB of RAM (16 GB
+recommended), and about 1.5 GB of disk for the app and its model.
 
-Requirements: Apple Silicon, macOS 14 (Sonoma) or later, 8 GB of RAM (16 GB recommended).
+**One line in Terminal** (recommended):
 
-On first launch a setup window walks through Accessibility (required), Screen Recording
-(optional, for screen context) and the model download. Updates arrive through Sparkle in
-release builds (menu: Check for Updates…).
+```bash
+curl -fsSL https://github.com/DaraSingh1998/foretype/releases/latest/download/install.sh | bash
+```
+
+It downloads the latest DMG, checks its SHA-256, copies Foretype to Applications and opens
+it. The [script](scripts/install.sh) is short; read it first if you like.
+
+**Or the DMG:** download `Foretype-<version>.dmg` from
+[Releases](https://github.com/DaraSingh1998/foretype/releases/latest), open it and drag
+Foretype to Applications. Foretype is signed with its own certificate rather than an Apple
+Developer ID, so the first time you open it macOS says it can't verify the app:
+
+1. Click **Done**.
+2. Open **System Settings ▸ Privacy & Security**, scroll down to "Foretype was blocked…" and
+   click **Open Anyway**, then confirm with your password or Touch ID.
+
+That's needed once; updates install without asking.
+
+**First launch.** A setup window walks through:
+
+- **Accessibility** (required): lets Foretype read the field you type in and type the words
+  you accept. Click Open Settings and switch Foretype on.
+- **Screen Recording** (optional): reads text near the field, such as the message you're
+  answering. After you switch it on, click **Relaunch**.
+- **The language model**: Qwen3 1.7B Base (1.1 GB), downloaded once from Hugging Face and
+  checked against a pinned SHA-256.
+- **Open Foretype when you log in** (on by default).
+
+Then Foretype lives in the menu bar (the text-cursor icon). Opened from Downloads or the
+DMG, it first offers to move itself into Applications.
+
+**Updates.** Foretype checks GitHub once a day, downloads a new version in the background
+and installs it when you've been away from the keyboard for a few minutes, then reopens
+with its permissions intact. Settings ▸ General has the switches and Check Now; the menu has
+Check for Updates….
+
+**Uninstall.** Quit Foretype from its menu, drag it from Applications to the Trash, and
+optionally delete `~/Library/Application Support/Foretype` (models, encrypted history and
+details). Remove it from System Settings ▸ Privacy & Security ▸ Accessibility and Screen
+Recording.
+
+**From source:** see [Build](#build).
 
 ### Models
 

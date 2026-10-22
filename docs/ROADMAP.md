@@ -86,8 +86,12 @@ are kept for if that changes; the core stays portable.
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.
-- **Release**: Developer ID certificate, notarization run, Sparkle keys and appcast on
-  GitHub Pages, Homebrew tap, first tagged release.
+- **Release** (D36): the pipeline is built and tested locally: self-signed "Foretype"
+  identity, EdDSA update key, feed on the latest release, tag-triggered workflow,
+  `scripts/release.sh`, `install.sh`, silent update on idle. Left: the signing backup and
+  update key as repository secrets, the repository made public, the first workflow run
+  (v0.1.0), a clean-account install test and a v0.1.1 update test. Later, optionally: a
+  Developer ID with notarization (one re-grant for everyone), and a Homebrew tap.
 
 ## Known limitations
 
@@ -111,6 +115,7 @@ are kept for if that changes; the core stays portable.
   was typed is the start of the stored value exactly as written (case aside).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in
   engine (no token healing).
-- Ad-hoc builds lose the Accessibility and Screen Recording grants on every update until
-  releases are signed with a Developer ID. Local builds keep them once
-  `scripts/make-signing-cert.sh` has created the "Foretype" identity (D35).
+- Ad-hoc builds lose the Accessibility and Screen Recording grants on every rebuild. Releases
+  and local builds signed with the "Foretype" identity keep them (D35, D36).
+- Releases aren't notarized: a DMG downloaded in a browser needs Open Anyway once (the
+  one-line installer doesn't).
