@@ -31,6 +31,16 @@ protocol PreferencesHost: AnyObject {
     func confirmClearAboutYou()
     /// Sparkle, configured in release builds only (`isConfigured`).
     var updates: UpdateController? { get }
+    /// Pausing: why and until when (`pauseDescription` is nil while not paused).
+    var pause: PauseState { get }
+    var pauseDescription: String? { get }
+    var powerState: PowerState { get }
+    /// Pauses until `until`, or until resumed (nil).
+    func pauseSuggestions(until: Date?)
+    /// Ends the user's pause, or sets the power rules' pause aside ("Resume Anyway").
+    func resumeSuggestions()
+    /// The battery or Low Power Mode settings changed.
+    func powerSettingsChanged()
 }
 
 /// The Settings window (menu: Settings…, Cmd-,): everything in the menu-bar menu plus the
@@ -249,7 +259,13 @@ private final class FlippedView: NSView {
 // MARK: General
 
 final class GeneralPane: PreferencesPane {
-    private let enabled = NSButton(checkboxWithTitle: L("Show suggestions as you type"), target: nil, action: nil)
+    private let pauseStatus = NSTextField(labelWithString: "")
+    private let pauseMenu = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let resume = NSButton(title: L("Resume"), target: nil, action: nil)
+    private let battery = NSPopUpButton()
+    private let lowPower = NSPopUpButton()
+    private let batteryLevel = NSPopUpButton()
+    private var batteryRows: [NSGridRow] = []
     private let length = NSPopUpButton()
     private let sentenceEnd = NSButton(checkboxWithTitle: L("Stop at the end of a sentence"), target: nil, action: nil)
     private let screen = NSButton(checkboxWithTitle: L("Use text on screen near the field"), target: nil, action: nil)
@@ -272,7 +288,22 @@ final class GeneralPane: PreferencesPane {
     private var updateRows: [NSGridRow] = []
 
     override func build() {
-        for (b, sel) in [(enabled, #selector(changed(_:))), (sentenceEnd, #selector(changed(_:))), (screen, #selector(changed(_:))),
+        pauseMenu.addItem(withTitle: L("Pause"))
+        pauseMenu.addItems(withTitles: PauseChoice.allCases.map(\.title))
+        pauseMenu.target = self
+        pauseMenu.action = #selector(pauseChosen)
+        resume.target = self
+        resume.action = #selector(resumeClicked)
+        battery.addItems(withTitles: [L("Full speed"), L("Save energy"), L("Pause")])
+        lowPower.addItems(withTitles: [L("Save energy"), L("Pause")])
+        batteryLevel.addItems(withTitles: PowerPolicy.batteryLevels.map {
+            $0 == 0 ? L("Keep going") : L("Pause below %@", formatPercent(Double($0) / 100))
+        })
+        for p in [battery, lowPower, batteryLevel] {
+            p.target = self
+            p.action = #selector(powerChanged(_:))
+        }
+        for (b, sel) in [(sentenceEnd, #selector(changed(_:))), (screen, #selector(changed(_:))),
                          (emoji, #selector(changed(_:))), (autocorrect, #selector(changed(_:))), (typoGate, #selector(changed(_:))),
                          (midLine, #selector(changed(_:)))] {
             b.target = self
@@ -305,7 +336,11 @@ final class GeneralPane: PreferencesPane {
         let w: CGFloat = 400
         let grid = Self.form([
             [Self.formLabel(L("Startup:")), openAtLogin],
-            [Self.formLabel(L("Suggestions:")), enabled],
+            [Self.formLabel(L("Suggestions:")), Self.hstack([pauseStatus, pauseMenu, resume])],
+            [Self.formLabel(L("On battery:")), battery],
+            [Self.formLabel(L("Low battery:")), batteryLevel],
+            [Self.formLabel(L("Low Power Mode:")), lowPower],
+            [NSGridCell.emptyContentView, Self.note(L("Saving energy, suggestions don\u{2019}t look ahead or read the screen, and the model is freed after a minute without typing. Foretype always pauses while the Mac sleeps or the screen is locked, and saves energy or pauses when the Mac runs hot."), width: w)],
             [Self.formLabel(L("Length:")), length],
             [NSGridCell.emptyContentView, sentenceEnd],
             [NSGridCell.emptyContentView, Self.note(L("When this is off, a suggestion can run on into the next sentence."), width: w)],
@@ -329,15 +364,27 @@ final class GeneralPane: PreferencesPane {
             [NSGridCell.emptyContentView, checkNow],
         ])
         screenHintRow = grid.cell(for: screenHint)?.row
+        batteryRows = [battery, batteryLevel].compactMap { grid.cell(for: $0)?.row }
         updateRows = [autoCheck, autoInstall, updateNote, checkNow].compactMap { grid.cell(for: $0)?.row }
         add(grid, spacingAfter: 18)
         add(Self.separator())
-        add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes.")))
+        add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere.")))
     }
 
     override func refresh() {
-        guard let s = host?.settings else { return }
-        enabled.state = s.enabled ? .on : .off
+        guard let host else { return }
+        let s = host.settings
+        let pause = host.pause
+        pauseStatus.stringValue = host.pauseDescription ?? L("On")
+        pauseStatus.textColor = pause.isPaused ? .secondaryLabelColor : .labelColor
+        pauseMenu.isHidden = pause.isUserPaused
+        let canResume = pause.isUserPaused || (pause.powerReason != nil && pause.systemReason == nil)
+        resume.isHidden = !canResume
+        resume.title = pause.isUserPaused ? L("Resume") : L("Resume Anyway")
+        battery.selectItem(at: PowerPolicy.BatteryMode.allCases.firstIndex(of: s.batteryMode) ?? 1)
+        lowPower.selectItem(at: PowerPolicy.LowPowerMode.allCases.firstIndex(of: s.lowPowerMode) ?? 1)
+        batteryLevel.selectItem(at: PowerPolicy.batteryLevels.firstIndex(of: s.pauseBelowBattery) ?? 0)
+        for row in batteryRows { row.isHidden = !host.powerState.hasBattery }
         length.selectItem(at: AppSettings.lengthPresets.firstIndex { $0.words == s.lengthWords } ?? 1)
         sentenceEnd.state = s.stopAtSentenceEnd ? .on : .off
         screen.state = s.useScreenContext ? .on : .off
@@ -394,11 +441,30 @@ final class GeneralPane: PreferencesPane {
 
     @objc private func checkForUpdates() { host?.updates?.checkForUpdates() }
 
+    @objc private func pauseChosen() {
+        guard let choice = PauseChoice(rawValue: pauseMenu.indexOfSelectedItem - 1) else { return }
+        host?.pauseSuggestions(until: choice.until)
+    }
+
+    @objc private func resumeClicked() { host?.resumeSuggestions() }
+
+    @objc private func powerChanged(_ sender: NSPopUpButton) {
+        guard let host else { return }
+        let s = host.settings
+        let i = max(0, sender.indexOfSelectedItem)
+        switch sender {
+        case battery: s.batteryMode = PowerPolicy.BatteryMode.allCases[i]
+        case lowPower: s.lowPowerMode = PowerPolicy.LowPowerMode.allCases[i]
+        case batteryLevel: s.pauseBelowBattery = PowerPolicy.batteryLevels[i]
+        default: return
+        }
+        host.powerSettingsChanged()
+    }
+
     @objc private func changed(_ sender: NSControl) {
         guard let host else { return }
         let s = host.settings
         switch sender {
-        case enabled: s.enabled = enabled.state == .on
         case length: s.lengthWords = AppSettings.lengthPresets[max(0, length.indexOfSelectedItem)].words
         case sentenceEnd: s.stopAtSentenceEnd = sentenceEnd.state == .on
         case screen: s.useScreenContext = screen.state == .on

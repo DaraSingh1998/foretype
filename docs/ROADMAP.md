@@ -13,7 +13,8 @@ from Mac MVP to Linux"), adjusted as the work went.
 | 5. Windows shell | Deferred: macOS only for now (D22) | |
 | 6. Linux shell | Deferred: macOS only for now (D22) | |
 
-Since Phase 4: the pixel caret locator (D31, `feat/pixel-caret`).
+Since Phase 4: the pixel caret locator (D31, `feat/pixel-caret`); pause and power-aware
+pausing (D39, `feat/pause`).
 
 ## What each phase delivered
 

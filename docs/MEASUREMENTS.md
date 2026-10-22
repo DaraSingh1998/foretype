@@ -608,6 +608,50 @@ the word that came next:
 - The default note helps the Apple model too; reworded instructions didn't add anything with
   it, so they were not changed.
 
+## Pause and power (2026-10-22)
+
+Apple M3 Pro, 18 GB, macOS 27.0.1, on mains power; the dev bundle (`build/Foretype.app`,
+`feat/pause`) with gemma-4-E2B Q4_K_M (the only model installed), restricted to TextEdit
+(`FORETYPE_ONLY_APPS`), Screen Recording granted. CPU is the process's CPU time over the
+window (`ps -o time`; GPU work is not in it), idle wakeups the change in `top`'s IDLEW
+(wakeups that pulled a CPU out of idle), memory the resident size. `sudo powermetrics` was not
+run (it needs the user's password).
+
+`scripts/e2e-pause.sh` (`TYPE=1 SAMPLE=20`), 20 s per phase: **PASS**. Caret moves through
+Accessibility gave 5 suggestion lines before the pause, 0 suggestion, priming, screen or
+pixel-caret lines while paused (caret moves, TextEdit opened again), 6 after
+`foretype://resume`; the core logged `engine paused: model unloaded` 0.1 s after the URL
+and loaded the model again on the first suggestion after the resume (1.7 s);
+`pause?minutes=0.1` resumed by itself after 6.6 s.
+
+| Phase (20 s) | CPU | Idle wakeups | Memory |
+|---|---:|---:|---:|
+| Typing in TextEdit, 7 characters/s | 2,600 ms | 37 | 3,396 MB |
+| In a field, not typing (model loaded) | 190 ms | 21 | 3,337 MB |
+| Paused | 70 ms | 6 | 62 MB |
+
+60 s per phase, another app in front (Foretype reads nothing there but runs its 0.5 s
+poll), the user working meanwhile:
+
+| Phase (60 s) | CPU | Idle wakeups | Memory |
+|---|---:|---:|---:|
+| Running, model loaded (what "Suggestions Off" cost before: it only gated the core) | 510 ms | 46 | 3,282 MB |
+| Paused | 200 ms | 55 | 73 MB |
+| Running, `GGML_METAL_NO_RESIDENCY=1` | 110 ms | 0 | 1,831 MB |
+| Paused, `GGML_METAL_NO_RESIDENCY=1` | 50 ms | 0 | 74 MB |
+
+- Pausing frees the model (3.3 GB resident with gemma-4-E2B → 62–73 MB) and stops all of
+  Foretype's own work: the main thread used no CPU over 40 s of pause (`ps -M`).
+- What remains while paused is llama.cpp's Metal residency-set heartbeat
+  (`ggml_metal_rsets_init` in `ggml-metal-device.m`): a thread on the default global queue
+  that sleeps 5 ms and loops for the life of the process, whether a model is loaded or not,
+  requesting residency only during the 3 minutes after a computation. The Metal device it
+  belongs to is a process-wide singleton, so freeing the model can't stop it; only
+  `GGML_METAL_NO_RESIDENCY`, read when the device is first created, can. Without it the
+  idle cost falls to 110 ms per minute running and 50 ms paused, with no idle wakeups.
+  Turning residency sets off may let macOS page the model's GPU buffers out between bursts
+  of typing; that latency hasn't been measured, so it is not changed here.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

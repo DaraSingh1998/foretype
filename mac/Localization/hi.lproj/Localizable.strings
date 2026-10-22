@@ -24,13 +24,36 @@
 "model unloaded" = "मॉडल अनलोड किया गया";
 "Could not create event taps (Accessibility permission?)" = "इवेंट टैप नहीं बनाए जा सके (क्या ऐक्सेसिबिलिटी की अनुमति है?)";
 "Saved %1$@ today · %2$@ in all" = "आज की बचत: %1$@ · कुल %2$@";
-"Suggestions On" = "सुझाव चालू";
+"Pause" = "पॉज़ करें";
+"For 15 Minutes" = "15 मिनट के लिए";
+"For 1 Hour" = "1 घंटे के लिए";
+"Until Tomorrow" = "कल तक";
+"Until I Resume" = "जब तक मैं जारी न करूँ";
+"Option-click the menu-bar icon to pause or resume" = "पॉज़ करने या जारी रखने के लिए मेनू बार आइकन पर Option-क्लिक करें";
+"Resume (paused until %@)" = "जारी रखें (%@ तक पॉज़ है)";
+"Resume Anyway" = "फिर भी जारी रखें";
+"Resume Anyway (until plugged in)" = "फिर भी जारी रखें (चार्जर लगने तक)";
+"Paused" = "पॉज़ है";
+"Paused until %@" = "%@ तक पॉज़ है";
+"Paused until you resume" = "आपके जारी करने तक पॉज़ है";
+"Paused while the Mac sleeps" = "Mac के स्लीप में रहने तक पॉज़ है";
+"Paused while the screen is locked" = "स्क्रीन लॉक रहने तक पॉज़ है";
+"Paused while the display sleeps" = "डिस्प्ले बंद रहने तक पॉज़ है";
+"Paused — Low Power Mode" = "पॉज़ है — लो पावर मोड";
+"Paused — on battery power" = "पॉज़ है — बैटरी पर चल रहा है";
+"Paused — battery below %@" = "पॉज़ है — बैटरी %@ से कम";
+"Paused — the Mac is running hot" = "पॉज़ है — Mac बहुत गर्म है";
 "Suggestion Length" = "सुझाव की लंबाई";
 "Stop at Sentence End" = "वाक्य के अंत पर रुकें";
 "Use Screen Context" = "स्क्रीन संदर्भ का उपयोग करें";
 "Allow Screen Recording…" = "स्क्रीन रिकॉर्डिंग की अनुमति दें…";
 "Suggest in %@" = "%@ में सुझाव दें";
-"Snoozed until %@ — Resume" = "%@ तक स्नूज़ किया गया — फिर शुरू करें";
+"Pause in %@" = "%@ में पॉज़ करें";
+"For 5 Minutes" = "5 मिनट के लिए";
+"Until %@ Quits" = "%@ बंद होने तक";
+"Ctrl-Option-Command + the key above Tab: 5 minutes" = "Ctrl-Option-Command + Tab के ऊपर वाली कुंजी: 5 मिनट";
+"Paused in %1$@ until %2$@ — Resume" = "%1$@ में %2$@ तक पॉज़ है — जारी रखें";
+"Paused in %@ until it quits — Resume" = "%@ में उसके बंद होने तक पॉज़ है — जारी रखें";
 "Personalization" = "वैयक्तिकरण";
 "Learn From My Writing" = "मेरे लेखन से सीखें";
 "%1$@, %2$@ learned" = "सीखे गए: %1$@, %2$@";
@@ -50,6 +73,7 @@
 "loading" = "लोड हो रहा है";
 "ready" = "तैयार";
 "idle" = "निष्क्रिय";
+"paused" = "पॉज़";
 "error" = "एरर";
 
 /* Model submenu: %1$@ model name, %2$@ download size, %3$@ percent */
@@ -149,7 +173,15 @@
 
 /* Settings ▸ General */
 "Suggestions:" = "सुझाव:";
-"Show suggestions as you type" = "टाइप करते समय सुझाव दिखाएँ";
+"On" = "चालू";
+"On battery:" = "बैटरी पर:";
+"Low battery:" = "कम बैटरी:";
+"Low Power Mode:" = "लो पावर मोड:";
+"Full speed" = "पूरी रफ़्तार";
+"Save energy" = "ऊर्जा बचाएँ";
+"Keep going" = "चलता रहे";
+"Pause below %@" = "%@ से कम पर पॉज़ करें";
+"Saving energy, suggestions don’t look ahead or read the screen, and the model is freed after a minute without typing. Foretype always pauses while the Mac sleeps or the screen is locked, and saves energy or pauses when the Mac runs hot." = "ऊर्जा बचाते समय सुझाव आगे की तैयारी नहीं करते और स्क्रीन नहीं पढ़ते, और एक मिनट तक टाइप न करने पर मॉडल मेमोरी से हटा दिया जाता है। Mac के स्लीप में रहने या स्क्रीन लॉक रहने पर Foretype हमेशा पॉज़ रहता है, और Mac के गर्म होने पर ऊर्जा बचाता है या पॉज़ हो जाता है।";
 "Length:" = "लंबाई:";
 "Stop at the end of a sentence" = "वाक्य के अंत पर रुकें";
 "When this is off, a suggestion can run on into the next sentence." = "यह बंद होने पर सुझाव अगले वाक्य तक जा सकता है।";
@@ -172,7 +204,7 @@
 "No note for all apps" = "सभी ऐप्स के लिए कोई नोट नहीं";
 "Default: %@" = "डिफ़ॉल्ट: %@";
 "Restore Defaults" = "डिफ़ॉल्ट वापस लाएँ";
-"Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes." = "Tab अगला शब्द लेता है, Tab के ऊपर वाली कुंजी पूरा सुझाव लेती है, Esc उसे हटा देता है और Option-Tab असली Tab टाइप करता है। Ctrl + Tab के ऊपर वाली कुंजी वहाँ भी सुझाव देती है जहाँ Foretype आमतौर पर चुप रहता है; Ctrl-Option-Command + वही कुंजी उस ऐप को 5 मिनट के लिए स्नूज़ करती है।";
+"Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere." = "Tab अगला शब्द लेता है, Tab के ऊपर वाली कुंजी पूरा सुझाव लेती है, Esc उसे हटा देता है और Option-Tab असली Tab टाइप करता है। Ctrl + Tab के ऊपर वाली कुंजी वहाँ भी सुझाव देती है जहाँ Foretype आमतौर पर चुप रहता है; Ctrl-Option-Command + वही कुंजी मौजूदा ऐप में Foretype को 5 मिनट के लिए पॉज़ करती है। हर जगह पॉज़ करने या जारी रखने के लिए मेनू बार आइकन पर Option-क्लिक करें।";
 
 /* Suggestion lengths and personalization strengths (Settings.swift) */
 "Short (2 words)" = "छोटा (2 शब्द)";

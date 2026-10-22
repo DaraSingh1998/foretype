@@ -81,6 +81,12 @@ final class FocusTracker {
     private let windowAlign = 1024
 
     private var runLoop: CFRunLoop!
+    private var thread: Thread?
+    /// Main thread: the app-activation observer, present while tracking.
+    private var activation: NSObjectProtocol?
+    /// AX thread: tracking (between `start` and `stop`).
+    private var running = false
+    private var pollTimer: CFRunLoopTimer?
     private var observer: AXObserver?
     private var observedPid: pid_t = 0
     private var observedApp: AXUIElement?
@@ -102,34 +108,67 @@ final class FocusTracker {
     private var lastPrimeCheck: CFAbsoluteTime = 0
     private let ownPid = ProcessInfo.processInfo.processIdentifier
 
+    /// Starts tracking, or resumes it after `stop`, with a fresh read of the focused field.
+    /// Main thread.
     func start() {
-        let ready = DispatchSemaphore(value: 0)
-        let thread = Thread { [unowned self] in
-            self.runLoop = CFRunLoopGetCurrent()
-            AXUIElementSetMessagingTimeout(AX.systemWide, 0.08)
-            self.schedulePoll()
-            ready.signal()
-            CFRunLoopRun()
+        if thread == nil {
+            let ready = DispatchSemaphore(value: 0)
+            let thread = Thread { [unowned self] in
+                self.runLoop = CFRunLoopGetCurrent()
+                AXUIElementSetMessagingTimeout(AX.systemWide, 0.08)
+                // A source that never fires: the run loop keeps running while stopped, with no
+                // timer or observer in it.
+                var context = CFRunLoopSourceContext()
+                CFRunLoopAddSource(self.runLoop, CFRunLoopSourceCreate(nil, 0, &context), .defaultMode)
+                ready.signal()
+                CFRunLoopRun()
+            }
+            thread.name = "foretype.ax"
+            thread.qualityOfService = .userInteractive
+            thread.start()
+            ready.wait()
+            self.thread = thread
         }
-        thread.name = "foretype.ax"
-        thread.qualityOfService = .userInteractive
-        thread.start()
-        ready.wait()
-
-        let center = NSWorkspace.shared.notificationCenter
-        center.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: nil) { [weak self] note in
+        guard activation == nil else { return }
+        activation = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: nil
+        ) { [weak self] note in
             guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
             let pid = app.processIdentifier
             self?.perform { self?.activate(pid) }
         }
-        if let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier {
-            perform { self.activate(pid) }
+        let front = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        perform {
+            self.running = true
+            self.lastSignature = []
+            self.lastFieldKey = 0
+            self.heldLagging = false
+            self.schedulePoll()
+            if let front { self.activate(front) }
         }
+        Log.debug("tracker started")
+    }
+
+    /// Stops all reading until `start`: no poll, no AXObservers, no activation handling (the
+    /// thread stays, asleep). Main thread.
+    func stop() {
+        guard let activation else { return }
+        NSWorkspace.shared.notificationCenter.removeObserver(activation)
+        self.activation = nil
+        perform {
+            self.running = false
+            if let t = self.pollTimer { CFRunLoopTimerInvalidate(t) }
+            self.pollTimer = nil
+            self.detachObserver()
+        }
+        Log.debug("tracker stopped")
     }
 
     // MARK: - Scheduling on the AX thread
 
+    /// Does nothing before the first `start` (no thread yet).
     func perform(_ block: @escaping () -> Void) {
+        guard runLoop != nil else { return }
         CFRunLoopPerformBlock(runLoop, CFRunLoopMode.defaultMode.rawValue, block)
         CFRunLoopWakeUp(runLoop)
     }
@@ -144,6 +183,7 @@ final class FocusTracker {
             self.read(reason: "poll")
         }
         CFRunLoopAddTimer(runLoop, timer, .defaultMode)
+        pollTimer = timer
     }
 
     /// From the key tap thread: the user typed something; re-read shortly after.
@@ -184,6 +224,7 @@ final class FocusTracker {
     }
 
     private func activate(_ pid: pid_t) {
+        guard running else { return }
         frontPid = pid
         guard pid != ownPid else { return }
         if pid != observedPid {
@@ -248,7 +289,7 @@ final class FocusTracker {
     /// while the app was launching, or someone cleared it). A read that times out is no
     /// reason to set it again.
     private func primeIfNeeded(_ pid: pid_t, _ bundle: String, after minAge: Double = 3) {
-        guard let kind = primeKind?(bundle), onlyAppsAllow?(pid, bundle) ?? true,
+        guard running, let kind = primeKind?(bundle), onlyAppsAllow?(pid, bundle) ?? true,
               kind == "electron" || kind == "chromium" && !NSWorkspace.shared.isVoiceOverEnabled else { return }
         let attr = kind == "electron" ? "AXManualAccessibility" : "AXEnhancedUserInterface"
         let app = AXUIElementCreateApplication(pid)
@@ -273,6 +314,7 @@ final class FocusTracker {
     /// Puts the Chromium/Electron flags back as we found them (the enhanced flag disturbs
     /// window managers). Blocks until done.
     func restorePrimedApps() {
+        guard thread != nil else { return }
         let done = DispatchSemaphore(value: 0)
         perform {
             for (pid, orig) in self.primed where NSRunningApplication(processIdentifier: pid) != nil {
@@ -314,7 +356,8 @@ final class FocusTracker {
 
     private func read(reason: String) {
         let pid = frontPid
-        guard pid > 0, pid != ownPid else { return }
+        // Re-reads scheduled before a stop land here too.
+        guard running, pid > 0, pid != ownPid else { return }
         var snap = FieldSnapshot()
         snap.pid = pid
         snap.secureInput = IsSecureEventInputEnabled()

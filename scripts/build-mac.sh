@@ -120,6 +120,10 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>LSUIElement</key><true/>
+  <key>CFBundleURLTypes</key><array><dict>
+    <key>CFBundleURLName</key><string>dev.foretype.Foretype</string>
+    <key>CFBundleURLSchemes</key><array><string>foretype</string></array>
+  </dict></array>
   <key>NSHumanReadableCopyright</key><string>Foretype contributors. MIT or Apache-2.0.</string>
   <key>NSAccessibilityUsageDescription</key><string>Foretype reads the text field you are typing in to suggest the next words, and types the words you accept. Everything stays on this Mac.</string>
   <key>NSContactsUsageDescription</key><string>Foretype reads your own card (My Card) once, when you ask it to fill in Settings ▸ About You. Nothing leaves this Mac.</string>

@@ -78,7 +78,9 @@ Foretype has two halves joined by a small C ABI:
 In order; the first rule that applies decides:
 
 1. Store `revision` as `latest` (this cancels in-flight work for older revisions).
-2. `settings.enabled` false → hide (`policy`, `disabled`).
+2. Paused (`settings.paused`) → hide (`policy`, `paused`); nothing is queued.
+   `settings.enabled` false → hide (`policy`, `disabled`). (The macOS shell no longer sends
+   `enabled`: its pause covers it.)
 3. `settings.only_apps` non-empty and the app is not in it → hide (`notInOnlyApps`).
 4. `policy::evaluate` → hide with a reason. Checks, in order: secure input, secure field
    (`AXSecureTextField`, or "password"/"secure" in the role description), role not
@@ -110,14 +112,23 @@ In order; the first rule that applies decides:
 11. Build the prompt (personal examples are chosen once per field and cached) and enqueue a
     `Complete` job; emit an empty `pending` event so the shell hides the stale ghost.
 
-`warm` enqueues a zero-token prefill of a field's prompt only if nothing is queued.
+`warm` enqueues a zero-token prefill of a field's prompt only if nothing is queued, and
+never while paused.
 
 ### Worker loop
 
 - **Load**: the local engine (model file) or an `HttpBackend`; emits `status` events
   `loading` / `ready` / `error`.
-- **Idle unload**: with no job for `unload_after_s` (default 300 s) the local engine is
-  dropped (about 1 GB freed; `status: idle`) and reloaded on the next job.
+- **Idle unload**: with no job for `unload_after_s` (default 300 s; the macOS shell sends 60
+  while saving energy) the local engine is dropped (about 1 GB freed; `status: idle`) and
+  reloaded on the next job.
+- **Pause**: `configure` with `paused: true` empties the job slot, bumps `latest` (a running
+  completion stops at its next decode step; warm-ups and prefetches check the flag too) and
+  wakes the worker, which drops the engine at once (model freed, or the server client),
+  emits `status: paused` (`detail: "model unloaded"` for the local engine) and sleeps on the
+  condvar with no timeout work. `paused: false` wakes it again: a server backend is rebuilt
+  at once (`ready`), the local engine reports `idle` and loads on the first job. A core
+  created with `paused: true` (the app launched while paused) loads nothing until then.
 - **Vocabulary**: when the profile generation counter changed, the engine re-derives its
   personal bias.
 - **Debounce**: if `debounce_ms > 0` (the shell sets 80 ms on battery) and the job is
@@ -357,7 +368,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 `n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`
 (`local`|`llama-server`|`openai`|`shell`), `backend_url`, `backend_model`, `backend_api_key`.
 
-**Settings** (`ft_engine_configure`): `enabled`, `length_words` (4), `stop_at_sentence_end`,
+**Settings** (`ft_engine_configure`): `enabled`, `paused` (false), `length_words` (4), `stop_at_sentence_end`,
 `instructions`, `app_instructions` {bundle: text}, `disabled_apps`, `enabled_apps`,
 `only_apps`, `deadline_ms` (300), `max_body_chars` (1600), `unload_after_s` (300),
 `debounce_ms` (0), `prefetch` (true), `personalize` (false), `personalize_strength` (1),
@@ -381,7 +392,11 @@ placeholder), `text_before`, `text_after` (rest of the caret line), `screen_cont
 {"type":"suggestion","revision":44,"text":"🎉","source":"emoji","replace":":ta","label":":tada:"}
 {"type":"suggestion","revision":45,"text":"ya.raman@example.com","source":"details","label":"email"}
 {"type":"status","state":"ready","detail":"loaded in 846 ms"}
+{"type":"status","state":"paused","detail":"model unloaded"}
 ```
+
+`status` states: `loading`, `ready`, `idle` (model unloaded after `unload_after_s`, or just
+resumed), `paused`, `error`.
 
 `source`: `model`, `typeThrough`, `cache`, `pending`, `policy`, `dismissed`, `error`,
 `emoji`, `autocorrect`, `details`. An empty `text` means hide. `replace` (with `label`) marks a
@@ -396,7 +411,7 @@ never logs the text. The shell must ignore events whose `revision` is not its la
 
 | Thread | Work |
 |---|---|
-| main | `AppDelegate` menus and windows (Settings, setup, instructions), `Controller` event handling, `GhostPanel`, insertion, statistics, Carbon hotkeys, power monitor, URLSession delegate |
+| main | `AppDelegate` menus and windows (Settings, setup, instructions), `Controller` event handling, `GhostPanel`, insertion, statistics, Carbon hotkeys, power and session monitors, the pause timer, URLSession delegate |
 | `foretype.ax` | `FocusTracker`: CFRunLoop with AXObserver sources, timers, all AX reads (80 ms global messaging timeout) |
 | `foretype.keys` | `KeyTap`: both event taps; callbacks never block or call Accessibility |
 | `foretype.screen` (queue) | Screen capture completion and Vision OCR |
@@ -433,7 +448,10 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   `false`. With `FORETYPE_ONLY_APPS` (bundle IDs or pids), other apps are never read or
   primed. Electron updates a field's text a few milliseconds before its caret index: a
   snapshot whose only change is text after an unmoved caret (`caretLags`) is held once and
-  the field read again 17 ms later.
+  the field read again 17 ms later. `stop()` (pause) removes the poll timer, the AXObserver
+  and the activation observer; the thread stays, kept alive by a run-loop source that never
+  fires, so it sleeps with no wakeups. `start()` adds them again and reads the focused field
+  afresh (priming its app again if needed).
 - **`Speller.swift`**: on the AX thread, asks `NSSpellChecker` (language left to the
   checker, so it follows the user's languages and learned words) whether the partial word
   is a word, can still become one (`completions`), or is a typo, and for a word just
@@ -507,7 +525,8 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   ms after it hides, so the last synthetic key drains). Consumes Tab (next word), the key
   above Tab (` on ANSI, § on ISO: accept all), Esc (dismiss), Option+Tab (real Tab), and
   swallows their key-ups. Ignores events carrying the inserter's marker. Re-enables itself
-  on `tapDisabledByTimeout`.
+  on `tapDisabledByTimeout`. `stop()` (pause) turns both taps off, so macOS delivers no key
+  events at all; `start()` turns the listen tap back on.
 - **`Inserter.swift`**: keystrokes posted at the annotated session tap with marker
   `0x46545950` ("FTYP"), at most 20 UTF-16 units per event on virtual key 0, Return for
   newlines. Paste: snapshot the pasteboard, write the text plus nspasteboard.org transient
@@ -527,7 +546,14 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   performs key actions. If an accept finds no suggestion (it went stale), it gives the key
   back; a replacement's text is deleted before the insert, and an accept that inserts text
   is counted in `UsageStats`. The engine can be swapped at runtime (`replaceEngine`) when
-  the model or server changes.
+  the model or server changes. `setPaused(true)` hides the panel and stops the key taps,
+  the tracker, pending pixel-caret and screen captures (and forgets the screen text), puts
+  the Chromium/Electron flags back (`restorePrimedApps`) and sends `paused` to the core;
+  `setPaused(false)` reverses it. `coreSettings` adds the runtime part of the core's
+  settings: `paused`, and for `saveEnergy` greedy decoding, no prefetch, an 80 ms mid-word
+  debounce and `unload_after_s` 60 (otherwise beam 3, prefetch, no debounce, 300 s); screen
+  context is off while saving energy. Per-app pauses (`snooze`) end at a time or, with
+  `Date.distantFuture`, when the app's last process quits.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
   every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
   `SCScreenshotManager.captureImage` → Vision `.accurate` OCR → lines grouped into rows,
@@ -536,9 +562,28 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   Skipped for secure input, secure fields and apps where suggestions are off. The image is
   discarded after OCR.
 - **`Hotkeys.swift`**: Carbon `RegisterEventHotKey`: Ctrl + key above Tab forces
-  suggestions on the current line; Ctrl+Opt+Cmd + key above Tab snoozes the app for 5
-  minutes. `PowerMonitor` polls the power source every 30 s; on battery the core gets an
-  80 ms debounce and no prefetch.
+  suggestions on the current line; Ctrl+Opt+Cmd + key above Tab pauses the app for 5
+  minutes. Both are ignored while paused.
+- **`Power.swift`**: `PowerMonitor` follows the power source and battery charge
+  (`IOPSNotificationCreateRunLoopSource`; `IOPSCopyPowerSourcesList` for the internal
+  battery's `kIOPSCurrentCapacityKey`/`kIOPSMaxCapacityKey`), Low Power Mode
+  (`NSProcessInfoPowerStateDidChange`) and the thermal state
+  (`thermalStateDidChangeNotification`): notifications only, no polling. `SessionMonitor`
+  follows `NSWorkspace` will-sleep/did-wake, screens-did-sleep/wake and session
+  resign/become-active, and the distributed `com.apple.screenIsLocked`/`Unlocked`; on wake
+  it reads `CGSSessionScreenIsLocked` so a Mac that locks on sleep does not resume for a
+  moment.
+- **`Pause.swift`**: `PauseState`, the reasons to pause, any one enough: the user's pause
+  (`pausedUntil` in UserDefaults, `Date.distantFuture` for until resumed; a run-loop timer
+  ends it, rechecked on wake since timers don't count sleep; a saved `enabled = false` from
+  before pausing becomes until resumed), power reasons (`thermal`, `batteryLow`, `lowPower`,
+  `battery`; "Resume Anyway" sets the current ones aside until they end or the Mac is
+  plugged in, and a new one pauses again), and system reasons (`sleep`, `lock`,
+  `displaySleep`; never set aside). `PowerPolicy.decide` turns the power state and the
+  three settings into pause reasons and `saveEnergy` (thermal `serious` saves energy,
+  `critical` pauses; reasons set aside save energy). `PauseChoice` is the menu's lengths.
+  `--pause-selftest` checks the rules, set-aside, the migration and the saved pause in a
+  defaults suite of its own.
 - **`AboutYou.swift`**: `AboutYou` (the user's details, master switch, writer-line
   switch (on by default), per-detail switches; `coreJSON()` sends switched-off details empty),
   `AboutYouStore` (`~/Library/Application Support/Foretype/about-you.bin`: the JSON sealed
@@ -549,7 +594,7 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   usage string). `AppDelegate` keeps the details in memory, sends them to the engine at
   once (`Controller.detailsJSON`, again after an engine swap) and saves 0.5 s after the last
   change. `--about-selftest` checks the JSON and the sealing with a key in memory.
-- **`Settings.swift`**: `AppSettings` (UserDefaults: enabled, lengthWords,
+- **`Settings.swift`**: `AppSettings` (UserDefaults: batteryMode, lowPowerMode, pauseBelowBattery, lengthWords,
   stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
   useScreenContext, personalize, strength, backend, backendURL, backendModel, modelPath,
   onboarded), `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
@@ -574,16 +619,24 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   The menu calls `refresh()` after its own changes so both stay in step.
 - **`OnboardingWindow.swift`**, **`InstructionsWindow.swift`**, **`AppDelegate.swift`**:
   setup checklist (Accessibility, Screen Recording, model), custom instructions, the
-  menu-bar menu (keystrokes saved today, on/off, length and sentence end, per-app toggle,
+  menu-bar menu (keystrokes saved today, why and until when it is paused, Pause ▸ or
+  Resume / Resume Anyway, length and sentence end, per-app toggle and Pause in *app* ▸,
   screen context, personalization, instructions, model with sizes on disk and Delete a
-  Model, server, Settings, setup, updates). A hidden main menu gives Foretype's windows
+  Model, server, Settings, setup, updates). The status item's menu is attached only while
+  it opens, so the button sees the click first: Option-click toggles the pause. The
+  `foretype://` URL scheme (`CFBundleURLTypes`, bundled app only) takes `pause`,
+  `pause?minutes=N`, `resume` (the user's pause only) and `toggle`. `AppDelegate` wires the
+  monitors to `PauseState` and pushes the result to `Controller.setPaused`/`saveEnergy`,
+  the icon (with a tooltip naming the reason) and Settings; a core created while paused gets
+  `paused: true` in its first settings, so it never starts loading the model. A hidden main menu gives Foretype's windows
   Cmd-, (Settings), Cmd-W, Cmd-Q and the editing keys; accessory apps show no menu bar but
   still route key equivalents through it. The setup window opens when Accessibility or a
   model is missing, and on the bundled app's first run.
 - **`Icons.swift`**: the menu-bar glyph, drawn in code as an 18 pt template image, one
   picture per state (`MenuBarIcon.set(.active / .paused / .powerPaused / .loading / .error)`);
-  `AppDelegate` maps the engine state to it (ready or idle → active, starting or loading →
-  loading, setup, waiting or error → error). The paused glyphs wait for a pause feature.
+  `AppDelegate` shows `.paused` for the user's or the system's pause, `.powerPaused` when
+  only the power rules pause, and otherwise maps the engine state (ready, idle or paused →
+  active, starting or loading → loading, setup, waiting or error → error).
   Also gives a bare dev binary the checkout's `mac/Resources/AppIcon.icns` as its icon.
 - **`UpdateController.swift`**: Sparkle 2 when built with `FORETYPE_SPARKLE=1` and the
   Info.plist has `SUFeedURL` and `SUPublicEDKey`; otherwise a no-op.

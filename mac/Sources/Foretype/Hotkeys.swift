@@ -1,5 +1,4 @@
 import Carbon
-import IOKit.ps
 
 /// Global hotkeys through Carbon's RegisterEventHotKey: no event tap has to stay active, and
 /// the system routes the key to us even when another app is frontmost.
@@ -39,30 +38,6 @@ final class Hotkeys {
             refs.append(ref)
         } else {
             Log.debug("hotkey \(action) could not be registered (taken by another app?)")
-        }
-    }
-}
-
-/// Watches the power source so the core can add a short debounce on battery.
-final class PowerMonitor {
-    private(set) var onBattery = PowerMonitor.readOnBattery()
-    var onChange: ((Bool) -> Void)?
-    private var timer: Timer?
-
-    static func readOnBattery() -> Bool {
-        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
-              let type = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() else { return false }
-        return (type as String) == kIOPMBatteryPowerKey
-    }
-
-    func start() {
-        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            let now = PowerMonitor.readOnBattery()
-            if now != self.onBattery {
-                self.onBattery = now
-                self.onChange?(now)
-            }
         }
     }
 }

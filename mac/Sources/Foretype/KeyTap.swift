@@ -23,8 +23,11 @@ final class KeyTap {
 
     private var listenPort: CFMachPort?
     private var activePort: CFMachPort?
+    private var thread: Thread?
     private let lock = NSLock()
     private var visible = false
+    /// Paused (`stop`): both taps off, and a timeout does not turn the listen tap back on.
+    private var stopped = false
     private var disableGeneration = 0
     /// Key codes whose keyDown we swallowed; their keyUp is swallowed too.
     private var swallowedUps = Set<Int64>()
@@ -39,7 +42,14 @@ final class KeyTap {
         return visible
     }
 
+    /// Creates the taps, or after `stop` turns the listen tap back on. Returns false if the
+    /// taps could not be created (no Accessibility grant). Main thread.
     func start() -> Bool {
+        if thread != nil {
+            lock.lock(); stopped = false; lock.unlock()
+            if let p = listenPort { CGEvent.tapEnable(tap: p, enable: true) }
+            return listenPort != nil && activePort != nil
+        }
         let ready = DispatchSemaphore(value: 0)
         var ok = false
         let thread = Thread { [unowned self] in
@@ -62,18 +72,34 @@ final class KeyTap {
         thread.qualityOfService = .userInteractive
         thread.start()
         ready.wait()
+        self.thread = thread
         return ok
+    }
+
+    /// Turns both taps off: macOS delivers no key events to Foretype until `start`. Main thread.
+    func stop() {
+        lock.lock()
+        stopped = true
+        visible = false
+        disableGeneration += 1
+        lock.unlock()
+        for port in [listenPort, activePort].compactMap({ $0 }) { CGEvent.tapEnable(tap: port, enable: false) }
+    }
+
+    private var isStopped: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return stopped
     }
 
     /// Main thread. Enabling is immediate; disabling waits 50 ms so the last synthetic
     /// keystroke of an accept drains through the tap first.
     func setSuggestionVisible(_ v: Bool) {
         lock.lock()
-        visible = v
+        visible = v && !stopped
         disableGeneration += 1
         let gen = disableGeneration
         lock.unlock()
-        guard let port = activePort else { return }
+        guard let port = activePort, !isStopped else { return }
         if v {
             CGEvent.tapEnable(tap: port, enable: true)
         } else {
@@ -91,7 +117,7 @@ final class KeyTap {
         guard let refcon else { return Unmanaged.passUnretained(event) }
         let me = Unmanaged<KeyTap>.fromOpaque(refcon).takeUnretainedValue()
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let p = me.listenPort { CGEvent.tapEnable(tap: p, enable: true) }
+            if !me.isStopped, let p = me.listenPort { CGEvent.tapEnable(tap: p, enable: true) }
         } else if type == .keyDown, event.getIntegerValueField(.eventSourceUserData) != Inserter.marker {
             me.onKeyDown?()
         }

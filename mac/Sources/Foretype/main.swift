@@ -12,6 +12,9 @@ if CommandLine.arguments.contains("--about-selftest") {
 if CommandLine.arguments.contains("--stats-selftest") {
     exit(UsageStats.selfTest() ? 0 : 1)
 }
+if CommandLine.arguments.contains("--pause-selftest") {
+    exit(PauseState.selfTest() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--caret-selftest") {
     exit(PixelCaretSelfTest.run() ? 0 : 1)
 }

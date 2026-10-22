@@ -31,6 +31,9 @@ void ft_engine_warm(FtEngine *engine, const char *snapshot_json);
 char *ft_engine_accept(FtEngine *engine, int32_t mode);
 void ft_engine_dismiss(FtEngine *engine, uint64_t field_key, const char *text_before);
 
+/// Replaces the settings (JSON). "paused": true drops queued work, frees the model and sends
+/// {"type":"status","state":"paused"}; submit then answers with a "paused" hide and warm does
+/// nothing. "paused": false resumes (status "idle"; the model loads on the next suggestion).
 bool ft_engine_configure(FtEngine *engine, const char *settings_json);
 
 /// The user's own details: {"name","email","phone","company","job_title","address","website",

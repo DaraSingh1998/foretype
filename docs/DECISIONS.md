@@ -446,3 +446,36 @@ every shell and `ft-replay --default-instructions` use the same text.
 **Cost.** Measured on one model; the Qwen models (the default tier) weren't installed. Users
 who saved an empty note before this version keep it empty (none expected: no one had saved
 one through the editor on the developer's Mac).
+
+## D39. Pause stops everything; power rules pause or save energy (2026-10-22)
+
+**Decision.** "Suggestions On" is replaced by a pause: 15 minutes, 1 hour, until tomorrow
+(6:00) or until resumed, kept in UserDefaults so it survives relaunches and updates (a saved
+"off" becomes paused until resumed). Paused means no work at all, not a gate in the core:
+the tracker's poll, AXObservers and activation observer are removed, both event taps are
+off, pending screen and caret captures are dropped, the Chromium/Electron flags are put
+back, and the core frees the model at once (`paused` in its settings, `status: paused`).
+The same pause comes from power rules: on battery (save energy by default, or full speed,
+or pause), Low Power Mode (pause by default, or save energy), battery below 10/20/30%
+(off by default), thermal state serious (save energy) or critical (pause), and always
+from sleep, a locked screen and display sleep. "Resume Anyway" sets the power reasons in
+effect aside until they end or the Mac is plugged in. Saving energy is the old battery
+behaviour (greedy, no prefetch, 80 ms mid-word debounce) plus no screen OCR and a 60 s
+idle unload. Power and session changes arrive by notification; the 30 s poll is gone.
+Option-click on the menu-bar icon and `foretype://pause|resume|toggle` pause from
+anywhere; no global hotkey (user decision).
+**Why.** The old switch only gated the core: the 0.5 s poll, the observers, the key taps
+and Chrome's accessibility tree kept running, so "off" still cost wakeups and memory. Users
+pause for a reason (a call, a battery, a game); the pause should end by itself where it can
+and cost nothing while it lasts. Low Power Mode is the user saying energy matters more
+than features, so it pauses by default (user decision); a battery threshold is opt-in
+because the battery rule already saves energy.
+**Cost.** Resuming re-primes Chromium and Electron apps, so their first suggestion takes the
+2–3 s of D23 again, and the first suggestion after any pause waits for the model to load
+(about 1 s). Pausing blocks the main thread up to 1 s while the flags are restored (also at
+sleep). llama.cpp's Metal residency heartbeat (a 5 ms sleep loop for the life of the
+process) can't be stopped by freeing the model and is most of what a paused Foretype still
+costs; only `GGML_METAL_NO_RESIDENCY` at launch removes it, which needs its own latency
+measurement (`docs/MEASUREMENTS.md`, *Pause and power*). The URL scheme lets any local app pause or resume Foretype (no more than a click on
+the menu does). Defaults chosen with the user: Low Power Mode pauses, battery threshold
+off, the Pause submenu replaces the switch.
