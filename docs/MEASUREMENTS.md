@@ -652,6 +652,42 @@ poll), the user working meanwhile:
   Turning residency sets off may let macOS page the model's GPU buffers out between bursts
   of typing; that latency hasn't been measured, so it is not changed here.
 
+## Hindi and Hinglish (2026-10-22)
+
+`ft-replay` with Qwen3-1.7B-Base Q4_K_M, default settings (4 words, stop at sentence end),
+before (`main` at fec132f) and after branch `fix/hindi-hinglish`. The Hindi and Hinglish
+corpora are drafts from the eval-corpus work (12 Hinglish and 13 Devanagari documents,
+copied on 2026-10-22 before they were committed); the spell verdicts come from
+`tools/spell-map` with the checker in en_IN. Every document is typo-free, so every
+correction and every typo block is a false one. Another `ft-replay` shared the GPU during
+the English runs and the last Hinglish run, so their latency is noisy; keystroke counts
+don't depend on timing.
+
+| Corpus | Keystrokes saved | False fixes | Typo blocks | Model p50 |
+|---|---:|---:|---:|---:|
+| Hinglish, before | 14.2% | 172 | 188 | 173 ms |
+| Hinglish, after (list written before seeing the corpus) | 15.1% | 4 | 4 | 181 ms |
+| Hinglish, after + 5 words from this corpus | 15.1% | 0 | 0 | 207 ms |
+| Hindi (Devanagari), before | 27.4% | 0 | 0 | 353 ms |
+| Hindi (Devanagari), after | 27.7% | 0 | 0 | 352 ms |
+| English `eval/corpus.jsonl`, before | 41.9% | 2 | 4 | 133 ms |
+| English `eval/corpus.jsonl`, after | 41.9% | 2 | 4 | 141 ms |
+
+- The spell checker flags 181 of the 1,000 distinct Hinglish fragments as impossible and
+  116 of its words as misspelled ("hain" → "hair", "kuch" → "such", "tum" → "sum",
+  "jaldi" → "naldo"); it flags no Devanagari at all.
+- The 8 left after the first list were early words of a message, before two listed words
+  had been typed (phas, bana, lete, pichle, mahine). The user chose to add them; the row
+  with them is measured on the corpus they came from, so it is not an independent number.
+- Hinglish detection (two listed words among the last 40) holds at 614 of the 671 word
+  positions of the Hinglish corpus, from the 2nd to the 14th word of each document, and at
+  none of the 2,334 positions of the English corpus, where no listed word occurs.
+- Hindi gains 0.3 points from the danda stopping suggestions at sentence ends and from
+  words with a virama or nukta staying whole.
+- Hindi is about twice as slow as Hinglish because of the tokenizer: Qwen3 spends 4.57
+  tokens per Devanagari word against 1.64 for Hinglish (नहीं 5 tokens, "nahi" 2), and a
+  suggestion is limited in words; gemma-4-E2B spends 1.31 (`llama-tokenize`).
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

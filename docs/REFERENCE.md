@@ -135,8 +135,17 @@ Defaults** brings it back.
   (1,913 GitHub/Slack-style shortcodes).
 - **Autocorrect**: after a misspelled word and a space, the ghost shows `→ receive`; Tab
   replaces the word. It uses the macOS spell checker in your languages and leaves names,
-  acronyms and words you have written before alone.
-- **Typo gate**: no suggestion while the word you are typing can't become a real word.
+  acronyms, words you have written before (in your history, or earlier in the same field)
+  and romanized Hindi alone.
+- **Typo gate**: no suggestion while the word you are typing can't become a real word. The
+  same words pass as for autocorrect.
+- **Hindi and Hinglish**: the spell checker knows no romanized Hindi (it offered "hain" →
+  "hair" and blocked "jaldi"), so about 470 common Hinglish words and their usual spellings
+  (kya, nahi/nahin/nhi, acha/accha, yaar) are never corrected or blocked, and once two of
+  the last 40 words in a field are on that list, autocorrect and the typo gate stand down
+  for every word there. English typos inside a Hinglish message are then left alone too.
+  Devanagari passes the spell checker as it is. A danda (। or ॥) ends a sentence for
+  **Stop at end of sentence**, and words with a virama or nukta (क्या, दफ़्तर) stay whole.
 - **Phrase beam search**: at full speed the engine weighs 3 candidate phrases instead of
   one (+1.1 points of keystrokes saved on the corpus); greedy while saving energy.
 - **Mid-line** (experimental, off): up to three words in a card under the caret when text

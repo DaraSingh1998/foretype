@@ -61,7 +61,7 @@ itself.
   use. Your history is encrypted on your Mac, and one click deletes it.
 - **Fills in your details.** Add them once in Settings ▸ About You (or from your Contacts
   card); then "My email is" or a sign-off suggests your own email or name.
-- **Small helpers.** `:tada` becomes 🎉, misspelled words get a one-key fix, and custom
+- **Small helpers.** `:tada` becomes 🎉, misspelled words get a one-key fix (Hinglish is left alone), and custom
   instructions set the tone (for every app or just one).
 - **Easy on your battery.** Lighter suggestions on battery, a pause in Low Power Mode, and
   the model unloaded when you stop typing. Pause it for 15 minutes, an hour or until
