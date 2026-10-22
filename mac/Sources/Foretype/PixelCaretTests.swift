@@ -120,6 +120,57 @@ enum PixelCaretSelfTest {
         let advanceOK = abs(typedW - FontMatcher.width(" notes", f)) < 0.01 && abs(backW + FontMatcher.width("tes", f)) < 0.5
         print(String(format: "advance: +%.2f / %.2f pt %@", typedW, backW, advanceOK ? "ok" : "FAILED"))
         ok = ok && advanceOK
+        // A solid search's choice among the bars it found: the only one without a position;
+        // else on the row the caret moved to, or near the prediction on its own row.
+        let r = { (x: CGFloat, y: CGFloat) in CGRect(x: x, y: y, width: 0, height: 19) }
+        let from = r(500, 100)
+        let choices: [(String, CGRect?, CGRect?)] = [
+            ("one bar, no position", PixelCaret.choose([r(80, 100)], from: nil, predictedX: nil, direction: 0, lineStart: true, lineEnd: true), r(80, 100)),
+            ("two bars, no position", PixelCaret.choose([r(80, 100), r(200, 100)], from: nil, predictedX: nil, direction: 0, lineStart: false, lineEnd: true), nil),
+            ("new line: next row, leftmost", PixelCaret.choose([r(200, 100), r(300, 128), r(30, 128), r(40, 160)], from: from, predictedX: nil, direction: 1, lineStart: true, lineEnd: true), r(30, 128)),
+            ("wrap: next row, rightmost", PixelCaret.choose([r(30, 128), r(90, 128), r(60, 160)], from: from, predictedX: nil, direction: 1, lineStart: false, lineEnd: true), r(90, 128)),
+            ("back a line: row above, rightmost", PixelCaret.choose([r(400, 72), r(60, 72), r(30, 128)], from: from, predictedX: nil, direction: -1, lineStart: false, lineEnd: true), r(400, 72)),
+            ("near the edge: same row", PixelCaret.choose([r(503, 100), r(30, 128)], from: from, predictedX: 505, direction: 0, lineStart: false, lineEnd: true), r(503, 100)),
+            ("near the edge, wrapped: next row", PixelCaret.choose([r(30, 128)], from: from, predictedX: 505, direction: 0, lineStart: false, lineEnd: true), r(30, 128)),
+            ("mid-line, two on the row: none", PixelCaret.choose([r(30, 128), r(90, 128)], from: from, predictedX: nil, direction: 1, lineStart: false, lineEnd: false), nil),
+        ]
+        for (name, got, want) in choices where got != want {
+            print("choose, \(name): got \(got.map { "\($0.minX),\($0.minY)" } ?? "none") FAILED")
+            ok = false
+        }
+        // Chromium's paragraph newlines: the caret's index in the ranges mapped into the value.
+        let mapped: [(String, Int?, Int?)] = [
+            ("second paragraph", AX.valueIndex(of: "worksCould", in: "works\nCould"), 11),
+            ("empty line after Enter", AX.valueIndex(of: "Hello\n", in: "Hello\n\n"), 6),
+            ("paragraph end, one after", AX.valueIndex(of: "ab", in: "ab\ncd"), 2),
+            ("list item", AX.valueIndex(of: "see1. Power", in: "see\n1. Power settings"), 12),
+            ("same text", AX.valueIndex(of: "abc", in: "abc"), 3),
+            ("different text", AX.valueIndex(of: "abx", in: "abc"), nil),
+        ]
+        for (name, got, want) in mapped where got != want {
+            print("value index, \(name): got \(got.map(String.init) ?? "none") FAILED")
+            ok = false
+        }
+        // Electron's caret index lagging the text: held once; real changes are not.
+        func snap(_ before: String, _ after: String, _ caret: Int) -> FieldSnapshot {
+            var s = FieldSnapshot()
+            s.fieldKey = 7
+            s.textBefore = before
+            s.textAfter = after
+            s.caretIndex = caret
+            return s
+        }
+        let lags: [(String, Bool, Bool)] = [
+            ("typed letter after an unmoved caret", FocusTracker.caretLags(snap("Hello wor", "l", 9), after: snap("Hello wor", "", 9)), true),
+            ("letter typed, caret moved", FocusTracker.caretLags(snap("Hello worl", "", 10), after: snap("Hello wor", "", 9)), false),
+            ("caret moved left", FocusTracker.caretLags(snap("Hello wo", "r", 8), after: snap("Hello wor", "", 9)), false),
+            ("already mid-line", FocusTracker.caretLags(snap("Hello", " x", 5), after: snap("Hello", " ", 5)), false),
+        ]
+        for (name, got, want) in lags where got != want {
+            print("caret lag, \(name): got \(got) FAILED")
+            ok = false
+        }
+        print("choose, value index and caret lag: \(choices.count + mapped.count + lags.count) cases")
         // CPU cost of one blink step on a field-sized and a window-sized region (2×).
         for (name, w, h) in [("field 656x384 pt", 1312, 768), ("window 1492x875 pt", 2984, 1750)] {
             let blank = PixelFrame(width: w, height: h, bytes: [UInt8](repeating: 255, count: w * h * 4), origin: .zero, scale: 2)

@@ -36,7 +36,8 @@ final class Controller {
     private var latest = FieldSnapshot()
     /// Main thread: the suggestion on screen and its field, to move it when the pixel caret
     /// locator reports a new position. `detail` is set for a fill of one of the user's details.
-    private var shown: (fieldKey: UInt64, text: String, detail: AboutYou.Field?)?
+    /// It can be held back (set, panel hidden) while the locator searches for the caret.
+    private var shown: (fieldKey: UInt64, text: String, detail: AboutYou.Field?, midLine: Bool)?
     /// Main thread: whether a suggestion is on screen (an update waits until none is).
     var isShowingSuggestion: Bool { shown != nil }
 
@@ -130,18 +131,21 @@ final class Controller {
         // Never hand a secure field's text to the spell checker.
         if !s.secureInput, s.subrole != "AXSecureTextField" { speller.annotate(&s) }
         hintIfNeeded(s)
+        // Before submitting, so a suggestion arriving for this snapshot sees a solid search
+        // that is under way.
+        if let pixel { pixelCaret.note(pixel) }
         engine.submit(s)
         screen.note(.init(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame),
                     skip: !screenContextAllowed(s))
-        if let pixel { pixelCaret.note(pixel) }
     }
 
     /// The pixel caret locator's view of a snapshot, when it should place the ghost text:
     /// the app's rule says so (`"caret": "pixel"`), or Accessibility gave no caret for a
-    /// field with text. Never for fields where screen context is not allowed, or with
-    /// screen context off (it captures the screen too).
+    /// text field (an empty one too, so the caret is found before the first keystroke).
+    /// Never for fields where screen context is not allowed, or with screen context off (it
+    /// captures the screen too).
     private func pixelTarget(_ s: FieldSnapshot) -> PixelCaretProvider.Target? {
-        guard settings.useScreenContext, s.fieldKey & 0xFFFF_FFFF != 0, !s.textBefore.isEmpty,
+        guard settings.useScreenContext, s.fieldKey & 0xFFFF_FFFF != 0,
               s.selectionLength == 0, s.markedLength == 0, screenContextAllowed(s),
               ScreenContextProvider.hasPermission else { return nil }
         // FORETYPE_CARET=pixel|ax overrides the app's rule (testing).
@@ -150,10 +154,16 @@ final class Controller {
         let line = s.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
         return .init(fieldKey: s.fieldKey, pid: s.pid, bundleId: s.bundleId, windowFrame: s.windowFrame, fieldFrame: s.frame,
                      lineStart: s.caretIndex - line.utf16.count, lineText: line, font: s.font,
-                     edgeOutsideFrame: s.edgeOutsideFrame)
+                     edgeOutsideFrame: s.edgeOutsideFrame, lineEnd: !Controller.midLine(s))
     }
 
-    /// Caret queue: the locator found or corrected the caret; move a visible suggestion.
+    /// Text other than spaces follows the caret on its line.
+    private static func midLine(_ s: FieldSnapshot) -> Bool {
+        !(s.textAfter.split(separator: "\n", omittingEmptySubsequences: false).first ?? "").trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    /// Caret queue: the locator found or corrected the caret, or a solid search gave up; move
+    /// the suggestion, or show one held back for the search.
     private func pixelCaretArrived(_ fieldKey: UInt64) {
         lock.lock()
         let snap = latest
@@ -166,10 +176,12 @@ final class Controller {
         let updated = latest
         lock.unlock()
         DispatchQueue.main.async { [weak self] in
-            guard let self, let shown = self.shown, shown.fieldKey == fieldKey, self.panel.isVisible,
+            guard let self, let shown = self.shown, shown.fieldKey == fieldKey,
                   self.latestSnapshot.revision == updated.revision else { return }
             self.panel.show(text: shown.text, caret: updated.caret, frame: self.panelFrame(updated), font: updated.font,
-                            tag: shown.detail?.tag)
+                            midLine: shown.midLine, tag: shown.detail?.tag)
+            self.keys.setSuggestionVisible(self.panel.isVisible)
+            Log.debug("rev \(updated.revision) pixel caret moved the suggestion: show=\(self.panel.mode)")
         }
     }
 
@@ -235,17 +247,29 @@ final class Controller {
                 // A replacement shows what Tab turns the typed text into.
                 let display = replace.isEmpty ? text
                     : source == "emoji" ? " \(text) \(label)" : " → \(text.trimmingCharacters(in: .whitespaces))"
-                let midLine = !(snap.textAfter.split(separator: "\n", omittingEmptySubsequences: false).first ?? "")
-                    .trimmingCharacters(in: .whitespaces).isEmpty
-                panel.show(text: display, caret: snap.caret, frame: panelFrame(snap), font: snap.font, midLine: midLine && replace.isEmpty,
-                           tag: detail?.tag)
-                shown = (snap.fieldKey, display, detail)
+                let midLine = Controller.midLine(snap) && replace.isEmpty
+                if snap.caret == nil, pixelCaret.isLocating(snap.fieldKey) {
+                    // The pixel locator is looking for the caret on this line (tens of
+                    // milliseconds): wait for it rather than flash the mirror card.
+                    panel.hide()
+                } else {
+                    panel.show(text: display, caret: snap.caret, frame: panelFrame(snap), font: snap.font, midLine: midLine,
+                               tag: detail?.tag)
+                }
+                shown = (snap.fieldKey, display, detail, midLine)
                 keys.setSuggestionVisible(panel.isVisible)
             }
             if Log.enabled, source != "pending" {
                 let caret = snap.caret.map { "\($0.strategy) \(Int($0.rect.minX)),\(Int($0.rect.minY)) h\(Int($0.rect.height))" } ?? "none"
                 let what = source == "details" ? "<\(label), redacted>" : text.debugDescription
-                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret) -> \(what)")
+                // What follows the caret on its line decides inline or card; its scalars show invisible ones.
+                let after = snap.textAfter.isEmpty ? "" : " after=" + snap.textAfter.prefix(12).unicodeScalars
+                    .map { $0.properties.isAlphabetic ? "a" : String(format: "U+%04X", $0.value) }.joined(separator: ",")
+                // The caret line's start index and the field's top and height: new lines and a
+                // growing field, without the text.
+                let lineLength = snap.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last?.utf16.count ?? 0
+                let field = snap.frame.map { " field=\(Int($0.minY))+\(Int($0.height))" } ?? ""
+                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field) show=\(panel.mode) -> \(what)")
             }
         case let .status(state, detail):
             Log.debug("engine \(state): \(detail)")
@@ -279,7 +303,7 @@ final class Controller {
                 hide()
             } else {
                 panel.advance(inserted: r.insert, remaining: r.remaining)
-                shown = panel.isVisible ? (latestSnapshot.fieldKey, r.remaining, detail) : nil
+                shown = panel.isVisible ? (latestSnapshot.fieldKey, r.remaining, detail, false) : nil
                 keys.setSuggestionVisible(panel.isVisible)
             }
         case .dismiss:

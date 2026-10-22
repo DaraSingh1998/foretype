@@ -327,16 +327,22 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   otherwise); without that it falls back to keystrokes, never leaving your clipboard
   overwritten.
 - **Chromium** reports a font size but no font name; Foretype measures the on-screen width
-  of the last few characters and picks the matching font family.
+  of the last few characters and picks the matching font family. In rich-text fields (chat
+  composers in Chrome and Electron apps such as Claude or Slack) its caret position skips
+  the line breaks between paragraphs that its text has; Foretype lines the two up, so the
+  text before and after the caret is right on every line.
 - **Apps without usable caret geometry** (Microsoft Teams; LibreOffice, whose paragraph
   positions are off although its character positions are right): Foretype finds the caret
   from pixels, and where the app's character positions turn out to match the screen it uses
-  those from then on. When you pause, it captures the text field a few times (never anything else,
-  no image is kept) and looks for the one thin bar that blinks; while you type it moves the
-  ghost text by the width of what you typed and checks the position after short pauses. This
-  uses the Screen Recording permission and follows the Screen Context switch; until the
-  caret is found in a new field or line (about 0.7 s), the suggestion shows in a small card
-  above the field.
+  those from then on. When a field gets focus or you pause, it captures the text field a few
+  times (never anything else, no image is kept) and looks for the one thin bar that blinks,
+  which teaches it the caret's colour and height. While you type it moves the ghost text by
+  the width of what you typed and checks the position after short pauses; on a new line, a
+  wrapped line or another field of the same app it finds the caret with one capture right
+  away (the caret doesn't blink while you type). This uses the Screen Recording permission
+  and follows the Screen Context switch; only until an app's caret has been seen once (about
+  0.7 s after the first field gets focus) does the suggestion show in a small card above the
+  field.
 - **Power**: the model is unloaded after 5 idle minutes (about 1 GB freed) and reloaded on
   the next keystroke; on battery, mid-word suggestions wait 80 ms for the next keystroke.
 
@@ -388,10 +394,10 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   Windsurf chat labels (VS Code's is checked), text-marker reads, the Google Docs and Arc
   hints, LibreOffice, Mail and Notes.
 - The pixel caret (apps without caret geometry) is measured in TextEdit against its
-  Accessibility caret and in LibreOffice Writer; it is untested in Microsoft Teams and
-  Obsidian. A caret that never blinks (the "prefer non-blinking cursor" Accessibility
-  setting) is never found, and a new field or line shows the card above the field for about
-  0.7 s first. LibreOffice Writer reported no focused text element for a document opened
+  Accessibility caret, in LibreOffice Writer and in a Chrome chat-composer fixture; it is
+  untested in Microsoft Teams and Obsidian, and in the Claude and Slack apps themselves. A
+  caret that never blinks (the "prefer non-blinking cursor" Accessibility setting) is never
+  found, and an app's first field shows the card above the field for about 0.7 s first. LibreOffice Writer reported no focused text element for a document opened
   from outside (no clicks or typing were possible in the test), so suggestions there are
   unverified.
 - The setup window, the menu and the Custom Instructions window have been checked by
