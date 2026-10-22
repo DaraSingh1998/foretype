@@ -15,7 +15,8 @@ address, and GitHub rejects pushes that expose a private email). Phases 1–4 of
 
 | Doc | What it holds |
 |---|---|
-| `README.md` | User-facing overview, install, features, measured numbers |
+| `README.md` | Product overview for users: what it does, install, highlights, privacy, keys, models |
+| `docs/REFERENCE.md` | Detailed reference: every feature and setting, per-app behaviour, build, dev tools, known limitations |
 | `docs/ARCHITECTURE.md` | Components, threads, data flow, FFI contract and JSON shapes, prompt format, KV-cache and token-healing design |
 | `docs/DECISIONS.md` | Why things are the way they are (ADR log): read before changing a design choice |
 | `docs/DEVELOPMENT.md` | Build, test, replay, e2e tests, debugging, macOS permission (TCC) traps, how to add an app rule or a model |
@@ -61,7 +62,8 @@ downloading any model** (name, size, source).
   and `mac/Sources/Foretype/Engine.swift`.
 - **Measure before claiming quality changes**: run `ft-replay` on `eval/corpus.jsonl` before
   and after, and record the result in `docs/MEASUREMENTS.md`.
-- Keep `README.md`, `docs/` and `CHANGELOG.md` current when behaviour changes.
+- Keep `README.md`, `docs/` and `CHANGELOG.md` current when behaviour changes. Feature
+  details go in `docs/REFERENCE.md`; the README stays a short product overview.
 
 ## Testing on the user's Mac: safety rules (learned the hard way)
 
