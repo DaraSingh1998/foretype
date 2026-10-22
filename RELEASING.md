@@ -65,6 +65,10 @@ nothing.
 4. Follow the build with `gh run watch --repo DaraSingh1998/foretype`. The release appears at
    `https://github.com/DaraSingh1998/foretype/releases`.
 
+GitHub sometimes starts no workflow for a pushed tag (it happened for v0.1.0). `release.sh`
+waits a minute and otherwise starts the workflow on the tag by hand (`gh workflow run
+release.yml --ref vX.Y.Z`), which does the same full release.
+
 The workflow refuses a tag that isn't on `main`, a tag that doesn't match `core/Cargo.toml`, and a
 build number (the commit count) that isn't higher than the previous release's, because Sparkle
 only offers a higher one. If a run fails after the tag was pushed, fix it on `main` and

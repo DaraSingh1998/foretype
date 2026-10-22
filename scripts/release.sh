@@ -69,5 +69,18 @@ case "$answer" in
 esac
 git push origin main "v$V"
 echo
+# GitHub doesn't always start a workflow for a pushed tag (v0.1.0's push started none). Started
+# by hand on the tag, the workflow does the same full release.
+echo "Waiting for the release workflow to start..."
+STARTED=""
+for _ in $(seq 12); do
+  sleep 5
+  STARTED="$(gh run list --repo "$REPO" --workflow release.yml --branch "v$V" --limit 1 --json databaseId --jq '.[0].databaseId // empty' 2>/dev/null || true)"
+  [ -n "$STARTED" ] && break
+done
+if [ -z "$STARTED" ]; then
+  echo "No run started for the tag push; starting the release workflow on v$V by hand."
+  gh workflow run release.yml --repo "$REPO" --ref "v$V"
+fi
 echo "Pushed. Follow the build: gh run watch --repo $REPO (or https://github.com/$REPO/actions)"
 echo "Release page when done: https://github.com/$REPO/releases/tag/v$V"
