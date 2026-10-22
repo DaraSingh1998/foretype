@@ -1,7 +1,7 @@
 # Changelog
 
 Each `## X.Y.Z` section is a release: `scripts/release.sh` turns `## Unreleased` into one, and
-the release notes are taken from it. No release has been published yet.
+the release notes are taken from it.
 
 ## Unreleased
 
