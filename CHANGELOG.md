@@ -1,9 +1,28 @@
 # Changelog
 
-No release has been tagged yet; the version in `core/Cargo.toml` is 0.1.0. Entries are by
-roadmap phase.
+Each `## X.Y.Z` section is a release: `scripts/release.sh` turns `## Unreleased` into one, and
+the release notes are taken from it. No release has been published yet.
 
 ## Unreleased
+
+### Releases on GitHub and automatic updates (2026-10-22)
+- `scripts/release.sh X.Y.Z` sets the version, dates this file, commits, tags `vX.Y.Z` and,
+  after asking, pushes. `.github/workflows/release.yml` (macos-26) then runs the core tests,
+  builds and signs the app, packages the DMG, signs it for Sparkle, writes `appcast.xml` and
+  creates the GitHub release with the DMG, its checksum, the feed and `install.sh`.
+- Install with one line, `curl -fsSL https://github.com/DaraSingh1998/foretype/releases/latest/download/install.sh | bash`,
+  which checks the DMG's SHA-256 and copies the app to Applications, or download the DMG
+  (one Open Anyway in Privacy & Security, since releases aren't notarized).
+- Release builds check the latest release's `appcast.xml` daily, download a new version and
+  install it once you have been idle for five minutes with no suggestion on screen, then
+  reopen. Releases and local builds share the self-signed "Foretype" identity, so
+  Accessibility and Screen Recording survive updates. Settings ▸ General shows the version,
+  "Check for updates every day", "Install updates automatically" and Check Now.
+- The update key's public half is in `packaging/sparkle-public-key.txt`; `package-mac.sh`
+  signs DMGs with `tools/sparkle/edkey.swift`, so no Sparkle tarball is needed.
+- `scripts/sparkle-local-test.sh` is now automatic: 0.0.1 finds 0.0.2 on a local feed,
+  installs it silently and relaunches, signed like a release; it prints PASS/FAIL.
+- `build-mac.sh` and `package-mac.sh` take `FORETYPE_OUT` (output folder).
 
 ### About You: your own details, filled in exactly (2026-10-22)
 - New Settings tab **About You**: name, email, phone, company, job title, address and
@@ -27,10 +46,11 @@ roadmap phase.
   `scripts/e2e-about-you.sh` checks the fills in a new TextEdit document (9/9 passed).
 
 ### Local builds keep their permissions (2026-10-22)
-- `scripts/make-dev-cert.sh` creates "Foretype Local Dev", a self-signed code-signing
+- `scripts/make-signing-cert.sh` creates "Foretype", a self-signed code-signing
   identity, in the login keychain (you run it once; it prints each command and asks first;
-  `--remove` deletes it). `scripts/build-mac.sh` signs with `FORETYPE_SIGN_IDENTITY` if set
-  (`-` forces ad hoc), else with "Foretype Local Dev" if present, else ad hoc as before. The
+  `--remove` deletes it), and writes a backup for the release workflow; `--import` installs a
+  backup. Releases are signed with the same identity. `scripts/build-mac.sh` signs with `FORETYPE_SIGN_IDENTITY` if set
+  (`-` forces ad hoc), else with "Foretype" if present, else ad hoc as before. The
   designated requirement is then the bundle ID plus the certificate, the same for every
   build, so Accessibility and Screen Recording grants survive rebuilds instead of silently
   failing to match (tccd: "Failed to match existing code requirement"). The hardened

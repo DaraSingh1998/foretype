@@ -113,4 +113,4 @@ are kept for if that changes; the core stays portable.
   engine (no token healing).
 - Ad-hoc builds lose the Accessibility and Screen Recording grants on every update until
   releases are signed with a Developer ID. Local builds keep them once
-  `scripts/make-dev-cert.sh` has created the "Foretype Local Dev" identity (D35).
+  `scripts/make-signing-cert.sh` has created the "Foretype" identity (D35).

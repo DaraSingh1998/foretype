@@ -28,7 +28,7 @@ Private GitHub repo: `DaraSingh1998/foretype`. Phases 1–4 of the roadmap are d
 ```bash
 export MACOSX_DEPLOYMENT_TARGET=14.0
 cargo test --release --manifest-path core/Cargo.toml        # 25+ unit tests, no model needed
-scripts/build-mac.sh                                          # core + Swift shell + build/Foretype.app ("Foretype Local Dev" if present, else ad hoc)
+scripts/build-mac.sh                                          # core + Swift shell + build/Foretype.app ("Foretype" if present, else ad hoc)
 mac/.build/release/Foretype --font-selftest                   # no permissions needed
 mac/.build/release/Foretype --ocr-selftest                    # no permissions needed
 cargo build --release --bins --manifest-path core/Cargo.toml  # ft-replay
@@ -46,7 +46,14 @@ downloading any model** (name, size, source).
   `main` and push only when the user says so. Use the user's configured git identity and
   the commit attribution line the system provides.
 - **CI is manual-only on purpose** (`workflow_dispatch`): macOS runner minutes are billed at
-  10× on this private repo. Don't add push or pull_request triggers unless asked.
+  10× on this private repo. Don't add push or pull_request triggers unless asked. The one
+  exception is `.github/workflows/release.yml`, which publishes a release when a `v*` tag is
+  pushed.
+- **Releases** (`RELEASING.md`): `scripts/release.sh X.Y.Z` commits, tags and, after asking,
+  pushes; the workflow publishes and every installed copy updates itself. Never push a `v*`
+  tag or answer its push prompt without the user saying so. The signing backup
+  (`~/Foretype-signing.p12`) and the update key (`~/Foretype-sparkle.key`) are secrets:
+  never print, commit or move them.
 - **Keep the core portable.** No AppKit, Accessibility or Mac-only APIs in `core/`. The core
   emits suggestion *state*, never pixels.
 - **When the FFI changes**, update all three: `core/src/ffi.rs`, `core/include/foretype_core.h`
@@ -78,8 +85,8 @@ downloading any model** (name, size, source).
   Accessibility grant** (the responsible process). A bundled `build/Foretype.app` is its
   own identity. Signed ad hoc, its Accessibility and Screen Recording entries must be
   removed with − and re-added after every rebuild (tccd: "Failed to match existing code
-  requirement"). `scripts/make-dev-cert.sh` (the user runs it once; it changes the login
-  keychain, so never run it yourself) creates the self-signed "Foretype Local Dev"
+  requirement"). `scripts/make-signing-cert.sh` (the user runs it once; it changes the login
+  keychain, so never run it yourself) creates the self-signed "Foretype"
   identity; `build-mac.sh` then signs with it and the grants survive rebuilds. Such a
   build is live as soon as it opens, so launch it with
   `open -n --env FORETYPE_ONLY_APPS=...` like any dev build.
@@ -102,4 +109,5 @@ downloading any model** (name, size, source).
 | `FORETYPE_LLAMA_LOGS` | Keep llama.cpp's own logging |
 | `FORETYPE_TEXT_MARKERS` | `1` reads web fields through text markers even when ranges work (testing) |
 | `FORETYPE_CARET` | `pixel` or `ax`: forces the pixel caret locator on or off for every app (testing) |
-| Build: `FORETYPE_SIGN_IDENTITY` (`-` forces ad hoc), `FORETYPE_SIGN_KEYCHAIN`, `FORETYPE_SPARKLE`, `FORETYPE_FEED_URL`, `FORETYPE_SPARKLE_PUBLIC_KEY`, `FORETYPE_NOTARY_PROFILE`, `FORETYPE_VERSION`, `SPARKLE_BIN` | See `RELEASING.md` |
+| `FORETYPE_UPDATE_CHECK_NOW`, `FORETYPE_UPDATE_IDLE` | Release builds: `1` runs a background update check at launch; seconds of user idleness before a downloaded update installs (default 300) (`scripts/sparkle-local-test.sh`) |
+| Build: `FORETYPE_SIGN_IDENTITY` (`-` forces ad hoc), `FORETYPE_SIGN_KEYCHAIN`, `FORETYPE_OUT`, `FORETYPE_SPARKLE`, `FORETYPE_FEED_URL`, `FORETYPE_SPARKLE_PUBLIC_KEY`, `FORETYPE_SPARKLE_KEY_FILE`, `FORETYPE_DOWNLOAD_BASE`, `FORETYPE_NOTARY_PROFILE`, `FORETYPE_VERSION`, `FORETYPE_BUILD` | See `RELEASING.md` and the script headers |

@@ -349,9 +349,11 @@ launch only if the file exists.
 must be typed the way they are stored ("+91 98765…" doesn't match "98765…"). Several
 identities would need a picker and per-app mapping; the JSON shape leaves room for it.
 
-## D35. Local builds sign with a self-signed "Foretype Local Dev" identity (2026-10-22)
+## D35. Local builds sign with a self-signed "Foretype" identity (2026-10-22)
 
-**Decision.** `scripts/make-dev-cert.sh` (run by the developer, once per Mac) puts a
+(Named "Foretype Local Dev" at first; renamed and shared with releases in D36.)
+
+**Decision.** `scripts/make-signing-cert.sh` (run by the developer, once per Mac) puts a
 self-signed code-signing certificate and key in the login keychain; `scripts/build-mac.sh`
 signs with `FORETYPE_SIGN_IDENTITY` if set, else with that identity if present, else ad hoc.
 Only an explicit identity (Developer ID) gets the hardened runtime and a secure timestamp.
@@ -370,3 +372,33 @@ their own.
 remove/re-add of the grants when switching from ad hoc. A bundle that keeps its grant is
 live as soon as it opens, so UI-only tests launch it with `FORETYPE_ONLY_APPS` or build
 with `FORETYPE_SIGN_IDENTITY=-`.
+
+## D36. Public releases: self-signed, feed on GitHub Releases, silent install when idle (2026-10-22)
+
+**Decision.** Releases are published on GitHub Releases of the public repository by
+`.github/workflows/release.yml` when `scripts/release.sh` pushes a `v*` tag. The app is
+signed with the self-signed "Foretype" identity (the same one local builds use, D35) and is
+not notarized. Sparkle reads the feed from the latest release's own `appcast.xml` asset
+(`.../releases/latest/download/appcast.xml`), checks daily, downloads by itself, and
+`UpdateController` installs the download once the user has been idle for five minutes with
+no suggestion on screen, then relaunches. `install.sh`, published with each release,
+installs with one line of Terminal.
+**Why.** The user chose not to pay for an Apple Developer ID for now. What a Developer ID
+buys is a quarantine-free first launch. Everything else works without it: TCC grants keep
+matching because the designated requirement is the certificate's hash, and Sparkle's
+code-signature check passes between releases for the same reason. The EdDSA signature
+remains the real proof that an update is ours. Browsers quarantine the DMG, and macOS 15+
+then requires Open Anyway in System Settings (Control-click Open no longer bypasses it).
+curl sets no quarantine attribute and neither do Sparkle's downloads, so the one-line
+installer and every update skip Gatekeeper's prompt. One identity rather than separate
+local and release certificates, because they share the bundle ID and so one TCC entry: two
+certificates would keep invalidating each other on the developer's Mac. The feed as a
+release asset needs no gh-pages branch and no manual appcast step: the
+`releases/latest/download` URL always redirects to the newest non-prerelease. Install on
+idle, because Sparkle's default (install on quit) almost never happens for a menu-bar app.
+**Cost.** A browser download needs Open Anyway once. Two secrets must never be lost: the
+certificate backup (losing it means one re-grant for everyone) and the EdDSA key (losing it
+means installs stop updating). The feed holds one item: no delta updates and no history in
+the feed. Moving to a Developer ID later means one re-grant for everyone. `curl | bash`
+asks users to trust the script; it is published with each release, and it verifies the
+DMG's checksum.

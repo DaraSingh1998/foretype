@@ -1,11 +1,12 @@
-# Builds, signs, notarizes and publishes a release when a v* tag is pushed.
-# Untested template: needs the repository secrets listed below (see RELEASING.md).
-#   DEVELOPER_ID_P12            base64 of the "Developer ID Application" certificate (.p12)
-#   DEVELOPER_ID_P12_PASSWORD
-#   DEVELOPER_ID_NAME           e.g. "Developer ID Application: Jane Doe (TEAMID1234)"
-#   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_APP_PASSWORD   (app-specific password)
-#   SPARKLE_PRIVATE_KEY         from Sparkle's generate_keys -x
-#   SPARKLE_PUBLIC_KEY          from Sparkle's generate_keys -p
+# Publishes a release when a v* tag is pushed (scripts/release.sh makes and pushes it): runs the
+# core tests, builds the app with the Sparkle updater, signs it with the self-signed "Foretype"
+# identity, packages the DMG, signs it for Sparkle, writes appcast.xml and creates the GitHub
+# release. Installed apps read .../releases/latest/download/appcast.xml and update themselves.
+#
+# Repository secrets (RELEASING.md):
+#   SIGNING_P12           base64 of the "Foretype" identity backup (scripts/make-signing-cert.sh)
+#   SIGNING_P12_PASSWORD  its passphrase
+#   SPARKLE_PRIVATE_KEY   the update-signing key (content of the key file from tools/sparkle/edkey.swift)
 name: Release
 
 on:
@@ -15,60 +16,98 @@ on:
 permissions:
   contents: write
 
+concurrency: release
+
 jobs:
   release:
-    runs-on: macos-15
+    # macOS 26 SDK: the Apple Intelligence backend (FoundationModels) is compiled in.
+    runs-on: macos-26
     env:
       MACOSX_DEPLOYMENT_TARGET: "14.0"
-      SPARKLE_VERSION: "2.10.0"
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0  # the build number is the commit count
 
-      - name: Import signing certificate
-        env:
-          P12: ${{ secrets.DEVELOPER_ID_P12 }}
-          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+      - name: Check the tag
         run: |
-          KC="$RUNNER_TEMP/release.keychain-db"
+          V="$(sed -n 's/^version = "\(.*\)"/\1/p' core/Cargo.toml | head -1)"
+          [ "v$V" = "$GITHUB_REF_NAME" ] || { echo "core/Cargo.toml says $V but the tag is $GITHUB_REF_NAME"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$GITHUB_REF_NAME is not on main"; exit 1; }
+          BUILD="$(git rev-list --count HEAD)"
+          PREV="$(curl -fsL "https://github.com/$GITHUB_REPOSITORY/releases/latest/download/appcast.xml" \
+            | grep -o '<sparkle:version>[0-9]*' | grep -o '[0-9]*$' || true)"
+          echo "build $BUILD, previous release build ${PREV:-none}"
+          # Sparkle only offers a higher build number.
+          [ -z "$PREV" ] || [ "$BUILD" -gt "$PREV" ] || { echo "build $BUILD is not higher than $PREV"; exit 1; }
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            core/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('core/Cargo.lock') }}
+
+      - name: Core tests
+        run: cargo test --release --manifest-path core/Cargo.toml
+
+      - name: Signing identity
+        env:
+          P12: ${{ secrets.SIGNING_P12 }}
+          P12_PASSWORD: ${{ secrets.SIGNING_P12_PASSWORD }}
+        run: |
+          [ -n "$P12" ] || { echo "secret SIGNING_P12 is not set"; exit 1; }
+          KC="$RUNNER_TEMP/signing.keychain-db"
           security create-keychain -p "" "$KC"
-          security set-keychain-settings -lut 3600 "$KC"
+          security set-keychain-settings -lut 21600 "$KC"
           security unlock-keychain -p "" "$KC"
-          echo "$P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
-          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$P12_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KC"
-          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
+          security import "$RUNNER_TEMP/signing.p12" -k "$KC" -f pkcs12 -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KC" >/dev/null
+          rm -f "$RUNNER_TEMP/signing.p12"
+          security find-identity -p codesigning "$KC"
+          echo "FORETYPE_SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
 
-      - name: Notary credentials
-        run: |
-          xcrun notarytool store-credentials foretype-notary \
-            --apple-id "${{ secrets.NOTARY_APPLE_ID }}" --team-id "${{ secrets.NOTARY_TEAM_ID }}" \
-            --password "${{ secrets.NOTARY_APP_PASSWORD }}" --keychain "$RUNNER_TEMP/release.keychain-db"
-
-      - name: Sparkle tools
-        run: |
-          curl -fL -o "$RUNNER_TEMP/sparkle.tar.xz" "https://github.com/sparkle-project/Sparkle/releases/download/$SPARKLE_VERSION/Sparkle-$SPARKLE_VERSION.tar.xz"
-          mkdir -p "$RUNNER_TEMP/sparkle" && tar -xf "$RUNNER_TEMP/sparkle.tar.xz" -C "$RUNNER_TEMP/sparkle"
-          echo "${{ secrets.SPARKLE_PRIVATE_KEY }}" > "$RUNNER_TEMP/sparkle_key"
-
-      - name: Build, sign, notarize
+      - name: Update key
         env:
-          FORETYPE_VERSION: ${{ github.ref_name }}
-          FORETYPE_SIGN_IDENTITY: ${{ secrets.DEVELOPER_ID_NAME }}
-          FORETYPE_NOTARY_PROFILE: foretype-notary
-          FORETYPE_SPARKLE: "1"
-          FORETYPE_FEED_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/appcast.xml
-          FORETYPE_SPARKLE_PUBLIC_KEY: ${{ secrets.SPARKLE_PUBLIC_KEY }}
+          KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
-          export FORETYPE_VERSION="${FORETYPE_VERSION#v}"
-          scripts/package-mac.sh
-          "$RUNNER_TEMP/sparkle/bin/sign_update" --ed-key-file "$RUNNER_TEMP/sparkle_key" build/Foretype-*.dmg > build/sparkle-signature.txt
+          [ -n "$KEY" ] || { echo "secret SPARKLE_PRIVATE_KEY is not set"; exit 1; }
+          (umask 077 && printf '%s' "$KEY" > "$RUNNER_TEMP/sparkle.key")
+          echo "FORETYPE_SPARKLE_KEY_FILE=$RUNNER_TEMP/sparkle.key" >> "$GITHUB_ENV"
 
-      - name: Publish GitHub release
+      - name: Build and package
+        env:
+          FORETYPE_SIGN_IDENTITY: Foretype
+        run: |
+          scripts/package-mac.sh
+          codesign -dr - build/Foretype.app
+          # The update must verify against the public key the apps carry.
+          grep -q "$(cat packaging/sparkle-public-key.txt)" build/Foretype.app/Contents/Info.plist
+
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" build/Foretype-*.dmg build/Foretype-*.dmg.sha256 build/foretype.rb \
-            --title "Foretype ${{ github.ref_name }}" --generate-notes
-          echo "Add this enclosure signature to appcast.xml (gh-pages): $(cat build/sparkle-signature.txt)"
+          V="${GITHUB_REF_NAME#v}"
+          awk -v h="## $V" 'index($0, h) == 1 {f=1; next} /^## / {if (f) exit} f' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          cat >> "$RUNNER_TEMP/notes.md" <<EOF
+
+          ### Install
+          \`\`\`bash
+          curl -fsSL https://github.com/$GITHUB_REPOSITORY/releases/latest/download/install.sh | bash
+          \`\`\`
+          Or download **Foretype-$V.dmg**, drag Foretype to Applications, open it, then allow it once in
+          System Settings ▸ Privacy & Security ▸ **Open Anyway** (it isn't notarized by Apple).
+          Installed copies update themselves.
+          EOF
+          gh release create "$GITHUB_REF_NAME" \
+            "build/Foretype-$V.dmg" "build/Foretype-$V.dmg.sha256" build/appcast.xml scripts/install.sh \
+            --title "Foretype $V" --notes-file "$RUNNER_TEMP/notes.md" --latest
+
+      - name: Clean up
+        if: always()
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/sparkle.key"

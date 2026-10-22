@@ -28,7 +28,8 @@ final class UpdateController: NSObject, SPUUpdaterDelegate {
     private var controller: SPUStandardUpdaterController?
     private var pendingInstall: (() -> Void)?
     private var idleTimer: Timer?
-    static let idleBeforeInstall: Double = 300
+    /// FORETYPE_UPDATE_IDLE overrides it (scripts/sparkle-local-test.sh).
+    static let idleBeforeInstall = Double(ProcessInfo.processInfo.environment["FORETYPE_UPDATE_IDLE"] ?? "") ?? 300
     /// Whether a suggestion is showing; an update waits until it isn't.
     var isBusy: () -> Bool = { false }
 
@@ -39,6 +40,11 @@ final class UpdateController: NSObject, SPUUpdaterDelegate {
         guard Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") != nil,
               Bundle.main.object(forInfoDictionaryKey: "SUPublicEDKey") != nil else { return }
         controller = SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: self, userDriverDelegate: nil)
+        // FORETYPE_UPDATE_CHECK_NOW=1: a background check at launch, as the daily one would run
+        // (scripts/sparkle-local-test.sh).
+        if ProcessInfo.processInfo.environment["FORETYPE_UPDATE_CHECK_NOW"] == "1" {
+            controller?.updater.checkForUpdatesInBackground()
+        }
     }
 
     var automaticallyChecks: Bool {

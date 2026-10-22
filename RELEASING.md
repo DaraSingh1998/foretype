@@ -1,105 +1,131 @@
 # Releasing Foretype
 
-Foretype ships as a notarized, unsandboxed DMG (Accessibility control, global event taps and
-posting keystrokes into other apps rule out the App Store sandbox), updated through Sparkle
-and also installable with a Homebrew cask.
+Foretype ships as a DMG on GitHub Releases and updates itself with Sparkle 2. The DMG is
+unsandboxed: Accessibility control, global event taps and typing into other apps rule out the
+App Store sandbox. Releases are signed with a self-signed certificate named "Foretype", not an
+Apple Developer ID, and are not notarized (D36).
+
+How a release reaches people:
+
+1. You run `scripts/release.sh X.Y.Z`. It bumps the version, dates the CHANGELOG, commits,
+   tags `vX.Y.Z` and, after asking, pushes `main` and the tag.
+2. `.github/workflows/release.yml` runs on the tag (macos-26 runner). It runs the core tests,
+   builds the app with Sparkle, signs it with the "Foretype" identity, packages
+   `Foretype-X.Y.Z.dmg`, signs the DMG with the EdDSA update key, writes `appcast.xml` and
+   creates the GitHub release with the DMG, its `.sha256`, `appcast.xml` and `install.sh`.
+3. Installed apps read `https://github.com/DaraSingh1998/foretype/releases/latest/download/appcast.xml`
+   once a day, download the new DMG, check its EdDSA signature and its code signature (same
+   certificate as the installed app), and install it once the user has been idle for five
+   minutes with no suggestion on screen. The app then reopens by itself, and its
+   Accessibility and Screen Recording grants still apply.
+
+The repository has to be public: release downloads and the update feed must work without
+signing in.
 
 ## One-time setup
 
-1. **Developer ID certificate.** In an Apple Developer account, create a "Developer ID
-   Application" certificate and install it in your login keychain. Check with
-   `security find-identity -v -p codesigning`.
-2. **Notary credentials.** Create an app-specific password for your Apple ID, then:
+1. **Signing identity.** Run `scripts/make-signing-cert.sh`. It creates the "Foretype"
+   identity in your login keychain (local builds sign with it from then on) and writes a
+   backup, `~/Foretype-signing.p12`, with a passphrase it prints once. Store both in your
+   password manager, add them as repository secrets, then delete the file:
 
    ```bash
-   xcrun notarytool store-credentials foretype-notary --apple-id YOU@EXAMPLE.COM --team-id TEAMID1234
+   base64 -i ~/Foretype-signing.p12 | gh secret set SIGNING_P12 --repo DaraSingh1998/foretype
+   gh secret set SIGNING_P12_PASSWORD --repo DaraSingh1998/foretype
    ```
 
-3. **Sparkle keys.** Download the Sparkle release tarball (the version pinned in
-   `mac/Package.swift`, 2.10.0) and run `bin/generate_keys`. It stores the EdDSA private key
-   in your keychain and prints the public key. Keep a backup of the private key
-   (`generate_keys -x private-key-file`): losing it means existing installs can no longer
-   verify updates.
-4. **Appcast hosting.** Serve `appcast.xml` from a stable HTTPS URL, for example GitHub
-   Pages on a `gh-pages` branch: `https://OWNER.github.io/foretype/appcast.xml`.
+   On another Mac, install the same identity with `scripts/make-signing-cert.sh --import FILE.p12`.
+   **If the backup is lost**, later releases can't carry the same certificate, and every user
+   has to grant Accessibility and Screen Recording once more after updating.
 
-## Release (local)
+2. **Update key.** The EdDSA key pair was made on 2026-10-22 with
+   `swift tools/sparkle/edkey.swift generate ~/Foretype-sparkle.key`. Its public half is
+   committed in `packaging/sparkle-public-key.txt` and built into every app as
+   `SUPublicEDKey`. Store the private key file in your password manager, add it as a secret,
+   then delete the file:
 
-```bash
-FORETYPE_VERSION=0.2.0 \
-FORETYPE_SIGN_IDENTITY="Developer ID Application: Jane Doe (TEAMID1234)" \
-FORETYPE_NOTARY_PROFILE=foretype-notary \
-FORETYPE_SPARKLE=1 \
-FORETYPE_FEED_URL=https://OWNER.github.io/foretype/appcast.xml \
-FORETYPE_SPARKLE_PUBLIC_KEY=... \
-SPARKLE_BIN=/path/to/Sparkle/bin \
-scripts/package-mac.sh
-```
+   ```bash
+   gh secret set SPARKLE_PRIVATE_KEY --repo DaraSingh1998/foretype < ~/Foretype-sparkle.key
+   ```
 
-This produces:
+   **If this key is lost**, installed copies can't verify updates any more; everyone would
+   have to download the next version by hand. Never commit it.
 
-- `build/Foretype-0.2.0.dmg`: app signed inside-out with the hardened runtime and a secure
-  timestamp, DMG signed, notarized and stapled, verified with `spctl`;
-- `build/Foretype-0.2.0.dmg.sha256`;
-- `build/appcast-item.xml`: the `<item>` to add to `appcast.xml`, with the EdDSA signature;
-- `build/foretype.rb`: the Homebrew cask with version and checksum filled in.
+## Publishing a version
 
-Then upload the DMG to a GitHub release tagged `v0.2.0`, add the appcast item to
-`appcast.xml` on `gh-pages`, and submit the cask (or keep it in your own tap).
+1. Describe the changes under `## Unreleased` in `CHANGELOG.md` (the release notes are taken
+   from there) and commit them on `main`.
+2. Run the checks below.
+3. `scripts/release.sh 0.1.1`, and answer `y` to push.
+4. Follow the build with `gh run watch --repo DaraSingh1998/foretype`. The release appears at
+   `https://github.com/DaraSingh1998/foretype/releases`.
 
-## Release (CI)
+The workflow refuses a tag that isn't on `main`, a tag that doesn't match `core/Cargo.toml`, and a
+build number (the commit count) that isn't higher than the previous release's, because Sparkle
+only offers a higher one. If a run fails after the tag was pushed, fix it on `main` and
+release the next patch version. Don't move a published tag.
 
-`.github/workflows/release.yml` does the same on a pushed `v*` tag. Add the repository
-secrets it lists (certificate as base64 `.p12` and its password, the identity name, notary
-Apple ID / team ID / app-specific password, Sparkle private and public keys). The workflow
-creates the GitHub release; adding the appcast item is still a manual step. The workflow has
-not been run yet.
+## What people install
 
-## Without a Developer ID
+- **One line in Terminal**, no Gatekeeper step, because curl doesn't mark files as downloaded:
+  `curl -fsSL https://github.com/DaraSingh1998/foretype/releases/latest/download/install.sh | bash`.
+  The script checks the DMG's SHA-256, copies the app to `/Applications` (or `~/Applications`)
+  and opens it.
+- **Or the DMG**: drag Foretype to Applications and open it. macOS refuses the first time
+  ("Apple could not verify…"). Click Done, open System Settings ▸ Privacy & Security, click
+  **Open Anyway** next to the Foretype message, and confirm. This is needed only once; Sparkle
+  updates aren't marked as downloaded, so they never ask again.
 
-`scripts/package-mac.sh` with no environment builds an unnotarized DMG, signed with the
-self-signed "Foretype Local Dev" identity if `scripts/make-dev-cert.sh` has created it, else
-ad hoc. It runs on your own Mac, but Gatekeeper blocks it on others (right-click → Open, or
-`xattr -dr com.apple.quarantine /Applications/Foretype.app`). Ad hoc, the Accessibility and
-Screen Recording grants have to be renewed after every update because the signature changes
-with each build; with the local identity they carry over on this Mac. Neither gets the
-hardened runtime (library validation would reject Sparkle.framework without a Team ID), and
-the DMG itself is signed only when `FORETYPE_SIGN_IDENTITY` is set.
+Then the setup window asks for Accessibility, offers Screen Recording and downloads a model.
+Requirements: Apple silicon and macOS 14 or later.
 
-## Testing updates locally (no Developer ID needed)
+## Testing updates locally
 
 ```bash
-scripts/sparkle-local-test.sh            # builds 0.0.1 and 0.0.2, serves the feed on 127.0.0.1:8977
-open "$WORK/Foretype.app"                # the path it prints; menu-bar icon → Check for Updates…
+scripts/sparkle-local-test.sh
 ```
 
-The script signs the 0.0.2 DMG with a throwaway Ed25519 key (`tools/sparkle/edkey.swift`,
-CryptoKit; nothing goes into the keychain), writes `appcast.xml` and serves both over plain
-HTTP; `build-mac.sh` adds an ATS local-networking exception only when the feed URL is on
-127.0.0.1 or localhost. Sparkle then downloads the DMG, logs "OK: EdDSA signature is
-correct for update", replaces the app in place and relaunches it. With ad-hoc builds it also
-logs "Code signature of the new version doesn't match the old version": ad-hoc signatures
-are tied to each build's cdhash, so only the EdDSA check applies; Developer ID builds pass
-both, and so should builds signed with "Foretype Local Dev" (same certificate both times;
-not tried yet). The test app shares the bundle ID `dev.foretype.Foretype`, so back up and restore its
-defaults (`defaults export` / `import`) if you also use a development build.
+The script builds 0.0.1 and packages 0.0.2, both signed with a throwaway "Foretype" identity
+in a temporary keychain and a throwaway EdDSA key, and serves the feed on 127.0.0.1:8977. It
+then starts 0.0.1 with `FORETYPE_UPDATE_CHECK_NOW=1` and `FORETYPE_UPDATE_IDLE=0`, waits for
+it to replace itself with 0.0.2 and relaunch, and prints PASS/FAIL. `build-mac.sh` adds an ATS
+local-networking exception only when the feed URL is on 127.0.0.1 or localhost. The old app
+runs with `FORETYPE_ONLY_APPS=none.invalid`, and the relaunched copy has no Accessibility
+grant, so neither reads anything.
 
-Verified on 2026-10-20 (macOS 27.0.1, Sparkle 2.10.0): 0.0.1 → 0.0.2 installed and
-relaunched; a second check then reported "You're up to date!".
+`scripts/install.sh` can be tried against a local folder too: set `FORETYPE_RELEASE_BASE` to
+the folder's URL, `FORETYPE_INSTALL_DIR` to a scratch folder and `FORETYPE_NO_OPEN=1`.
 
-Ad-hoc builds are signed without the hardened runtime: the runtime enforces library
-validation, and ad-hoc signatures carry no Team ID, so an ad-hoc app with Sparkle.framework
-embedded failed to launch ("Library missing", found by this test). Developer ID builds keep
-the hardened runtime, which notarization requires.
+Notes from the earlier ad-hoc tests: ad-hoc signatures are tied to each build's cdhash, so
+Sparkle logs "Code signature of the new version doesn't match the old version" and only the
+EdDSA check applies. The hardened runtime enforces library validation, and neither ad-hoc nor
+self-signed signatures carry a Team ID, so such an app with Sparkle.framework embedded fails
+to launch ("Library missing"). That is why only a Developer ID build gets the hardened runtime.
+
+## Moving to a Developer ID later
+
+With a paid Apple Developer account, set `FORETYPE_SIGN_IDENTITY="Developer ID Application:
+Name (TEAMID)"` and `FORETYPE_NOTARY_PROFILE` (from `xcrun notarytool store-credentials`) in
+the workflow. `build-mac.sh` then adds the hardened runtime and a secure timestamp, and
+`package-mac.sh` signs, notarizes and staples the DMG. The browser download then installs with
+no Open Anyway step. The designated requirement changes with the certificate, so every user
+grants Accessibility and Screen Recording once more after that update. Sparkle accepts the
+switch because the EdDSA signature still verifies.
+
+## Homebrew
+
+`package-mac.sh` writes `build/foretype.rb` from `packaging/homebrew/foretype.rb.in`. It isn't
+published yet: Homebrew quarantines casks, so an unnotarized app would still need Open Anyway.
 
 ## Checks before tagging
 
 ```bash
 cargo test --release --manifest-path core/Cargo.toml
 scripts/build-mac.sh && mac/.build/release/Foretype --font-selftest && mac/.build/release/Foretype --ocr-selftest
+python3 scripts/check-localization.py
+scripts/sparkle-local-test.sh
 FORETYPE_MODEL=/path/Qwen3-1.7B-Base.Q4_K_M.gguf scripts/e2e-textedit.sh
-FORETYPE_MODEL=/path/Qwen3-1.7B-Base.Q4_K_M.gguf scripts/e2e-terminal.sh
 core/target/release/ft-replay /path/Qwen3-1.7B-Base.Q4_K_M.gguf --corpus eval/corpus.jsonl
 ```
 
-Publish the replay numbers in the release notes.
+Put the replay numbers in the CHANGELOG entry.

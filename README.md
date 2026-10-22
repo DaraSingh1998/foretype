@@ -240,9 +240,10 @@ paused download, or quitting, deletes what it had downloaded.
 Requirements: Xcode command-line tools, Rust (`brew install rust cmake`).
 
 ```bash
-scripts/make-dev-cert.sh      # optional, once: a local signing identity so rebuilds keep their permissions
-scripts/build-mac.sh          # build/Foretype.app (FORETYPE_SIGN_IDENTITY, else "Foretype Local Dev", else ad hoc)
-scripts/package-mac.sh        # build/Foretype-<version>.dmg, plus notarization, appcast item and cask when configured
+scripts/make-signing-cert.sh  # optional, once: the "Foretype" signing identity, so rebuilds keep their permissions
+scripts/build-mac.sh          # build/Foretype.app (FORETYPE_SIGN_IDENTITY, else "Foretype", else ad hoc)
+scripts/package-mac.sh        # build/Foretype-<version>.dmg, appcast.xml and cask (see RELEASING.md)
+scripts/release.sh X.Y.Z      # tag and push a version; GitHub Actions publishes it
 ```
 
 `FORETYPE_SPARKLE=1` adds the Sparkle updater (fetched by SwiftPM); see `RELEASING.md` for
@@ -322,7 +323,7 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
 - **Permissions and ad-hoc signing:** macOS ties the Accessibility and Screen Recording
   grants of an ad-hoc-signed `Foretype.app` to that exact build, so after every rebuild the
   entries look on but don't apply until they are removed with − and added again. Run
-  `scripts/make-dev-cert.sh` once (it adds a self-signed "Foretype Local Dev" certificate to
+  `scripts/make-signing-cert.sh` once (it adds a self-signed "Foretype" certificate to
   your login keychain and asks first) and `build-mac.sh` signs with it, so rebuilds keep
   the grants; see `docs/DEVELOPMENT.md`. A bare `mac/.build/release/Foretype` started from
   a terminal uses the terminal's own grant.
