@@ -472,6 +472,17 @@ of it comes next (one Tab inserts all of it).
 - Latency differences are noise between runs (no change to the inference path); fills
   answer synchronously without the model.
 
+Hands-on (`scripts/e2e-about-you.sh`, new unsaved TextEdit document, fictional details,
+`FORETYPE_ONLY_APPS=com.apple.TextEdit`): 9/9 checks passed. "My email is " showed the
+email with its "your email" tag and one Tab inserted all of it; "Call me on +91" showed
+the rest of the number; after "Regards," Tab took "Priya" and accept-all " Raman"; "My
+email is x" got no fill. The first run failed only the log check: the model itself had
+suggested "Priya Raman" after reading the email address in the document, and model text
+was logged as is. Pieces of the details are now masked in debug logs (`***`), and the
+second run passed. Its screenshots also show a second gray suggestion overlapping the fill:
+the developer's own Foretype.app (a main-branch build) was running and suggesting in
+TextEdit at the same time.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

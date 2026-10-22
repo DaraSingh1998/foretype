@@ -112,7 +112,9 @@ asks for Contacts access once, only when you click it).
 - **Privacy**: stored in `~/Library/Application Support/Foretype/about-you.bin`, sealed with
   ChaCha20-Poly1305 under a key in your login Keychain, never in preferences; nothing leaves
   the Mac. Never filled in secure fields or apps where suggestions are off. Debug logs show
-  only which detail was offered, never its value. **Clear All…** deletes the file and key.
+  only which detail was offered, never its value, and mask any piece of your details in
+  other logged text (a model suggestion can echo one from the document). **Clear All…**
+  deletes the file and key.
 
 ### Custom instructions
 

@@ -25,11 +25,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     /// Settings ▸ About You. Read from its encrypted file only if one exists, so the Keychain
     /// is never touched for users who haven't entered anything. FORETYPE_ABOUT_YOU (testing)
     /// replaces it and keeps the store untouched.
-    private(set) var aboutYou = AboutYou.fromEnvironment() ?? (AboutYouStore.exists ? AboutYouStore.load() : AboutYou())
+    private(set) var aboutYou = AboutYou.fromEnvironment() ?? (AboutYouStore.exists ? AboutYouStore.load() : AboutYou()) {
+        didSet { Log.mask(aboutYou.logMasks) }
+    }
     private let aboutYouFromEnvironment = AboutYou.fromEnvironment() != nil
     private var aboutYouSave: DispatchWorkItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Log.mask(aboutYou.logMasks)
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let image = NSImage(systemSymbolName: "text.cursor", accessibilityDescription: "Foretype")
         image?.isTemplate = true

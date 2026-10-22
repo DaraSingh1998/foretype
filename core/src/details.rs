@@ -116,6 +116,35 @@ impl UserDetails {
     }
 }
 
+impl UserDetails {
+    /// Pieces of the set values that debug logs must not show: every run of 4 or more
+    /// letters or digits ("priya", "raman", "98765"), lowercased.
+    fn secrets(&self) -> Vec<String> {
+        let mut out: Vec<String> = Field::ALL
+            .iter()
+            .flat_map(|f| self.get(*f).split(|c: char| !c.is_alphanumeric()))
+            .filter(|p| p.chars().count() >= 4)
+            .map(str::to_ascii_lowercase)
+            .collect();
+        out.sort_by_key(|p| std::cmp::Reverse(p.len()));
+        out.dedup();
+        out
+    }
+
+    /// `text` for a debug log, with every piece of the user's details masked: a model
+    /// suggestion can echo a detail it read in the document ("or priya.raman").
+    pub fn redact(&self, text: &str) -> String {
+        let mut out = text.to_string();
+        for s in self.secrets() {
+            // ASCII lowercasing keeps byte offsets; "***" can't start a new match.
+            while let Some(i) = out.to_ascii_lowercase().find(&s) {
+                out.replace_range(i..i + s.len(), "***");
+            }
+        }
+        out
+    }
+}
+
 /// A detail to offer at the caret.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Fill {
@@ -451,5 +480,7 @@ mod tests {
         assert_eq!(UserDetails { company: "Acme".into(), ..Default::default() }.writer(), "");
         let dbg = format!("{d:?}");
         assert!(!dbg.contains("Priya") && !dbg.contains("example.com") && dbg.contains("\"email\""), "{dbg}");
+        assert_eq!(d.redact(" or Priya.RAMAN at +91 98765 43210, see you"), " or ***.*** at +91 *** ***, see you");
+        assert_eq!(UserDetails::default().redact("Priya"), "Priya");
     }
 }

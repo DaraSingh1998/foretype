@@ -85,6 +85,14 @@ struct AboutYou: Codable, Equatable {
         Field.allCases.allSatisfy { self[$0].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
 
+    /// What debug logs mask (`Log.mask`): every run of 4 or more letters or digits in any
+    /// value, used or not, longest first. Matches the core's own `UserDetails::redact`.
+    var logMasks: [String] {
+        let pieces = values.values.flatMap { $0.components(separatedBy: CharacterSet.alphanumerics.inverted) }
+            .filter { $0.count >= 4 }
+        return Array(Set(pieces)).sorted { $0.count > $1.count }
+    }
+
     /// For `ft_engine_set_details`: switched-off fields (or all, with the master switch off)
     /// are empty. Values are one line; the core ignores multi-line ones.
     func coreJSON() -> String {
@@ -188,6 +196,7 @@ enum AboutYouStore {
         check(open(box, key: other) == nil, "another key can't open it")
         let old = try? JSONDecoder().decode(AboutYou.self, from: Data(#"{"values":{"name":"A"}}"#.utf8))
         check(old?.enabled == true && old?.inPrompt == true && old?[.name] == "A", "missing keys take defaults")
+        check(Set(v.logMasks) == ["Priya", "Raman", "priya", "example", "Lake", "Road", "Pune", "411001"], "log masks")
         return ok
     }
 }

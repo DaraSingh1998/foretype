@@ -124,10 +124,20 @@ func displayBounds() -> [CGRect] {
 enum Log {
     static let enabled = ProcessInfo.processInfo.environment["FORETYPE_DEBUG"] != nil
     private static let start = Date()
+    private static let lock = NSLock()
+    private static var masked: [String] = []
+
+    /// Pieces of the user's About You details (`AboutYou.logMasks`), shown as "***" in every
+    /// message: a model suggestion can echo a detail it read in the document.
+    static func mask(_ pieces: [String]) {
+        lock.lock(); masked = pieces; lock.unlock()
+    }
 
     static func debug(_ message: @autoclosure () -> String) {
         guard enabled else { return }
         let t = String(format: "%8.3f", Date().timeIntervalSince(start))
-        FileHandle.standardError.write("[\(t)] \(message())\n".data(using: .utf8)!)
+        lock.lock(); let pieces = masked; lock.unlock()
+        let text = pieces.reduce(message()) { $0.replacingOccurrences(of: $1, with: "***", options: .caseInsensitive) }
+        FileHandle.standardError.write("[\(t)] \(text)\n".data(using: .utf8)!)
     }
 }

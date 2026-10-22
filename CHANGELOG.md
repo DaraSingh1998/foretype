@@ -19,9 +19,12 @@ roadmap phase.
   Corpus replay: 41.9% keystrokes saved before, 42.0% with fills, 42.2% with fills and the
   writer line.
 - Stored encrypted (`about-you.bin`, ChaCha20-Poly1305, key in the Keychain); never in
-  UserDefaults; values never in debug logs. Hindi translations included.
+  UserDefaults; values never in debug logs (fills are logged by detail name, and pieces of
+  the details are masked as `***` in any other logged text, model suggestions included).
+  Hindi translations included.
 - `ft-replay --details eval/details.json [--details-in-prompt]` replays the corpus with a
-  user's details; `Foretype --about-selftest` checks the store and the JSON sent to the core.
+  user's details; `Foretype --about-selftest` checks the store and the JSON sent to the core;
+  `scripts/e2e-about-you.sh` checks the fills in a new TextEdit document (9/9 passed).
 
 ### Localization (2026-10-21)
 - The app's interface is localizable and translated into Hindi (हिन्दी): the menu-bar

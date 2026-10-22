@@ -961,7 +961,12 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                         if debug() {
                             eprintln!(
                                 "[foretype] rev={rev} prefill={} tok/{:.1}ms gen={} total={:.1}ms queue+total={queue_ms:.1}ms stop={} {:?}",
-                                c.prefilled_tokens, c.prefill_ms, c.generated_tokens, c.total_ms, c.stop, c.text
+                                c.prefilled_tokens,
+                                c.prefill_ms,
+                                c.generated_tokens,
+                                c.total_ms,
+                                c.stop,
+                                shared.details.read().unwrap().redact(&c.text)
                             );
                         }
                         if cancel() {
@@ -1001,7 +1006,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                                     if !p.text.trim().is_empty() {
                                         shared.session.lock().unwrap().remember(job.field_key, &next.text_before, &p.text);
                                         if debug() {
-                                            eprintln!("[foretype] prefetched {:?} after {:?}", p.text, shown);
+                                            let d = shared.details.read().unwrap();
+                                            eprintln!("[foretype] prefetched {:?} after {:?}", d.redact(&p.text), d.redact(&shown));
                                         }
                                     }
                                 }

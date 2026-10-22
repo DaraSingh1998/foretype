@@ -43,6 +43,7 @@ scripts/package-mac.sh                                          # DMG (+ notariz
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
 | About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
+| About You fills in TextEdit (email, phone from its typed start, name after Regards, no match, nothing in the log) | `FORETYPE_MODEL=... scripts/e2e-about-you.sh` | Accessibility, user idle (fictional details from `FORETYPE_ABOUT_YOU`; the stored ones are untouched) |
 | Typing aids in TextEdit (emoji, autocorrect, typo gate, mid-line) | `FORETYPE_MODEL=... scripts/e2e-typing-aids.sh` | Accessibility, user idle |
 | Emoji/autocorrect Tab replacement in a web field | `FORETYPE_MODEL=... [MARKERS=1] scripts/e2e-browser-aids.sh` | Accessibility, user idle (throwaway Chrome profile) |
 | Download resumes after a relaunch | `FORETYPE_MODEL_BASE_URL=http://127.0.0.1:PORT FORETYPE_MODELS_DIR=/tmp/x mac/.build/release/Foretype --resume-selftest qwen3-0.6b-base-q8` | a local server with Range support, slow enough to pause mid-way |

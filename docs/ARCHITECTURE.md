@@ -236,7 +236,7 @@ empty; all empty means off). `fill(text_before, details)` looks only at the care
 - **Writer line**: with `in_prompt` and a local backend (built-in or the shell's Apple
   model, never `llama-server`/`openai`), `[Written by Name (Job title, Company)]` goes into
   the header before `[Written in …]`. `UserDetails`'s `Debug` prints only which fields are
-  set.
+  set, and `redact` masks pieces of the values in the core's debug lines (model text).
 
 ### Emoji (`emoji.rs`, `core/data/emoji.tsv`)
 
@@ -592,7 +592,7 @@ the same placeholders.
 | Text of the focused field | In memory; into the prompt. Never logged unless `FORETYPE_DEBUG` (suggestions only) |
 | Screen text (OCR) | In memory per field; image discarded immediately |
 | Writing history (opt-in) | `history.bin`, encrypted, key in the Keychain; deleted from the menu |
-| Your details (About You) | `about-you.bin`, encrypted, key in the Keychain; in the core's memory for fills; in the prompt only with the writer line on and a local model; never logged (debug logs name the detail, not its value); Clear All deletes file and key |
+| Your details (About You) | `about-you.bin`, encrypted, key in the Keychain; in the core's memory for fills; in the prompt only with the writer line on and a local model; never logged: debug logs name a fill's detail, not its value, and both the core (`UserDetails::redact`) and the shell (`Log.mask`) print every run of 4+ letters or digits of a value as `***` in other logged text, since a model suggestion can echo a detail from the document; Clear All deletes file and key |
 | Contacts | Your own card, read once when you click Fill from My Card |
 | Statistics | Counts only (accepts, words, characters, keystrokes saved; per day for 30 days and in total) in UserDefaults `usageStats`; reset in Settings |
 | Clipboard | Read only to restore it after a paste, only with "always allow" access |
