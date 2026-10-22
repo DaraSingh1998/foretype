@@ -92,6 +92,8 @@ $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 4 --chars 200   # cache 
 $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 3 --long        # same, prompts past 512 tokens
 $R "$M" --corpus eval/corpus.jsonl --beam 3                             # phrase beam search
 $R "$M" --corpus eval/corpus.jsonl --mid-line-eval --typed 1            # mid-line word accuracy
+$R "$M" --corpus eval/corpus-hi.jsonl                                   # Hindi (Devanagari); corpus-hinglish.jsonl too
+$R "$M" --corpus eval/corpus-hi.jsonl --token-cost                      # chars per token, tokens per word
 $R "$M" --corpus eval/corpus.jsonl --details eval/details.json          # About You fills
 $R "$M" --corpus eval/corpus.jsonl --details eval/details.json --details-in-prompt  # + writer line
 $R "$M" --corpus eval/corpus.jsonl --default-instructions              # with the shipped default notes
