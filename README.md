@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/ghost-text.svg" width="720" alt="An email in a Mac app: after the caret, Foretype shows the rest of the sentence in gray. Tab takes the next word, the key above Tab takes all of it, Esc dismisses.">
+  <img src="docs/images/screenshot.png" width="720" alt="Foretype in TextEdit: after the caret in &quot;I'll go through it properly tonight and send&quot;, the rest of the sentence, &quot;you some feedback.&quot;, shows in gray">
 </p>
 
 As you type, Foretype shows the likely rest of your sentence in gray right after the caret,
