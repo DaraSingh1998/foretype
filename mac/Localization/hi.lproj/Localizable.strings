@@ -248,7 +248,6 @@
 "%@ on disk" = "डिस्क पर %@";
 "%@ on disk · in use" = "डिस्क पर %@ · उपयोग में";
 "In Use" = "उपयोग में";
-"Use" = "उपयोग करें";
 "Delete…" = "डिलीट करें…";
 "Downloading %1$@ of %2$@" = "%2$@ में से %1$@ डाउनलोड हुआ";
 "Paused at %1$@ of %2$@ (%3$@ kept until Foretype quits)" = "%2$@ में से %1$@ पर पॉज़ (Foretype बंद होने तक %3$@ रखा गया है)";
@@ -293,3 +292,13 @@
 "Development build" = "डेवलपमेंट बिल्ड";
 "%@ (build %@)" = "%@ (बिल्ड %@)";
 "this build doesn’t update itself" = "यह बिल्ड अपने-आप अपडेट नहीं होता";
+"Move Foretype to your Applications folder?" = "Foretype को अपने Applications फ़ोल्डर में ले जाएँ?";
+"In Applications, Foretype can update itself and keeps the permissions you give it." = "Applications में Foretype अपने-आप अपडेट हो सकता है और आपकी दी गई अनुमतियाँ बनी रहती हैं।";
+"Move to Applications" = "Applications में ले जाएँ";
+"Not Now" = "अभी नहीं";
+"Foretype couldn’t be moved" = "Foretype को ले जाया नहीं जा सका";
+"Open Foretype when you log in" = "लॉग इन करने पर Foretype खोलें";
+"Cotypist is running and also uses Tab. Quit it, or turn it off, while you use Foretype." = "Cotypist चल रहा है और वह भी Tab का उपयोग करता है। Foretype का उपयोग करते समय उसे बंद करें या रोक दें।";
+"Relaunch" = "फिर से खोलें";
+"Turned it on? Relaunch Foretype to use it." = "चालू कर दिया? उपयोग के लिए Foretype को फिर से खोलें।";
+"Startup:" = "शुरुआत:";

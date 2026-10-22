@@ -19,6 +19,12 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let screenButton = NSButton(title: L("Allow"), target: nil, action: nil)
     private let modelButton = NSButton(title: L("Download"), target: nil, action: nil)
     private let doneButton = NSButton(title: L("Start Foretype"), target: nil, action: nil)
+    private let loginBox = NSButton(checkboxWithTitle: L("Open Foretype when you log in"), target: nil, action: nil)
+    private let cotypistNote = NSTextField(wrappingLabelWithString:
+        L("Cotypist is running and also uses Tab. Quit it, or turn it off, while you use Foretype."))
+    /// Allow was clicked in this window: until the app restarts, macOS keeps reporting Screen
+    /// Recording as off, so the button turns into Relaunch.
+    private var askedForScreen = false
     private var timer: Timer?
 
     init(models: ModelManager, settings: AppSettings) {
@@ -74,6 +80,11 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         modelButton.target = self; modelButton.action = #selector(modelClicked)
         doneButton.target = self; doneButton.action = #selector(done)
         doneButton.keyEquivalent = "\r"
+        loginBox.state = .on
+        loginBox.isHidden = !AppLocation.isBundledApp
+        cotypistNote.font = .systemFont(ofSize: 12)
+        cotypistNote.textColor = .systemOrange
+        cotypistNote.isHidden = true
         progress.style = .bar
         progress.minValue = 0
         progress.maxValue = 1
@@ -86,6 +97,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
             L("Foretype suggests your next words in any app and runs entirely on this Mac. Nothing you type is sent anywhere."))
         let rows: [NSView] = [
             intro,
+            cotypistNote,
             row(L("Accessibility (required)"), L("Lets Foretype read the text field you are typing in and type the words you accept."),
                 status: axStatus, button: axButton, extra: axHint),
             row(L("Screen Recording (optional)"), L("Reads text near the field, such as the message you are answering, for better suggestions. Images are never stored."),
@@ -94,7 +106,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
                 rec.map { L("%1$@, %2$@. %3$@, downloaded from Hugging Face and checked against a pinned SHA-256.", $0.name, $0.sizeText, $0.license) }
                     ?? L("No model in the catalog for this Mac."), status: modelStatus, button: modelButton, extra: progress),
         ]
-        let buttons = NSStackView(views: [NSView(), doneButton])
+        let buttons = NSStackView(views: [loginBox, NSView(), doneButton])
         let stack = NSStackView(views: rows + [buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -141,7 +153,10 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         screenStatus.stringValue = screen ? "\u{2713} " + L("Granted") : (settings.useScreenContext ? L("Not granted") : L("Off"))
         screenStatus.textColor = screen ? .systemGreen : .secondaryLabelColor
         screenButton.isEnabled = !screen
+        screenButton.title = askedForScreen && !screen ? L("Relaunch") : L("Allow")
+        if askedForScreen && !screen { screenStatus.stringValue = L("Turned it on? Relaunch Foretype to use it.") }
         screenHint.isHidden = screen || !settings.useScreenContext || !Signing.isAdHocBundle
+        cotypistNote.isHidden = NSRunningApplication.runningApplications(withBundleIdentifier: "app.cotypist.Cotypist").isEmpty
 
         if settings.backend != "local" {
             modelStatus.stringValue = L("Using your server: %@", settings.backendURL)
@@ -204,11 +219,18 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func allowScreen() {
+        if askedForScreen {
+            // Setup isn't finished, so the relaunched app opens this window again.
+            AppLocation.relaunch()
+            return
+        }
         settings.useScreenContext = true
         settings.askedForScreenRecording = true
+        askedForScreen = true
         if !CGRequestScreenCaptureAccess() {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
         }
+        refresh()
     }
 
     @objc private func modelClicked() {
@@ -225,6 +247,9 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     }
 
     @objc private func done() {
+        if AppLocation.isBundledApp, loginBox.state == .on, !AppLocation.opensAtLogin {
+            AppLocation.setOpensAtLogin(true)
+        }
         settings.onboarded = true
         close()
         onReady?()

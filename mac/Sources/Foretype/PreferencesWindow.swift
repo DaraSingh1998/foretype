@@ -259,6 +259,8 @@ final class GeneralPane: PreferencesPane {
     private let midLine = NSButton(checkboxWithTitle: L("Suggest in the middle of a line (experimental)"), target: nil, action: nil)
     private let screenStatus = NSTextField(labelWithString: "")
     private let screenAllow = NSButton(title: L("Allow Screen Recording\u{2026}"), target: nil, action: nil)
+    private let screenRelaunch = NSButton(title: L("Relaunch"), target: nil, action: nil)
+    private let openAtLogin = NSButton(checkboxWithTitle: L("Open Foretype when you log in"), target: nil, action: nil)
     private let screenHint = PreferencesPane.note(Signing.staleGrantHint, width: 400)
     private var screenHintRow: NSGridRow?
     private let instructionsSummary = NSTextField(labelWithString: "")
@@ -282,6 +284,11 @@ final class GeneralPane: PreferencesPane {
         screenAllow.target = self
         screenAllow.action = #selector(allowScreen)
         screenAllow.controlSize = .small
+        screenRelaunch.target = self
+        screenRelaunch.action = #selector(relaunch)
+        screenRelaunch.controlSize = .small
+        openAtLogin.target = self
+        openAtLogin.action = #selector(loginChanged)
         screenStatus.font = .systemFont(ofSize: 11)
         for b in [autoCheck, autoInstall] {
             b.target = self
@@ -297,6 +304,7 @@ final class GeneralPane: PreferencesPane {
 
         let w: CGFloat = 400
         let grid = Self.form([
+            [Self.formLabel(L("Startup:")), openAtLogin],
             [Self.formLabel(L("Suggestions:")), enabled],
             [Self.formLabel(L("Length:")), length],
             [NSGridCell.emptyContentView, sentenceEnd],
@@ -310,7 +318,7 @@ final class GeneralPane: PreferencesPane {
             [NSGridCell.emptyContentView, Self.note(L("Up to three words, shown in a small card under the caret."), width: w)],
             [Self.formLabel(L("Screen context:")), screen],
             [NSGridCell.emptyContentView, Self.note(L("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away."), width: w)],
-            [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow])],
+            [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow, screenRelaunch])],
             [NSGridCell.emptyContentView, screenHint],
             [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
             [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
@@ -341,6 +349,10 @@ final class GeneralPane: PreferencesPane {
         screenStatus.stringValue = allowed ? "\u{2713} " + L("Screen Recording allowed") : L("Screen Recording not allowed yet")
         screenStatus.textColor = allowed ? .systemGreen : .secondaryLabelColor
         screenAllow.isHidden = allowed || !s.useScreenContext
+        // macOS applies a new Screen Recording grant only when the app starts.
+        screenRelaunch.isHidden = allowed || !s.useScreenContext || !s.askedForScreenRecording || !AppLocation.isBundledApp
+        openAtLogin.state = AppLocation.opensAtLogin ? .on : .off
+        openAtLogin.isEnabled = AppLocation.isBundledApp
         screenHint.isHidden = allowed || !s.useScreenContext || !Signing.isAdHocBundle
         screenHintRow?.isHidden = screenHint.isHidden
         let global = s.instructions.replacingOccurrences(of: "\n", with: " ")
@@ -399,6 +411,13 @@ final class GeneralPane: PreferencesPane {
     }
 
     @objc private func allowScreen() { host?.openScreenRecordingSettings() }
+
+    @objc private func relaunch() { AppLocation.relaunch() }
+
+    @objc private func loginChanged() {
+        AppLocation.setOpensAtLogin(openAtLogin.state == .on)
+        refresh()
+    }
 
     @objc private func editInstructions() { host?.openInstructions() }
 }

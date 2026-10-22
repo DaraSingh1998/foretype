@@ -81,6 +81,12 @@ final class AppSettings {
         set { d.set(newValue, forKey: "askedForScreenRecording") }
     }
 
+    /// "Not Now" to moving the app into Applications (asked once).
+    var declinedMoveToApplications: Bool {
+        get { d.bool(forKey: "declinedMoveToApplications") }
+        set { d.set(newValue, forKey: "declinedMoveToApplications") }
+    }
+
     /// Learn from the user's writing (opt-in, off by default).
     var personalize: Bool {
         get { d.bool(forKey: "personalize") }

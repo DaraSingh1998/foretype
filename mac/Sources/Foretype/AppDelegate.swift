@@ -33,6 +33,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.mask(aboutYou.logMasks)
+        // Opened from the disk image or Downloads: offer to move into Applications first (the
+        // app then quits and the moved copy opens).
+        if AppLocation.offerMove(settings: settings) { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         let image = NSImage(systemSymbolName: "text.cursor", accessibilityDescription: "Foretype")
         image?.isTemplate = true
