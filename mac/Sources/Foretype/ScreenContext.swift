@@ -51,7 +51,7 @@ final class ScreenContextProvider {
         lock.unlock()
         guard due else { return }
         queue.asyncAfter(deadline: .now() + (isNew ? 0.05 : pauseDelay)) { [weak self] in
-            guard let self else { return }
+            guard let self, self.enabled else { return }
             self.lock.lock()
             // A pause refresh only runs if no keystroke arrived since it was scheduled.
             let stillPaused = isNew || gen == self.generation
@@ -59,6 +59,15 @@ final class ScreenContextProvider {
             self.lock.unlock()
             if stillPaused { self.capture(target) }
         }
+    }
+
+    /// Paused: forget every field's text and drop refreshes not yet started.
+    func reset() {
+        lock.lock()
+        generation += 1
+        texts.removeAll()
+        lastRefresh.removeAll()
+        lock.unlock()
     }
 
     private func capture(_ target: Target) {

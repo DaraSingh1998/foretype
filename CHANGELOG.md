@@ -5,6 +5,30 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Pause, and power-aware pausing (2026-10-22)
+- **Pause** replaces the Suggestions On switch: for 15 minutes, 1 hour, until tomorrow
+  (6:00) or until you resume, from the menu, Settings ▸ General, an Option-click on the
+  menu-bar icon, or `foretype://pause`, `foretype://pause?minutes=N`, `foretype://resume`,
+  `foretype://toggle`. The menu shows why and until when ("Resume (paused until 3:45 PM)").
+  A pause survives quitting and updates; a switched-off Suggestions On becomes "paused until
+  I resume".
+- Paused means nothing runs: no field reads (the 0.5 s poll and the Accessibility observers
+  stop), no key taps, no screen captures, the Chrome/Electron accessibility flags are put
+  back, and the model is freed at once. Resuming reads the field you are in again.
+- Power rules in Settings ▸ General: on battery save energy (default), run at full speed or
+  pause; in Low Power Mode pause (default) or save energy; optionally pause below 10, 20 or
+  30% battery. A hot Mac saves energy, a critical one pauses. Sleep, a locked screen and
+  display sleep always pause. Paused by a power rule, the menu says why and offers Resume
+  Anyway (until plugged in), and the menu-bar icon shows a battery. Battery rows are hidden
+  on Macs without one.
+- Saving energy now also turns screen context off and frees the model after a minute
+  without typing (besides greedy decoding, no prefetch and the 80 ms mid-word wait).
+- **Pause in *app*** in the menu: 5 minutes, 1 hour or until the app quits (the
+  Ctrl-Option-Command hotkey still pauses for 5 minutes).
+- Power and session changes come from system notifications; the 30 s power poll is gone.
+- Core: a `paused` setting drops queued work, cancels a running completion, frees the model
+  and reports `status: paused`; `submit` answers `paused`, `warm` does nothing.
+
 ## 0.1.1 (2026-10-22)
 
 ### App icon and menu-bar glyph (2026-10-22)

@@ -7,12 +7,19 @@ import UniformTypeIdentifiers
 /// path for every change.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, PreferencesHost {
     private var statusItem: NSStatusItem!
+    /// Attached to the status item only while it opens (`statusItemClicked`), so a click
+    /// reaches the button first and Option-click can pause instead.
+    private let statusMenu = NSMenu()
     private var controller: Controller?
     let settings = AppSettings()
     let models = ModelManager()
     let stats = UsageStats()
+    let pause = PauseState()
+    private let powerMonitor = PowerMonitor()
+    private let sessionMonitor = SessionMonitor()
+    private var lastOnBattery = false
     private var engineState = "starting" {
-        didSet { MenuBarIcon.set(Self.menuBarState(engineState)) }
+        didSet { updateIcon() }
     }
     private var engineDetail = ""
     /// The model file the running engine loaded; nil with a server backend.
@@ -41,10 +48,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         if AppLocation.offerMove(settings: settings) { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         MenuBarIcon.attach(statusItem.button)
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
+        statusMenu.delegate = self
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemClicked(_:))
+        statusItem.button?.sendAction(on: [.leftMouseDown, .rightMouseDown])
         installMainMenu()
+        startPowerWatch()
 
         let me = ProcessInfo.processInfo.processIdentifier
         lastFrontApp = NSWorkspace.shared.frontmostApplication
@@ -137,7 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             engineDetail = L("Grant Accessibility in System Settings")
             return
         }
-        var config: [String: Any] = ["settings": settings.coreDict]
+        // Paused already (a relaunch while paused): the core must not start loading the model.
+        var config: [String: Any] = ["settings": Controller.coreSettings(settings, paused: pause.isPaused, saveEnergy: saveEnergy)]
         var label: String
         if settings.backend == "local" {
             guard let model = ModelLocator.find(settings: settings, recommendedFile: models.recommended?.file) else {
@@ -194,7 +204,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let c = Controller(engine: engine, settings: settings, stats: stats)
         c.onStatus = onStatus
         c.detailsJSON = aboutYou.coreJSON()
-        if !c.start() {
+        c.saveEnergy = saveEnergy
+        if !c.start(paused: pause.isPaused) {
             engineState = "error"
             engineDetail = L("Could not create event taps (Accessibility permission?)")
         }
@@ -207,15 +218,164 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         models.saveForRelaunch()
     }
 
+    // MARK: - Pause and power
+
+    /// The power and session monitors; their changes reach the controller through `applyPause`.
+    private func startPowerWatch() {
+        pause.onChange = { [weak self] in self?.applyPause() }
+        powerMonitor.onChange = { [weak self] _ in self?.powerChanged() }
+        sessionMonitor.onChange = { [weak self] event, on in
+            let reason: PauseState.SystemReason
+            switch event {
+            case .sleep: reason = .sleep
+            case .lock: reason = .lock
+            case .displaySleep: reason = .displaySleep
+            }
+            self?.pause.setSystem(reason, on)
+        }
+        lastOnBattery = powerMonitor.state.onBattery
+        powerMonitor.start()
+        sessionMonitor.start()
+        powerChanged()
+    }
+
+    private var powerDecision: PowerPolicy.Decision {
+        PowerPolicy.decide(powerMonitor.state, battery: settings.batteryMode, lowPower: settings.lowPowerMode,
+                           pauseBelow: settings.pauseBelowBattery)
+    }
+
+    /// Lighter work: the power rules ask for it, or they would pause and the user resumed anyway.
+    private var saveEnergy: Bool { powerDecision.saveEnergy || pause.powerSetAside }
+
+    /// The power state or the power settings changed.
+    private func powerChanged() {
+        let s = powerMonitor.state
+        Log.debug("power: battery=\(s.onBattery) \(s.batteryPercent.map { "\($0)%" } ?? "-") lowPower=\(s.lowPowerMode) thermal=\(s.thermal.rawValue)")
+        let justPluggedIn = lastOnBattery && !s.onBattery
+        lastOnBattery = s.onBattery
+        pause.setPower(powerDecision.pause, justPluggedIn: justPluggedIn)
+        applyPause()
+    }
+
+    /// Pushes the pause and the power rules to the controller, the icon and Settings.
+    private func applyPause() {
+        if let c = controller {
+            let save = saveEnergy
+            let saveChanged = c.saveEnergy != save
+            c.saveEnergy = save
+            if c.isPaused != pause.isPaused {
+                c.setPaused(pause.isPaused)
+            } else if saveChanged {
+                c.applySettings()
+            }
+        }
+        updateIcon()
+        preferences?.refresh()
+    }
+
+    private func updateIcon() {
+        let icon: MenuBarIcon.State
+        if pause.isUserPaused || pause.systemReason != nil {
+            icon = .paused
+        } else if pause.isPaused {
+            icon = .powerPaused
+        } else {
+            icon = Self.menuBarState(engineState)
+        }
+        MenuBarIcon.set(icon)
+        statusItem?.button?.toolTip = pauseDescription.map { "Foretype \u{2014} \($0)" } ?? "Foretype"
+    }
+
+    /// "Paused until 3:45 PM", "Paused \u{2014} Low Power Mode"; nil while not paused.
+    var pauseDescription: String? {
+        guard pause.isPaused else { return nil }
+        switch pause.systemReason {
+        case .sleep: return L("Paused while the Mac sleeps")
+        case .lock: return L("Paused while the screen is locked")
+        case .displaySleep: return L("Paused while the display sleeps")
+        case nil: break
+        }
+        if pause.isUserPaused, let until = pause.userUntil {
+            return pause.untilResumed ? L("Paused until you resume") : L("Paused until %@", Self.pauseTime(until))
+        }
+        switch pause.powerReason {
+        case .thermal: return L("Paused \u{2014} the Mac is running hot")
+        case .batteryLow: return L("Paused \u{2014} battery below %@", formatPercent(Double(settings.pauseBelowBattery) / 100))
+        case .lowPower: return L("Paused \u{2014} Low Power Mode")
+        case .battery: return L("Paused \u{2014} on battery power")
+        case nil: return L("Paused")
+        }
+    }
+
+    /// "3:45 PM" today, "Tomorrow, 6:00 AM" otherwise.
+    static func pauseTime(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        if !Calendar.current.isDateInToday(date) {
+            f.dateStyle = .medium
+            f.doesRelativeDateFormatting = true
+        }
+        return f.string(from: date)
+    }
+
+    func pauseSuggestions(until: Date?) {
+        pause.pause(until: until)
+    }
+
+    func resumeSuggestions() {
+        if pause.isUserPaused { pause.resume() } else if pause.powerReason != nil { pause.setPowerAside() }
+    }
+
+    func powerSettingsChanged() {
+        powerChanged()
+    }
+
+    var powerState: PowerState { powerMonitor.state }
+
+    /// Option-click on the menu-bar icon, and foretype://toggle.
+    private func togglePause() {
+        if pause.isPaused, pause.systemReason == nil { resumeSuggestions() } else if !pause.isPaused { pause.pause(until: nil) }
+    }
+
+    /// The status item's button: Option-click pauses or resumes, any other click opens the menu.
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        if let e = NSApp.currentEvent, e.type == .leftMouseDown, e.modifierFlags.contains(.option) {
+            togglePause()
+            return
+        }
+        // With a menu attached the button opens it, tracking it until it closes.
+        statusItem.menu = statusMenu
+        sender.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    /// foretype://pause (until resumed), foretype://pause?minutes=N, foretype://resume,
+    /// foretype://toggle. `resume` ends the user's pause only; the power rules still apply.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == "foretype" {
+            let action = (url.host ?? url.path).lowercased()
+            let minutes = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?
+                .first { $0.name == "minutes" }?.value.flatMap(Double.init)
+            Log.debug("url: \(action)\(minutes.map { " \($0) min" } ?? "")")
+            switch action {
+            case "pause": pause.pause(until: minutes.flatMap { $0 > 0 ? Date().addingTimeInterval($0 * 60) : nil })
+            case "resume": pause.resume()
+            case "toggle": togglePause()
+            default: break
+            }
+        }
+    }
+
     // MARK: - Menu
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let title = NSMenuItem(title: "Foretype \u{2014} \(Self.stateName(engineState))", action: nil, keyEquivalent: "")
+        let state = pause.isPaused ? L("paused") : Self.stateName(engineState)
+        let title = NSMenuItem(title: "Foretype \u{2014} \(state)", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
-        if !engineDetail.isEmpty {
-            let detail = NSMenuItem(title: engineDetail, action: nil, keyEquivalent: "")
+        if let text = pauseDescription ?? (engineDetail.isEmpty ? nil : engineDetail) {
+            let detail = NSMenuItem(title: text, action: nil, keyEquivalent: "")
             detail.isEnabled = false
             menu.addItem(detail)
         }
@@ -228,10 +388,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         }
         menu.addItem(.separator())
 
-        let enabled = NSMenuItem(title: L("Suggestions On"), action: #selector(toggleEnabled), keyEquivalent: "")
-        enabled.target = self
-        enabled.state = settings.enabled ? .on : .off
-        menu.addItem(enabled)
+        if pause.isUserPaused, let until = pause.userUntil {
+            let title = pause.untilResumed ? L("Resume") : L("Resume (paused until %@)", Self.pauseTime(until))
+            let resume = NSMenuItem(title: title, action: #selector(resumeChosen), keyEquivalent: "")
+            resume.target = self
+            menu.addItem(resume)
+        } else if pause.powerReason != nil, pause.systemReason == nil {
+            let title = powerMonitor.state.onBattery ? L("Resume Anyway (until plugged in)") : L("Resume Anyway")
+            let resume = NSMenuItem(title: title, action: #selector(resumeChosen), keyEquivalent: "")
+            resume.target = self
+            menu.addItem(resume)
+        }
+        if !pause.isUserPaused {
+            let pauseItem = NSMenuItem(title: L("Pause"), action: nil, keyEquivalent: "")
+            let pm = NSMenu()
+            for choice in PauseChoice.allCases {
+                let item = NSMenuItem(title: choice.title, action: #selector(pauseChosen(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = choice.rawValue
+                pm.addItem(item)
+            }
+            pm.addItem(.separator())
+            let hint = NSMenuItem(title: L("Option-click the menu-bar icon to pause or resume"), action: nil, keyEquivalent: "")
+            hint.isEnabled = false
+            pm.addItem(hint)
+            pauseItem.submenu = pm
+            menu.addItem(pauseItem)
+        }
+        menu.addItem(.separator())
 
         let lengthItem = NSMenuItem(title: L("Suggestion Length"), action: nil, keyEquivalent: "")
         let lengthMenu = NSMenu()
@@ -270,12 +454,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             item.representedObject = [bundle, offByDefault] as [Any]
             menu.addItem(item)
             if let until = controller?.snoozed[bundle], until > Date() {
-                let f = DateFormatter()
-                f.timeStyle = .short
-                let s = NSMenuItem(title: L("Snoozed until %@ \u{2014} Resume", f.string(from: until)), action: #selector(unsnooze(_:)), keyEquivalent: "")
+                let title = until == .distantFuture ? L("Paused in %@ until it quits \u{2014} Resume", name)
+                    : L("Paused in %1$@ until %2$@ \u{2014} Resume", name, Self.pauseTime(until))
+                let s = NSMenuItem(title: title, action: #selector(unsnooze(_:)), keyEquivalent: "")
                 s.target = self
                 s.representedObject = bundle
                 menu.addItem(s)
+            } else if on, controller != nil {
+                let appPause = NSMenuItem(title: L("Pause in %@", name), action: nil, keyEquivalent: "")
+                let am = NSMenu()
+                for (i, title) in [L("For 5 Minutes"), L("For 1 Hour"), L("Until %@ Quits", name)].enumerated() {
+                    let a = NSMenuItem(title: title, action: #selector(snoozeChosen(_:)), keyEquivalent: "")
+                    a.target = self
+                    a.tag = i
+                    a.representedObject = bundle
+                    am.addItem(a)
+                }
+                am.addItem(.separator())
+                let hint = NSMenuItem(title: L("Ctrl-Option-Command + the key above Tab: 5 minutes"), action: nil, keyEquivalent: "")
+                hint.isEnabled = false
+                am.addItem(hint)
+                appPause.submenu = am
+                menu.addItem(appPause)
             }
         }
         menu.addItem(.separator())
@@ -409,11 +609,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     static func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
 
-    /// The menu-bar glyph for an engine state. The paused glyphs are for pausing, which
-    /// doesn't exist yet.
+    /// The menu-bar glyph for an engine state while not paused (`updateIcon` shows the
+    /// paused glyphs). The core's "paused" only lingers until its "idle" after a resume.
     static func menuBarState(_ state: String) -> MenuBarIcon.State {
         switch state {
-        case "ready", "idle": return .active
+        case "ready", "idle", "paused": return .active
         case "starting", "loading": return .loading
         default: return .error
         }
@@ -428,14 +628,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         case "loading": return L("loading")
         case "ready": return L("ready")
         case "idle": return L("idle")
+        case "paused": return L("paused")
         case "error": return L("error")
         default: return state
         }
     }
 
-    @objc private func toggleEnabled() {
-        settings.enabled.toggle()
-        settingsChanged()
+    @objc private func pauseChosen(_ sender: NSMenuItem) {
+        guard let choice = PauseChoice(rawValue: sender.tag) else { return }
+        pause.pause(until: choice.until)
+    }
+
+    @objc private func resumeChosen() {
+        resumeSuggestions()
+    }
+
+    @objc private func snoozeChosen(_ sender: NSMenuItem) {
+        guard let bundle = sender.representedObject as? String else { return }
+        let until = [Date().addingTimeInterval(300), Date().addingTimeInterval(3600), Date.distantFuture][sender.tag]
+        controller?.snooze(bundle, until: until)
     }
 
     @objc private func setLength(_ sender: NSMenuItem) {
@@ -600,6 +811,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     // MARK: - PreferencesHost (also the menu's code path)
 
     var engineStatus: String {
+        if let paused = pauseDescription { return paused }
         let state = Self.stateName(engineState)
         return engineDetail.isEmpty ? state : "\(state) \u{2014} \(engineDetail)"
     }

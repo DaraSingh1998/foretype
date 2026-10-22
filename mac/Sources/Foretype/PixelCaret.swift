@@ -645,6 +645,14 @@ final class PixelCaretProvider {
         if let solid { after(solidDelay, gen) { self.locate(t, est, solid, gen) } }
     }
 
+    /// Drops every check and search not yet run (paused).
+    func cancel() {
+        lock.lock()
+        generation += 1
+        locating = nil
+        lock.unlock()
+    }
+
     private func after(_ delay: Double, _ gen: Int, _ work: @escaping () -> Void) {
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.current(gen) else { return }

@@ -44,6 +44,7 @@ scripts/sparkle-local-test.sh                                   # silent update 
 | Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
 | About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
+| Pause and power rules (decisions, Resume Anyway, migration, saved pause) | `mac/.build/release/Foretype --pause-selftest` | nothing (a defaults suite of its own) |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
 | About You fills in TextEdit (email, phone from its typed start, name after Regards, no match, nothing in the log) | `FORETYPE_MODEL=... scripts/e2e-about-you.sh` | Accessibility, user idle (fictional details from `FORETYPE_ABOUT_YOU`; the stored ones are untouched) |
 | Typing aids in TextEdit (emoji, autocorrect, typo gate, mid-line) | `FORETYPE_MODEL=... scripts/e2e-typing-aids.sh` | Accessibility, user idle |
@@ -56,6 +57,7 @@ scripts/sparkle-local-test.sh                                   # silent update 
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
 | Terminal end-to-end | `FORETYPE_MODEL=... scripts/e2e-terminal.sh` | Accessibility, user idle |
 | Fresh Chrome end-to-end (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-chrome-fresh.sh` | Accessibility, user idle |
+| Pause through the URL scheme: no work while paused, model freed, resume, timed pause ends by itself; CPU, wakeups and memory per phase (nothing typed unless `TYPE=1`) | `FORETYPE_MODEL=... [TYPE=1] [SAMPLE=20] scripts/e2e-pause.sh` | Accessibility for `build/Foretype.app` (signed with the Foretype identity), user idle |
 | Inline ghost text while typing in a chat composer with no AX caret (wrap, new line, list, new field) | `FORETYPE_MODEL=... scripts/e2e-inline-caret.sh [ce\|textarea]` | Accessibility and Screen Recording, user idle (throwaway Chrome profile; the page types into itself) |
 | Cache rollback | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache [--long]` | a model |
 | Sparkle update | `scripts/sparkle-local-test.sh`, then Check for Updates… in the printed app | nothing (`RELEASING.md`) |
@@ -112,6 +114,22 @@ Output: keystrokes saved, characters per accept, accept count, model latency p50
 how many keystrokes were served by `model`, `typeThrough`, `cache`, `details` or `policy`.
 With `--details`, the simulated user takes a fill other than a name only if all of it is
 what comes next (one Tab inserts all of it).
+
+### Pausing, power rules and the URL scheme
+
+- `FORETYPE_DEBUG` logs `paused: true|false`, `tracker started|stopped`, `pause: ...` (the
+  user's pause, set-asides), `power: battery=... lowPower=... thermal=...` on every power
+  change, `session: <notification>` and the core's `engine paused: model unloaded`.
+- Only the bundle has the `foretype://` scheme. Send to a running dev bundle with
+  `open -g -a build/Foretype.app "foretype://pause?minutes=0.1"` (fractions work: 6 s). If
+  that copy isn't running, `open -a` launches it without `FORETYPE_ONLY_APPS`, so check
+  first (`scripts/e2e-pause.sh` does). A plain `open foretype://...` goes to whichever copy
+  LaunchServices picks, possibly the installed app.
+- The dev bundle has the installed app's bundle ID, so it shares its UserDefaults: a pause
+  "until I resume" set while testing is still there for the installed app (once it knows
+  pausing). Test with timed pauses, or resume before quitting.
+- Low Power Mode: System Settings ▸ Battery, or `sudo pmset -a lowpowermode 1` (and `0`).
+  The thermal rules can't be triggered on demand; `PauseState.selfTest` covers them.
 
 ### Driving Foretype's own windows
 

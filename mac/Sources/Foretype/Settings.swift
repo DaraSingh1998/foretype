@@ -12,9 +12,22 @@ final class AppSettings {
     /// `personalizeStrength` 0, 1 and 2, as the menu and the Settings window name them.
     static var strengthNames: [String] { [L("Gentle"), L("Balanced"), L("Strong")] }
 
-    var enabled: Bool {
-        get { d.object(forKey: "enabled") as? Bool ?? true }
-        set { d.set(newValue, forKey: "enabled") }
+    /// On battery: full speed, save energy (the default) or pause.
+    var batteryMode: PowerPolicy.BatteryMode {
+        get { d.string(forKey: "batteryMode").flatMap(PowerPolicy.BatteryMode.init(rawValue:)) ?? .save }
+        set { d.set(newValue.rawValue, forKey: "batteryMode") }
+    }
+
+    /// In Low Power Mode: save energy or pause (the default).
+    var lowPowerMode: PowerPolicy.LowPowerMode {
+        get { d.string(forKey: "lowPowerMode").flatMap(PowerPolicy.LowPowerMode.init(rawValue:)) ?? .pause }
+        set { d.set(newValue.rawValue, forKey: "lowPowerMode") }
+    }
+
+    /// Pause on battery below this charge, in percent; 0 (the default) never.
+    var pauseBelowBattery: Int {
+        get { d.integer(forKey: "pauseBelowBattery") }
+        set { d.set(newValue, forKey: "pauseBelowBattery") }
     }
 
     var lengthWords: Int {
@@ -177,7 +190,7 @@ final class AppSettings {
     }
 
     var coreDict: [String: Any] {
-        ["enabled": enabled, "length_words": lengthWords, "stop_at_sentence_end": stopAtSentenceEnd,
+        ["length_words": lengthWords, "stop_at_sentence_end": stopAtSentenceEnd,
          "instructions": instructions,
          "app_instructions": appInstructions, "disabled_apps": disabledApps, "enabled_apps": enabledApps,
          // The core filters by bundle ID and can't express a pid entry; then the tracker, which

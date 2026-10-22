@@ -82,6 +82,11 @@ pub struct Snapshot {
 #[serde(default)]
 pub struct Settings {
     pub enabled: bool,
+    /// Everything stops (the user paused, or the shell's power rules did): queued work is
+    /// dropped, a running completion is cancelled, the model is freed at once and the worker
+    /// sleeps; `submit` answers with a `paused` hide and `warm` does nothing. The model loads
+    /// again on the first job after the pause ends.
+    pub paused: bool,
     /// Maximum words per suggestion (Cotypist-style presets: 2, 4, 7, 10).
     pub length_words: usize,
     pub stop_at_sentence_end: bool,
@@ -147,6 +152,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             enabled: true,
+            paused: false,
             length_words: 4,
             stop_at_sentence_end: true,
             instructions: String::new(),
@@ -239,7 +245,7 @@ pub enum Event {
         #[serde(skip_serializing_if = "Option::is_none")]
         label: Option<String>,
     },
-    /// Engine lifecycle: loading | ready | error.
+    /// Engine lifecycle: loading | ready | idle (model unloaded) | paused | error.
     Status { state: &'static str, detail: String },
 }
 
@@ -278,6 +284,8 @@ struct Shared {
     pending: Mutex<Option<Job>>,
     wake: Condvar,
     shutdown: AtomicBool,
+    /// `settings.paused`, readable without the settings lock (the worker's cancel checks).
+    paused: AtomicBool,
     session: Mutex<Session>,
     settings: RwLock<Settings>,
     compat: CompatDb,
@@ -326,6 +334,7 @@ impl Core {
             pending: Mutex::new(None),
             wake: Condvar::new(),
             shutdown: AtomicBool::new(false),
+            paused: AtomicBool::new(config.settings.paused),
             session: Mutex::new(Session::default()),
             settings: RwLock::new(config.settings.clone()),
             compat: CompatDb::bundled(),
@@ -369,9 +378,22 @@ impl Core {
     }
 
     pub fn configure(&self, settings: Settings) {
+        let paused = settings.paused;
         *self.shared.settings.write().unwrap() = settings;
         self.shared.session.lock().unwrap().clear();
         self.shared.examples.lock().unwrap().clear();
+        if self.shared.paused.swap(paused, Ordering::SeqCst) != paused {
+            if paused {
+                // Drop what is queued and cancel what is running (between decode steps).
+                self.shared.pending.lock().unwrap().take();
+                self.shared.latest.fetch_add(1, Ordering::SeqCst);
+            }
+            self.shared.wake.notify_all();
+        }
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.shared.paused.load(Ordering::SeqCst)
     }
 
     /// The user's own details: offered as fills when the text asks for one, and (when
@@ -550,6 +572,9 @@ impl Core {
     pub fn submit(&self, mut snap: Snapshot) {
         let rev = snap.revision;
         self.shared.latest.store(rev, Ordering::SeqCst);
+        if self.is_paused() {
+            return self.emit_suggestion(rev, String::new(), "policy", Some("paused".into()));
+        }
         let settings = self.settings();
         if !settings.enabled {
             return self.emit_suggestion(rev, String::new(), "policy", Some("disabled".into()));
@@ -696,11 +721,14 @@ impl Core {
     /// Prefills the context for a newly focused field so the first suggestion is fast.
     /// Never displaces a queued completion.
     pub fn warm(&self, snap: Snapshot) {
+        if self.is_paused() {
+            return;
+        }
         let settings = self.settings();
         let examples = self.examples_for(&snap, &settings);
         let prompt = build_prompt(&snap, &settings, &examples, &self.shared.writer.read().unwrap());
         let mut pending = self.shared.pending.lock().unwrap();
-        if pending.is_none() {
+        if pending.is_none() && !self.is_paused() {
             *pending = Some(Job {
                 kind: JobKind::Warm,
                 revision: snap.revision,
@@ -715,7 +743,12 @@ impl Core {
     }
 
     fn enqueue(&self, job: Job) {
-        *self.shared.pending.lock().unwrap() = Some(job);
+        let mut pending = self.shared.pending.lock().unwrap();
+        // Paused between the check in `submit` and here: nothing may wake the model.
+        if self.is_paused() {
+            return;
+        }
+        *pending = Some(job);
         self.shared.wake.notify_one();
     }
 
@@ -874,10 +907,17 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
             }
         }
     };
-    let Some(first) = load(&shared) else { return };
-    let mut engine_slot = Some(first);
+    // Started paused (the app opened while paused): nothing loads until the pause ends.
+    let mut engine_slot = None;
+    if !shared.paused.load(Ordering::SeqCst) {
+        engine_slot = Some(match load(&shared) {
+            Some(first) => first,
+            None => return,
+        });
+    }
     let mut last_used = Instant::now();
     let mut applied_gen = 0u64;
+    let mut paused = false;
 
     loop {
         let job = {
@@ -885,6 +925,40 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
             loop {
                 if shared.shutdown.load(Ordering::SeqCst) {
                     return;
+                }
+                if shared.paused.load(Ordering::SeqCst) {
+                    pending.take();
+                    if !paused {
+                        // Free the model (or the server client) now, not after the idle timeout.
+                        drop(pending);
+                        let was_local = engine_slot.as_ref().is_some_and(Runner::is_local);
+                        engine_slot = None;
+                        applied_gen = 0;
+                        paused = true;
+                        let detail = if was_local { "model unloaded" } else { "" };
+                        (shared.sink)(&Event::Status { state: "paused", detail: detail.into() });
+                        pending = shared.pending.lock().unwrap();
+                        continue;
+                    }
+                    pending = shared.wake.wait_timeout(pending, Duration::from_secs(3600)).unwrap().0;
+                    continue;
+                }
+                if paused {
+                    // Resumed. A server client is cheap: back at once. The model loads on the
+                    // first job, as after an idle unload.
+                    paused = false;
+                    last_used = Instant::now();
+                    drop(pending);
+                    if remote.is_some() {
+                        engine_slot = load(&shared);
+                        if engine_slot.is_none() {
+                            return;
+                        }
+                    } else {
+                        (shared.sink)(&Event::Status { state: "idle", detail: "model unloaded".into() });
+                    }
+                    pending = shared.pending.lock().unwrap();
+                    continue;
                 }
                 if let Some(job) = pending.take() {
                     break job;
@@ -909,6 +983,9 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
             }
         };
         last_used = Instant::now();
+        if shared.paused.load(Ordering::SeqCst) {
+            continue;
+        }
         if engine_slot.is_none() {
             engine_slot = load(&shared);
             if engine_slot.is_none() {
@@ -927,7 +1004,9 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
         let cancel = || latest.load(Ordering::SeqCst) != rev;
         match job.kind {
             JobKind::Warm => {
-                let r = engine.warm(&job.prompt.prefix, &|| shared.pending.lock().map(|p| p.is_some()).unwrap_or(false));
+                let r = engine.warm(&job.prompt.prefix, &|| {
+                    shared.paused.load(Ordering::SeqCst) || shared.pending.lock().map(|p| p.is_some()).unwrap_or(false)
+                });
                 if debug() {
                     eprintln!("[foretype] warm rev={rev} -> {r:?}");
                 }
@@ -1000,6 +1079,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             let prompt = build_prompt(&next, &settings, &examples, &writer);
                             let busy = || {
                                 shared.shutdown.load(Ordering::SeqCst)
+                                    || shared.paused.load(Ordering::SeqCst)
                                     || shared.pending.lock().map(|p| p.is_some()).unwrap_or(true)
                             };
                             if !busy() {
@@ -1263,6 +1343,77 @@ mod tests {
         );
         remote.set_details(UserDetails { in_prompt: true, ..my_details() });
         assert_eq!(*remote.shared.writer.read().unwrap(), "", "never sent to a server");
+    }
+
+    /// The next status event (skipping suggestions).
+    fn status(rx: &std::sync::mpsc::Receiver<Event>) -> (&'static str, String) {
+        loop {
+            if let Event::Status { state, detail } = rx.recv_timeout(Duration::from_secs(2)).expect("status") {
+                return (state, detail);
+            }
+        }
+    }
+
+    #[test]
+    fn paused_core_loads_nothing_and_answers_paused() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let c = Core::new(
+            CoreConfig {
+                model_path: "/nonexistent.gguf".into(),
+                settings: Settings { paused: true, ..Settings::default() },
+                ..CoreConfig::default()
+            },
+            Box::new(move |e| {
+                let _ = tx.lock().unwrap().send(e.clone());
+            }),
+        );
+        // Started paused: no load attempt, just the pause.
+        assert_eq!(status(&rx), ("paused", String::new()));
+        c.submit(Snapshot { revision: 1, ..snap(1, "Thanks for the notes, I will") });
+        assert_eq!(suggestion_for(&rx, 1).3.as_deref(), Some("paused"));
+        assert!(c.shared.pending.lock().unwrap().is_none(), "nothing queued");
+        c.warm(snap(1, "Thanks for the notes, I will"));
+        assert!(c.shared.pending.lock().unwrap().is_none(), "no warm-up either");
+        // Resumed: the model is not loaded yet; the next completion loads it (and fails here).
+        c.configure(Settings::default());
+        assert_eq!(status(&rx), ("idle", "model unloaded".into()));
+        c.submit(Snapshot { revision: 2, ..snap(1, "Thanks for the notes, I will") });
+        assert_eq!(suggestion_for(&rx, 2).1, "pending");
+        assert_eq!(status(&rx).0, "loading");
+    }
+
+    #[test]
+    fn pausing_drops_queued_work_and_the_backend() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        // A server backend loads without connecting, so the worker is up and idle.
+        let c = Core::new(
+            CoreConfig { backend: "openai".into(), backend_url: "http://127.0.0.1:9".into(), ..CoreConfig::default() },
+            Box::new(move |e| {
+                let _ = tx.lock().unwrap().send(e.clone());
+            }),
+        );
+        assert_eq!(status(&rx).0, "ready");
+        *c.shared.pending.lock().unwrap() = Some(Job {
+            kind: JobKind::Warm,
+            revision: 9,
+            field_key: 1,
+            text_before: String::new(),
+            prompt: build_prompt(&snap(1, "x"), &Settings::default(), &[], ""),
+            queued: Instant::now(),
+            snapshot: snap(1, "x"),
+        });
+        let before = c.shared.latest.load(Ordering::SeqCst);
+        c.configure(Settings { paused: true, ..Settings::default() });
+        assert!(c.shared.pending.lock().unwrap().is_none(), "queued job dropped");
+        assert!(c.shared.latest.load(Ordering::SeqCst) > before, "a running job is cancelled");
+        assert_eq!(status(&rx), ("paused", String::new()));
+        // Same settings again: no second pause event, and the worker stays asleep.
+        c.configure(Settings { paused: true, ..Settings::default() });
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        c.configure(Settings::default());
+        assert_eq!(status(&rx).0, "ready", "a server client comes back at once");
     }
 
     #[test]

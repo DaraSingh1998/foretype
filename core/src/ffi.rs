@@ -118,7 +118,9 @@ pub unsafe extern "C" fn ft_engine_dismiss(engine: *mut FtEngine, field_key: u64
     e.core.dismiss(field_key, read_str(text_before).unwrap_or(""));
 }
 
-/// Replaces the settings. Returns false if the JSON does not parse.
+/// Replaces the settings. Returns false if the JSON does not parse. `"paused": true` stops
+/// everything: queued work is dropped, the model is freed and a `paused` status is sent;
+/// `submit` then answers with a `paused` hide and `warm` does nothing until `"paused": false`.
 ///
 /// # Safety
 /// `engine` must be live; `settings_json` a valid C string.

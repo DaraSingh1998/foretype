@@ -144,8 +144,8 @@ Defaults** brings it back.
   replaces the word. It uses the macOS spell checker in your languages and leaves names,
   acronyms and words you have written before alone.
 - **Typo gate**: no suggestion while the word you are typing can't become a real word.
-- **Phrase beam search**: on mains power the engine weighs 3 candidate phrases instead of
-  one (+1.1 points of keystrokes saved on the corpus); greedy on battery.
+- **Phrase beam search**: at full speed the engine weighs 3 candidate phrases instead of
+  one (+1.1 points of keystrokes saved on the corpus); greedy while saving energy.
 - **Mid-line** (experimental, off): up to three words in a card under the caret when text
   follows it on the line.
 - In **VS Code, Cursor and Windsurf** only chat inputs get suggestions; the code editor
@@ -153,13 +153,45 @@ Defaults** brings it back.
 
 All of these can be turned off in Settings → General.
 
+### Pausing and power
+
+**Pause** in the menu stops Foretype for 15 minutes, an hour, until tomorrow (6 in the
+morning) or until you resume; **Resume** shows when it would end by itself. Option-click
+the menu-bar icon to pause or resume at once. A pause survives quitting, relaunching and
+updates. While paused Foretype does nothing at all: it reads no field, watches no keys,
+captures nothing and frees the model's memory; resuming picks up the field you are in (in
+Chrome and Electron apps the first suggestion can take 2 to 3 s while they rebuild their
+accessibility tree). **Pause in *app*** stops it in one app for 5 minutes, an hour or until
+that app quits (Ctrl+Opt+Cmd + key above Tab: 5 minutes).
+
+Other apps and scripts can pause it too: `open foretype://pause` (until resumed),
+`open "foretype://pause?minutes=30"`, `open foretype://resume`, `open foretype://toggle`.
+
+The power rules are in Settings → General:
+
+| When | Choices (default first) |
+|---|---|
+| On battery | **Save energy**, full speed, pause |
+| Battery below | **keep going**, pause below 10%, 20% or 30% |
+| Low Power Mode | **Pause**, save energy |
+| The Mac runs hot | saves energy when the thermal state is serious, pauses when critical |
+| Sleep, a locked screen, display sleep | always paused |
+
+Saving energy: one candidate phrase instead of three, no look-ahead for the next
+suggestion, mid-word suggestions wait 80 ms for the next keystroke, no screen context, and
+the model is freed after a minute without typing (5 minutes otherwise). The battery rows
+are hidden on Macs without a battery. When the power rules pause it, the menu says why
+("Paused — Low Power Mode") and offers **Resume Anyway (until plugged in)**; the
+menu-bar icon then shows a battery instead of a pause sign.
+
 ### Settings window
 
 **Settings…** in the menu (Cmd-, while the menu or one of Foretype's windows is open)
 shows every setting in six tabs; changes apply at once, the same way as from the menu:
 
-- **General**: suggestions on/off, length (2, 4, 7 or 10 words), stop at the end of a
-  sentence, screen context (with the Screen Recording status), custom instructions.
+- **General**: pause and resume, the power rules (on battery, low battery, Low Power Mode),
+  length (2, 4, 7 or 10 words), stop at the end of a sentence, screen context (with the
+  Screen Recording status), custom instructions.
 - **Personalization**: learn from my writing, strength, what was learned, delete history.
 - **About You**: your own details for exact fills, the writer line, fill from Contacts.
 - **Apps**: every app you switched off (or switched on where it is off by default), with
@@ -305,8 +337,9 @@ signing, notarization and Sparkle keys.
 
 From source: put a GGUF base model in `~/Library/Application Support/Foretype/Models/` or
 set `FORETYPE_MODEL=/path/to/model.gguf`, open `build/Foretype.app` and grant Accessibility
-when asked. The menu-bar icon has today's keystrokes saved, the on/off switch, suggestion
-length, per-app toggle, personalization, custom instructions, model, Settings… and setup.
+when asked. The menu-bar icon has today's keystrokes saved, Pause (or Resume), suggestion
+length, the per-app toggle and pause, personalization, custom instructions, model,
+Settings… and setup. Option-click the icon to pause or resume.
 
 | Key | Action |
 |---|---|
@@ -315,7 +348,8 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
 | Esc | dismiss (no new suggestion until you type) |
 | Option+Tab | a real Tab |
 | Ctrl + key above Tab | suggest here even where Foretype normally stays quiet (this line only) |
-| Ctrl+Opt+Cmd + key above Tab | snooze suggestions in the current app for 5 minutes |
+| Ctrl+Opt+Cmd + key above Tab | pause suggestions in the current app for 5 minutes |
+| Option-click the menu-bar icon | pause or resume everywhere |
 
 ### Per-app behaviour
 
@@ -346,8 +380,9 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
   and follows the Screen Context switch; only until an app's caret has been seen once (about
   0.7 s after the first field gets focus) does the suggestion show in a small card above the
   field.
-- **Power**: the model is unloaded after 5 idle minutes (about 1 GB freed) and reloaded on
-  the next keystroke; on battery, mid-word suggestions wait 80 ms for the next keystroke.
+- **Power**: the model is unloaded after 5 idle minutes (1 minute while saving energy;
+  about 1 GB freed) and reloaded on the next keystroke; see *Pausing and power* for the
+  battery, Low Power Mode and temperature rules.
 
 ## Development
 

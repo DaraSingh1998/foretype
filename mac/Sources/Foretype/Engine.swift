@@ -94,6 +94,9 @@ final class EngineBridge {
         }, ctx)
     }
 
+    /// Settings as the core's JSON (`Controller.coreSettingsJSON`). With `"paused": true` the
+    /// core drops its work, frees the model and reports `.status("paused", ...)`; `submit`
+    /// and `warm` are then answered or ignored without waking it.
     @discardableResult
     func configure(_ json: String) -> Bool {
         guard let handle else { return false }

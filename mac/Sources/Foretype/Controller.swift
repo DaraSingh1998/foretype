@@ -20,7 +20,6 @@ final class Controller {
     let speller = Speller()
     let pixelCaret = PixelCaretProvider()
     let hotkeys = Hotkeys()
-    let power = PowerMonitor()
     var onStatus: ((String, String) -> Void)?
     /// Compatibility rules by bundle ID (looked up once per app).
     private var rules: [String: [String: Any]] = [:]
@@ -29,8 +28,17 @@ final class Controller {
     /// field, so it must not outlive the command being typed).
     private var forcedField: UInt64 = 0
     private var forcedLine = ""
-    /// Apps snoozed with Ctrl+Opt+Cmd + key above Tab, and until when.
+    /// Apps paused on their own (Ctrl+Opt+Cmd + key above Tab, the menu's Pause in X), and
+    /// until when; `Date.distantFuture` is until the app quits.
     private(set) var snoozed: [String: Date] = [:]
+    /// Everything stopped (`setPaused`). Read on the AX thread under `lock`.
+    private var paused = false
+    /// Main thread: what `setPaused` last applied.
+    private(set) var isPaused = false
+    /// Lighter work for the power rules (`PowerPolicy.Decision.saveEnergy`). Main thread;
+    /// applied with `applySettings` or `setPaused`.
+    var saveEnergy = false
+    private var quitObserver: NSObjectProtocol?
 
     private let lock = NSLock()
     private var latest = FieldSnapshot()
@@ -67,8 +75,10 @@ final class Controller {
         DispatchQueue.global(qos: .utility).async { old.shutdown() }
     }
 
-    /// Returns false if the event taps could not be created (no Accessibility grant).
-    func start() -> Bool {
+    /// Returns false if the event taps could not be created (no Accessibility grant). With
+    /// `paused`, the taps are created and turned off at once, and the tracker waits for the
+    /// resume (it would prime Chromium apps on its first read).
+    func start(paused: Bool) -> Bool {
         engine.onEvent = { [weak self] ev in DispatchQueue.main.async { self?.handle(ev) } }
         tracker.primeKind = { [weak self] bundle in self?.engine.compatRule(bundle)["prime"] as? String }
         tracker.onlyAppsAllow = { [settings] pid, bundle in settings.onlyAppsAllow(pid: pid, bundleId: bundle) }
@@ -81,14 +91,58 @@ final class Controller {
         keys.onAction = { [weak self] action in DispatchQueue.main.async { self?.perform(action) } }
         hotkeys.onAction = { [weak self] action in self?.hotkey(action) }
         hotkeys.register(keyAboveTab: UInt32(keys.acceptAllKey))
-        power.onChange = { [weak self] _ in self?.applySettings() }
-        power.start()
+        // An app paused until it quits: forget it once no copy of it runs.
+        quitObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didTerminateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let bundle = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier,
+                  NSRunningApplication.runningApplications(withBundleIdentifier: bundle).isEmpty else { return }
+            self.lock.lock()
+            if self.snoozed[bundle] == .distantFuture { self.snoozed[bundle] = nil }
+            self.lock.unlock()
+        }
+        isPaused = paused
+        self.paused = paused
+        screen.enabled = screenEnabled
         engine.configure(coreSettingsJSON())
         engine.setDetails(detailsJSON)
         let ok = keys.start()
-        tracker.start()
+        if paused { keys.stop() } else { tracker.start() }
         return ok
     }
+
+    /// Pausing stops every source of work: the tracker (poll, AXObservers), both event taps,
+    /// screen and caret captures, the Chromium/Electron accessibility flags (set again on
+    /// resume) and the core, which frees the model. Resuming starts them again with a fresh
+    /// read of the focused field. Main thread.
+    func setPaused(_ on: Bool) {
+        guard on != isPaused else { return }
+        isPaused = on
+        lock.lock()
+        paused = on
+        forcedField = 0
+        if on { latest = FieldSnapshot() }
+        lock.unlock()
+        if on {
+            hide()
+            keys.stop()
+            tracker.stop()
+            pixelCaret.cancel()
+            screen.enabled = false
+            screen.reset()
+            tracker.restorePrimedApps()
+            engine.configure(coreSettingsJSON())
+        } else {
+            engine.configure(coreSettingsJSON())
+            screen.enabled = screenEnabled
+            if !keys.start() { Log.debug("key taps could not be turned back on") }
+            tracker.start()
+        }
+        Log.debug("paused: \(on)")
+    }
+
+    /// Screen context reads the window with OCR; not while saving energy.
+    private var screenEnabled: Bool { settings.useScreenContext && !saveEnergy && !isPaused }
 
     private var latestSnapshot: FieldSnapshot {
         lock.lock(); defer { lock.unlock() }
@@ -114,6 +168,11 @@ final class Controller {
 
     /// AX thread.
     private func arrived(_ snap: FieldSnapshot) {
+        lock.lock()
+        let stopped = paused
+        lock.unlock()
+        // Read just before a pause.
+        if stopped { return }
         var s = snap
         s.screenContext = screen.text(for: s.fieldKey)
         let pixel = pixelTarget(s)
@@ -238,7 +297,7 @@ final class Controller {
         switch event {
         case let .suggestion(revision, text, source, ms, replace, label):
             let snap = latestSnapshot
-            guard revision == snap.revision else { return }
+            guard revision == snap.revision, !isPaused else { return }
             // One of the user's own details: tagged on screen, never written to the log.
             let detail = source == "details" ? AboutYou.Field(rawValue: label) : nil
             if text.isEmpty {
@@ -328,6 +387,7 @@ final class Controller {
     /// Main thread.
     private func hotkey(_ action: Hotkeys.Action) {
         let snap = latestSnapshot
+        guard !isPaused else { return Log.debug("hotkey \(action) ignored: paused") }
         switch action {
         case .forceSuggest:
             guard snap.fieldKey != 0 else { return }
@@ -337,29 +397,43 @@ final class Controller {
             tracker.forceRead()
         case .snoozeApp:
             guard !snap.bundleId.isEmpty else { return }
-            lock.lock(); snoozed[snap.bundleId] = Date().addingTimeInterval(300); lock.unlock()
+            snooze(snap.bundleId, until: Date().addingTimeInterval(300))
             Log.debug("snoozed \(snap.appName) for 5 minutes")
-            hide()
         }
+    }
+
+    /// Pauses suggestions in one app until `until` (`.distantFuture`: until it quits).
+    func snooze(_ bundleId: String, until: Date) {
+        lock.lock(); snoozed[bundleId] = until; lock.unlock()
+        hide()
     }
 
     func unsnooze(_ bundleId: String) {
         lock.lock(); snoozed[bundleId] = nil; lock.unlock()
     }
 
-    /// Settings plus runtime state (battery debounce) as the core's JSON.
+    /// Settings plus runtime state (pause, power) as the core's JSON.
     private func coreSettingsJSON() -> String {
-        var d = settings.coreDict
-        d["debounce_ms"] = power.onBattery ? 80 : 0
-        // Prefetching roughly doubles generated tokens; keep it for mains power. So does the
-        // 3-wide phrase beam (+1.1 points of keystrokes saved for +15% GPU energy).
-        d["prefetch"] = !power.onBattery
-        d["beam_width"] = power.onBattery ? 1 : 3
+        let d = Controller.coreSettings(settings, paused: isPaused, saveEnergy: saveEnergy)
         return String(data: try! JSONSerialization.data(withJSONObject: d), encoding: .utf8)!
     }
 
+    /// The core's settings: the user's, the pause, and the power rules' lighter work.
+    static func coreSettings(_ settings: AppSettings, paused: Bool, saveEnergy: Bool) -> [String: Any] {
+        var d = settings.coreDict
+        d["paused"] = paused
+        d["debounce_ms"] = saveEnergy ? 80 : 0
+        // Prefetching roughly doubles generated tokens; keep it for full speed. So does the
+        // 3-wide phrase beam (+1.1 points of keystrokes saved for +15% GPU energy).
+        d["prefetch"] = !saveEnergy
+        d["beam_width"] = saveEnergy ? 1 : 3
+        // About 1 GB of memory and its upkeep: let it go after a minute without typing.
+        d["unload_after_s"] = saveEnergy ? 60 : 300
+        return d
+    }
+
     func applySettings() {
-        screen.enabled = settings.useScreenContext
+        screen.enabled = screenEnabled
         engine.configure(coreSettingsJSON())
         hide()
     }
