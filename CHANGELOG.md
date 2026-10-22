@@ -12,9 +12,11 @@ the release notes are taken from it.
   `foretype://toggle`. The menu shows why and until when ("Resume (paused until 3:45 PM)").
   A pause survives quitting and updates; a switched-off Suggestions On becomes "paused until
   I resume".
-- Paused means nothing runs: no field reads (the 0.5 s poll and the Accessibility observers
-  stop), no key taps, no screen captures, the Chrome/Electron accessibility flags are put
-  back, and the model is freed at once. Resuming reads the field you are in again.
+- Paused means none of Foretype's own work runs: no field reads (the 0.5 s poll and the
+  Accessibility observers stop), no key taps, no screen captures, the Chrome/Electron
+  accessibility flags are put back, and the model is freed at once (3.3 GB → 70 MB with
+  Gemma 4 E2B). Resuming reads the field you are in again. llama.cpp's Metal residency
+  heartbeat still runs (see `docs/MEASUREMENTS.md`).
 - Power rules in Settings ▸ General: on battery save energy (default), run at full speed or
   pause; in Low Power Mode pause (default) or save energy; optionally pause below 10, 20 or
   30% battery. A hot Mac saves energy, a critical one pauses. Sleep, a locked screen and

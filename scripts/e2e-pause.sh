@@ -68,6 +68,12 @@ open -a TextEdit "$DOC"
 for _ in $(seq 25); do [ "$("$DRIVE" front)" = "com.apple.TextEdit" ] && break; sleep 0.2; done
 TE="$("$DRIVE" front-pid)"
 [ "$("$DRIVE" front)" = "com.apple.TextEdit" ] || { echo "could not bring TextEdit to the front"; exit 1; }
+# The document's window can come up after TextEdit is in front: wait until the caret can be
+# put at its end (typing must not start anywhere else).
+LEN=$(wc -c <"$DOC" | tr -d ' ')
+for _ in $(seq 25); do "$DRIVE" caret "$TE" "$TITLE" "$LEN" 2>/dev/null && break; sleep 0.2; done
+"$DRIVE" caret "$TE" "$TITLE" "$LEN" || { echo "the test document did not open"; exit 1; }
+sleep 0.5
 START=$(date +%s)
 check() {
   [ "$(idle)" -lt $(( $(date +%s) - START )) ] && { echo "ABORT: the user is active again"; exit 3; }
@@ -76,7 +82,6 @@ check() {
 mark() { echo "=== $1" >>"$LOG"; echo "=== $1"; }
 # Lines after the last mark matching a pattern.
 since() { awk -v m="=== $1" 'index($0, m) == 1 { on = 1; next } on' "$LOG" | grep -cE "$2"; }
-LEN=$(wc -c <"$DOC" | tr -d ' ')
 moves() {
   for pos in $((LEN - 4)) $((LEN - 30)) "$LEN" $((LEN - 60)) "$LEN"; do
     check; "$DRIVE" caret "$TE" "$TITLE" "$pos" || true; sleep 0.8
@@ -96,7 +101,7 @@ fail() { echo "FAIL: $1"; status=1; }
 
 if [ "${TYPE:-0}" = 1 ]; then
   mark "0 typing"
-  check; "$DRIVE" caret "$TE" "$TITLE" "$LEN"
+  check; "$DRIVE" caret "$TE" "$TITLE" "$LEN" || { echo "ABORT: caret not at the end"; exit 3; }
   "$DRIVE" type " timeline by Friday, and we can go through the open questions on our call next week. Let me know if anything in the notes needs a closer look before then, and thanks again for pulling it together so quickly." 140 &
   TYPER=$!
   sample "typing (7 chars/s)"

@@ -158,8 +158,10 @@ All of these can be turned off in Settings → General.
 **Pause** in the menu stops Foretype for 15 minutes, an hour, until tomorrow (6 in the
 morning) or until you resume; **Resume** shows when it would end by itself. Option-click
 the menu-bar icon to pause or resume at once. A pause survives quitting, relaunching and
-updates. While paused Foretype does nothing at all: it reads no field, watches no keys,
-captures nothing and frees the model's memory; resuming picks up the field you are in (in
+updates. While paused Foretype reads no field, watches no keys, captures nothing and frees
+the model's memory (3.3 GB → 70 MB with Gemma 4 E2B; CPU use falls by about 60%, the rest
+being a timer thread in llama.cpp's Metal backend, see `docs/MEASUREMENTS.md`); resuming
+picks up the field you are in (in
 Chrome and Electron apps the first suggestion can take 2 to 3 s while they rebuild their
 accessibility tree). **Pause in *app*** stops it in one app for 5 minutes, an hour or until
 that app quits (Ctrl+Opt+Cmd + key above Tab: 5 minutes).

@@ -473,6 +473,9 @@ because the battery rule already saves energy.
 **Cost.** Resuming re-primes Chromium and Electron apps, so their first suggestion takes the
 2–3 s of D23 again, and the first suggestion after any pause waits for the model to load
 (about 1 s). Pausing blocks the main thread up to 1 s while the flags are restored (also at
-sleep). The URL scheme lets any local app pause or resume Foretype (no more than a click on
+sleep). llama.cpp's Metal residency heartbeat (a 5 ms sleep loop for the life of the
+process) can't be stopped by freeing the model and is most of what a paused Foretype still
+costs; only `GGML_METAL_NO_RESIDENCY` at launch removes it, which needs its own latency
+measurement (`docs/MEASUREMENTS.md`, *Pause and power*). The URL scheme lets any local app pause or resume Foretype (no more than a click on
 the menu does). Defaults chosen with the user: Low Power Mode pauses, battery threshold
 off, the Pause submenu replaces the switch.
