@@ -636,10 +636,18 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   picture per state (`MenuBarIcon.set(.active / .paused / .powerPaused / .loading / .error)`);
   `AppDelegate` shows `.paused` for the user's or the system's pause, `.powerPaused` when
   only the power rules pause, and otherwise maps the engine state (ready, idle or paused →
-  active, starting or loading → loading, setup, waiting or error → error).
+  active, starting or loading → loading, setup, waiting or error → error). `badge: true`
+  adds a dot in the top-right corner while an update waits to be looked at.
   Also gives a bare dev binary the checkout's `mac/Resources/AppIcon.icns` as its icon.
 - **`UpdateController.swift`**: Sparkle 2 when built with `FORETYPE_SPARKLE=1` and the
-  Info.plist has `SUFeedURL` and `SUPublicEDKey`; otherwise a no-op.
+  Info.plist has `SUFeedURL` and `SUPublicEDKey`; otherwise a no-op. Installs a silent
+  download once the user is idle, and tracks an update found but not installed
+  (`availableVersion`, kept in the defaults across launches; cleared when a check finds none,
+  the user skips it or it is installed) and whether a scheduled check is waiting to be looked
+  at (`needsAttention`). As Sparkle's standard user driver delegate it takes over scheduled
+  updates (gentle reminders): no window, the menu-bar icon's dot instead. `AppDelegate` shows
+  the menu line "Update Available: X.Y.Z — Install…" and Settings ▸ General the "Version X.Y.Z
+  is available" row; both open Sparkle's window (`checkForUpdates`).
 - **`AX.swift`**: typed AX helpers and the debug logger.
 - **`Localization.swift`**: `L(_:)`, `L(_:_:)` and `LCount(_:_:one:)`, the lookups for every
   user-visible string. See *Localization* below.

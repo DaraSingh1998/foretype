@@ -96,11 +96,34 @@ scripts/sparkle-local-test.sh
 
 The script builds 0.0.1 and packages 0.0.2, both signed with a throwaway "Foretype" identity
 in a temporary keychain and a throwaway EdDSA key, and serves the feed on 127.0.0.1:8977. It
-then starts 0.0.1 with `FORETYPE_UPDATE_CHECK_NOW=1` and `FORETYPE_UPDATE_IDLE=0`, waits for
-it to replace itself with 0.0.2 and relaunch, and prints PASS/FAIL. `build-mac.sh` adds an ATS
-local-networking exception only when the feed URL is on 127.0.0.1 or localhost. The old app
-runs with `FORETYPE_ONLY_APPS=none.invalid`, and the relaunched copy has no Accessibility
-grant, so neither reads anything.
+then starts 0.0.1 twice with `FORETYPE_UPDATE_CHECK_NOW=1`, and prints PASS/FAIL:
+
+1. With automatic install off (`-SUAutomaticallyUpdate NO`, an argument, so nothing is
+   written to the defaults), the update must wait: the app writes what its menu, its icon
+   and Settings ▸ General show to `FORETYPE_UPDATE_REPORT` (and a picture of the General
+   pane, `settings-general.png` in the work folder). The test expects "Update Available:
+   0.0.2 — Install…", the icon's dot, "Version 0.0.2 is available" and no Sparkle window yet
+   (gentle reminder). SIGUSR1 then chooses the update line, which must open Sparkle's update
+   window; a second launch, without a check, must still offer 0.0.2, and 0.0.2 itself must
+   offer nothing and clear the stored offer.
+2. With automatic install on and `FORETYPE_UPDATE_IDLE=0`, it waits for the app to replace
+   itself with 0.0.2 and relaunch, and for the waiting update to be cleared.
+
+`build-mac.sh` adds an ATS local-networking exception only when the feed URL is on
+127.0.0.1 or localhost. The old app runs with `FORETYPE_ONLY_APPS=none.invalid`, and the
+relaunched copy has no Accessibility grant, so neither reads anything. Their setup window
+and, in step 1, Sparkle's window appear until the test quits them. The copies the test
+starts get `FORETYPE_ABOUT_YOU={}` and `-personalize NO`, so they never read the Keychain (a
+throwaway certificate would get an access prompt). Sparkle relaunches 0.0.2 without them, so on
+a Mac with About You details or writing history saved, step 2 can show a Keychain prompt for
+"Foretype": click Deny, or run step 1 only with `FORETYPE_TEST_WAITING_ONLY=1`.
+
+What users see of an update (D40): with automatic install on, nothing until it installs.
+With it off, the daily check doesn't open Sparkle's window; it puts a dot on the menu-bar
+icon (Sparkle's gentle reminders), and the menu and Settings ▸ General offer the version until
+it is installed, a check finds no update, or the user skips it in Sparkle's window. Remind Me
+Later keeps the offer. The offer survives relaunches (`updateAvailableVersion` and
+`updateAvailableBuild` in the app's defaults).
 
 `scripts/install.sh` can be tried against a local folder too: set `FORETYPE_RELEASE_BASE` to
 the folder's URL, `FORETYPE_INSTALL_DIR` to a scratch folder and `FORETYPE_NO_OPEN=1`.

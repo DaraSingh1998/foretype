@@ -2,7 +2,8 @@ import AppKit
 
 /// The menu-bar glyph: a caret with a gray ghost word after it, the app icon in miniature.
 /// Drawn in code as an 18 pt template image (redrawn at each screen's scale, edges on whole
-/// pixels), one picture per state. Main thread.
+/// pixels), one picture per state, with a dot in the top corner while an update waits to be
+/// looked at. Main thread.
 enum MenuBarIcon {
     enum State: CaseIterable {
         /// Suggesting: the caret and its ghost word.
@@ -19,6 +20,8 @@ enum MenuBarIcon {
     }
 
     private(set) static var state = State.loading
+    /// An update is waiting (`UpdateController.needsAttention`): a dot in the top-right corner.
+    private(set) static var badge = false
     private static weak var button: NSStatusBarButton?
 
     /// Shows the glyph on the status item's button, in the current state.
@@ -27,18 +30,19 @@ enum MenuBarIcon {
         apply()
     }
 
-    static func set(_ state: State) {
-        guard state != self.state else { return }
+    static func set(_ state: State, badge: Bool = false) {
+        guard state != self.state || badge != self.badge else { return }
         self.state = state
+        self.badge = badge
         apply()
     }
 
     private static func apply() {
-        button?.image = image(state)
+        button?.image = image(state, badge: badge)
     }
 
-    static func image(_ state: State) -> NSImage {
-        let description: String
+    static func image(_ state: State, badge: Bool = false) -> NSImage {
+        var description: String
         switch state {
         case .active: description = "Foretype"
         case .paused: description = L("Foretype (paused)")
@@ -46,9 +50,10 @@ enum MenuBarIcon {
         case .loading: description = L("Foretype (loading)")
         case .error: description = L("Foretype (needs attention)")
         }
+        if badge { description += ", " + L("update available") }
         let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            draw(state, in: ctx)
+            draw(state, badge: badge, in: ctx)
             return true
         }
         image.isTemplate = true
@@ -58,7 +63,7 @@ enum MenuBarIcon {
 
     /// Points, origin at the bottom left. Only alpha counts in a template image: 1 draws in
     /// the menu bar's text color, 0.45 in a lighter gray (the ghost word, a dimmed caret).
-    private static func draw(_ state: State, in ctx: CGContext) {
+    private static func draw(_ state: State, badge: Bool, in ctx: CGContext) {
         let scale = max(1, ctx.userSpaceToDeviceSpaceTransform.a)
         // Edges on whole device pixels, and nothing thinner than one pixel.
         func px(_ v: CGFloat) -> CGFloat { (v * scale).rounded() / scale }
@@ -95,6 +100,7 @@ enum MenuBarIcon {
             fill(box(10.5, 7, 2, 8.5))
             fill(box(10.5, 2.5, 2, 2))
         }
+        if badge { fill(box(14.5, 14, 3.5, 3.5)) }
     }
 }
 

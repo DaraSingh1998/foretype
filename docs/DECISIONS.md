@@ -479,3 +479,37 @@ costs; only `GGML_METAL_NO_RESIDENCY` at launch removes it, which needs its own 
 measurement (`docs/MEASUREMENTS.md`, *Pause and power*). The URL scheme lets any local app pause or resume Foretype (no more than a click on
 the menu does). Defaults chosen with the user: Low Power Mode pauses, battery threshold
 off, the Pause submenu replaces the switch.
+
+## D40. A waiting update shows in the menu and Settings; scheduled checks never open a window (2026-10-22)
+
+**Decision.** `UpdateController` tracks an update a check found that isn't installed yet
+(`updater(_:didFindValidUpdate:)`), clears it when a check finds none
+(`updaterDidNotFindUpdate(_:error:)`, which also covers a skipped version on scheduled
+checks), when the user chooses Skip This Version (`userDidMake .skip`) and when the running
+build is that version or newer, and keeps it across launches in the defaults
+(`updateAvailableVersion`, `updateAvailableBuild`). While one is waiting, the menu-bar menu
+shows "Update Available: X.Y.Z — Install…" under the status lines, and Settings ▸ General
+shows "Version X.Y.Z is available" under the version with an Install… button. Both call
+`checkForUpdates`, which brings Sparkle's own window (release notes, Install Update, Skip
+This Version, Remind Me Later) to the front; Foretype doesn't install from the menu by
+itself. For scheduled checks Foretype implements Sparkle's gentle reminders and always
+handles the update itself (`standardUserDriverShouldHandleShowingScheduledUpdate` returns
+false, also in "immediate focus" just after launch): no window, a dot on the menu-bar icon
+until the user brings Sparkle's window up (`standardUserDriverDidReceiveUserAttention`) or
+the session ends. Remind Me Later keeps the menu line; the dot comes back with the next
+scheduled check. With automatic install on, the line shows between the check and the
+idle-time install.
+**Why.** With automatic install off, the only sign of an update was Sparkle's window from
+the daily check, which for a menu-bar app opens behind other apps (or in front, just after
+launch); after Remind Me Later or Skip nothing was left. Someone who turned automatic
+install off wants to choose when, so the update should wait somewhere they look, not
+interrupt typing. Sparkle 2 also logs a warning for background apps that check on a
+schedule without gentle reminders. Skip hides the offer because the user said they don't
+want that version; Sparkle won't offer it again on a schedule either, and Check for
+Updates… still shows it. Install opens Sparkle's window rather than installing at once so
+the user sees the release notes and so one code path (Sparkle's) installs.
+**Cost.** A user who never opens the menu or Settings sees only a small dot in a template
+glyph (no color). Critical updates get no special treatment. The offer kept in the defaults
+can be up to a day stale if a release is pulled (the next check clears it). Verified with a
+local feed by the app's own report of what its menu and Settings show
+(`FORETYPE_UPDATE_REPORT`), not by clicking the real menu-bar item.

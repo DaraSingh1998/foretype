@@ -284,6 +284,9 @@ final class GeneralPane: PreferencesPane {
     private let autoInstall = NSButton(checkboxWithTitle: L("Install updates automatically"), target: nil, action: nil)
     private let checkNow = NSButton(title: L("Check Now"), target: nil, action: nil)
     private let versionLabel = NSTextField(labelWithString: "")
+    private let availableLabel = NSTextField(labelWithString: "")
+    private let installUpdate = NSButton(title: L("Install\u{2026}"), target: nil, action: nil)
+    private var availableRow: NSGridRow?
     private let updateNote = PreferencesPane.note(L("A new version is installed once you have been away from the keyboard and mouse for a few minutes; Foretype then reopens by itself and keeps its permissions."), width: 400)
     private var updateRows: [NSGridRow] = []
 
@@ -328,11 +331,17 @@ final class GeneralPane: PreferencesPane {
         checkNow.target = self
         checkNow.action = #selector(checkForUpdates)
         checkNow.controlSize = .small
+        // Sparkle's window for the waiting update, as the menu's update line opens.
+        installUpdate.target = self
+        installUpdate.action = #selector(checkForUpdates)
+        installUpdate.controlSize = .small
+        availableLabel.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         let edit = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editInstructions))
         instructionsSummary.textColor = .secondaryLabelColor
         instructionsSummary.lineBreakMode = .byTruncatingTail
         instructionsSummary.widthAnchor.constraint(lessThanOrEqualToConstant: 330).isActive = true
 
+        let available = Self.hstack([availableLabel, installUpdate])
         let w: CGFloat = 400
         let grid = Self.form([
             [Self.formLabel(L("Startup:")), openAtLogin],
@@ -358,6 +367,7 @@ final class GeneralPane: PreferencesPane {
             [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
             [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
             [Self.formLabel(L("Version:")), versionLabel],
+            [NSGridCell.emptyContentView, available],
             [Self.formLabel(L("Updates:")), autoCheck],
             [NSGridCell.emptyContentView, autoInstall],
             [NSGridCell.emptyContentView, updateNote],
@@ -366,6 +376,7 @@ final class GeneralPane: PreferencesPane {
         screenHintRow = grid.cell(for: screenHint)?.row
         batteryRows = [battery, batteryLevel].compactMap { grid.cell(for: $0)?.row }
         updateRows = [autoCheck, autoInstall, updateNote, checkNow].compactMap { grid.cell(for: $0)?.row }
+        availableRow = grid.cell(for: available)?.row
         add(grid, spacingAfter: 18)
         add(Self.separator())
         add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere.")))
@@ -427,6 +438,15 @@ final class GeneralPane: PreferencesPane {
         if let version, let build { text = L("%@ (build %@)", version, build) }
         if !on { text += " \u{2014} " + L("this build doesn\u{2019}t update itself") }
         versionLabel.stringValue = text
+        let available = on ? updates?.availableVersion : nil
+        availableLabel.stringValue = available.map { L("Version %@ is available", $0) } ?? ""
+        availableRow?.isHidden = available == nil
+    }
+
+    /// What the version rows say (FORETYPE_UPDATE_REPORT).
+    var versionText: String {
+        availableRow?.isHidden == false ? "\(versionLabel.stringValue) | \(availableLabel.stringValue) [\(installUpdate.title)]"
+            : versionLabel.stringValue
     }
 
     @objc private func updatesChanged(_ sender: NSButton) {

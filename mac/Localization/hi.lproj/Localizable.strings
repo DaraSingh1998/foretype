@@ -64,6 +64,8 @@
 "Model" = "मॉडल";
 "Setup…" = "सेटअप…";
 "Check for Updates…" = "अपडेट जाँचें…";
+"Update Available: %@ — Install…" = "अपडेट उपलब्ध: %@ — इंस्टॉल करें…";
+"Version %@ is available" = "संस्करण %@ उपलब्ध है";
 "Open Accessibility Settings…" = "ऐक्सेसिबिलिटी सेटिंग खोलें…";
 
 /* Engine states, shown after "Foretype —" in the menu and in Settings ▸ Model */
@@ -326,6 +328,7 @@
 "Development build" = "डेवलपमेंट बिल्ड";
 "%@ (build %@)" = "%@ (बिल्ड %@)";
 "this build doesn’t update itself" = "यह बिल्ड अपने-आप अपडेट नहीं होता";
+"Install…" = "इंस्टॉल करें…";
 "Move Foretype to your Applications folder?" = "Foretype को अपने Applications फ़ोल्डर में ले जाएँ?";
 "In Applications, Foretype can update itself and keeps the permissions you give it." = "Applications में Foretype अपने-आप अपडेट हो सकता है और आपकी दी गई अनुमतियाँ बनी रहती हैं।";
 "Move to Applications" = "Applications में ले जाएँ";
@@ -340,3 +343,4 @@
 "Foretype (paused to save power)" = "Foretype (बैटरी बचाने के लिए पॉज़)";
 "Foretype (loading)" = "Foretype (लोड हो रहा है)";
 "Foretype (needs attention)" = "Foretype (ध्यान देने की ज़रूरत है)";
+"update available" = "अपडेट उपलब्ध";
