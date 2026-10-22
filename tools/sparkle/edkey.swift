@@ -1,6 +1,8 @@
-// Throwaway Sparkle EdDSA (Ed25519) keys for local update tests, using CryptoKit instead of
-// Sparkle's generate_keys / sign_update (which keep the private key in the login keychain).
-// Never use these keys for a release: see RELEASING.md for the real ones.
+// Sparkle EdDSA (Ed25519) keys with CryptoKit, instead of Sparkle's generate_keys /
+// sign_update (which keep the private key in the login keychain and need the Sparkle tarball).
+// The release key was made with `generate` (public half: packaging/sparkle-public-key.txt);
+// scripts/package-mac.sh signs each release DMG with `sign`, and the local update test uses a
+// throwaway key. The key file is the base64 32-byte seed; keep a release key secret.
 //
 //   swift tools/sparkle/edkey.swift generate KEY_FILE      prints the public key (SUPublicEDKey)
 //   swift tools/sparkle/edkey.swift sign KEY_FILE ARCHIVE  prints the appcast enclosure attributes

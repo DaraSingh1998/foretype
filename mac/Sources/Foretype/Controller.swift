@@ -37,6 +37,8 @@ final class Controller {
     /// Main thread: the suggestion on screen and its field, to move it when the pixel caret
     /// locator reports a new position. `detail` is set for a fill of one of the user's details.
     private var shown: (fieldKey: UInt64, text: String, detail: AboutYou.Field?)?
+    /// Main thread: whether a suggestion is on screen (an update waits until none is).
+    var isShowingSuggestion: Bool { shown != nil }
 
     /// The user's details for the core (`AboutYou.coreJSON`); sent again to a new engine.
     var detailsJSON = "{}" {

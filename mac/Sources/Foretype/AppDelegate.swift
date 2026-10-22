@@ -59,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         }
         stats.onChange = { [weak self] in self?.preferences?.statsChanged() }
         updater = UpdateController()
+        updater?.isBusy = { [weak self] in self?.controller?.isShowingSuggestion ?? false }
 
         // The setup window opens when something is missing, and on the bundled app's first
         // run. A dev binary started from a terminal with everything in place skips it.
@@ -501,6 +502,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         preferences = w
         w.show()
     }
+
+    var updates: UpdateController? { updater }
 
     @objc private func checkForUpdates() {
         updater?.checkForUpdates()

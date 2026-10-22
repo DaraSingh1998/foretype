@@ -162,15 +162,6 @@ enum CaretBench {
 
     static func say(_ s: String) { FileHandle.standardOutput.write((s + "\n").data(using: .utf8)!) }
 
-    /// Seconds since the last keyboard or mouse input (IOHIDSystem's HIDIdleTime).
-    static func hidIdle() -> Double? {
-        let service = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOHIDSystem"))
-        guard service != 0 else { return nil }
-        defer { IOObjectRelease(service) }
-        let v = IORegistryEntryCreateCFProperty(service, "HIDIdleTime" as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue()
-        return (v as? NSNumber).map { $0.doubleValue / 1e9 }
-    }
-
     static func run(pid: pid_t, title: String, positions wanted: Int) -> Bool {
         let bundle = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
         let only = AppSettings().onlyApps
@@ -183,7 +174,7 @@ enum CaretBench {
         let started = CFAbsoluteTimeGetCurrent()
         func guardFront() -> Bool {
             // Any keyboard or mouse input since the start means the user is back: stop.
-            if let idle = hidIdle(), idle + 0.5 < CFAbsoluteTimeGetCurrent() - started {
+            if let idle = UserIdle.seconds(), idle + 0.5 < CFAbsoluteTimeGetCurrent() - started {
                 say("ABORT: the user is active again")
                 return false
             }

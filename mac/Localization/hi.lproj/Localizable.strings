@@ -284,3 +284,12 @@
 "Reset the statistics?" = "आँकड़े रीसेट करें?";
 "Today's, the last 30 days' and the all-time counts go back to zero." = "आज की, पिछले 30 दिनों की और अब तक की सभी गिनतियाँ शून्य हो जाएँगी।";
 "Reset" = "रीसेट करें";
+"Check for updates every day" = "हर दिन अपडेट जाँचें";
+"Install updates automatically" = "अपडेट अपने-आप इंस्टॉल करें";
+"Check Now" = "अभी जाँचें";
+"A new version is installed once you have been away from the keyboard and mouse for a few minutes; Foretype then reopens by itself and keeps its permissions." = "नया संस्करण तब इंस्टॉल होता है जब आप कुछ मिनट तक कीबोर्ड और माउस से दूर रहते हैं; फिर Foretype अपने-आप दोबारा खुलता है और उसकी अनुमतियाँ बनी रहती हैं।";
+"Version:" = "संस्करण:";
+"Updates:" = "अपडेट:";
+"Development build" = "डेवलपमेंट बिल्ड";
+"%@ (build %@)" = "%@ (बिल्ड %@)";
+"this build doesn’t update itself" = "यह बिल्ड अपने-आप अपडेट नहीं होता";

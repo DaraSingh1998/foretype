@@ -29,6 +29,8 @@ protocol PreferencesHost: AnyObject {
     var aboutYou: AboutYou { get }
     func setAboutYou(_ details: AboutYou)
     func confirmClearAboutYou()
+    /// Sparkle, configured in release builds only (`isConfigured`).
+    var updates: UpdateController? { get }
 }
 
 /// The Settings window (menu: Settings…, Cmd-,): everything in the menu-bar menu plus the
@@ -260,6 +262,12 @@ final class GeneralPane: PreferencesPane {
     private let screenHint = PreferencesPane.note(Signing.staleGrantHint, width: 400)
     private var screenHintRow: NSGridRow?
     private let instructionsSummary = NSTextField(labelWithString: "")
+    private let autoCheck = NSButton(checkboxWithTitle: L("Check for updates every day"), target: nil, action: nil)
+    private let autoInstall = NSButton(checkboxWithTitle: L("Install updates automatically"), target: nil, action: nil)
+    private let checkNow = NSButton(title: L("Check Now"), target: nil, action: nil)
+    private let versionLabel = NSTextField(labelWithString: "")
+    private let updateNote = PreferencesPane.note(L("A new version is installed once you have been away from the keyboard and mouse for a few minutes; Foretype then reopens by itself and keeps its permissions."), width: 400)
+    private var updateRows: [NSGridRow] = []
 
     override func build() {
         for (b, sel) in [(enabled, #selector(changed(_:))), (sentenceEnd, #selector(changed(_:))), (screen, #selector(changed(_:))),
@@ -275,6 +283,13 @@ final class GeneralPane: PreferencesPane {
         screenAllow.action = #selector(allowScreen)
         screenAllow.controlSize = .small
         screenStatus.font = .systemFont(ofSize: 11)
+        for b in [autoCheck, autoInstall] {
+            b.target = self
+            b.action = #selector(updatesChanged(_:))
+        }
+        checkNow.target = self
+        checkNow.action = #selector(checkForUpdates)
+        checkNow.controlSize = .small
         let edit = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editInstructions))
         instructionsSummary.textColor = .secondaryLabelColor
         instructionsSummary.lineBreakMode = .byTruncatingTail
@@ -299,8 +314,14 @@ final class GeneralPane: PreferencesPane {
             [NSGridCell.emptyContentView, screenHint],
             [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
             [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
+            [Self.formLabel(L("Version:")), versionLabel],
+            [Self.formLabel(L("Updates:")), autoCheck],
+            [NSGridCell.emptyContentView, autoInstall],
+            [NSGridCell.emptyContentView, updateNote],
+            [NSGridCell.emptyContentView, checkNow],
         ])
         screenHintRow = grid.cell(for: screenHint)?.row
+        updateRows = [autoCheck, autoInstall, updateNote, checkNow].compactMap { grid.cell(for: $0)?.row }
         add(grid, spacingAfter: 18)
         add(Self.separator())
         add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key snoozes the app for 5 minutes.")))
@@ -327,7 +348,38 @@ final class GeneralPane: PreferencesPane {
         var summary = global.isEmpty ? L("No note for all apps") : "\u{201C}\(global)\u{201D}"
         if apps > 0 { summary += ", " + LCount(apps, "notes for %@ apps", one: "notes for %@ app") }
         instructionsSummary.stringValue = summary
+        refreshUpdates()
     }
+
+    private func refreshUpdates() {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let version = info["CFBundleShortVersionString"] as? String
+        let build = info["CFBundleVersion"] as? String
+        let updates = host?.updates
+        let on = updates?.isConfigured ?? false
+        for row in updateRows { row.isHidden = !on }
+        if let updates, on {
+            autoCheck.state = updates.automaticallyChecks ? .on : .off
+            autoInstall.state = updates.automaticallyInstalls ? .on : .off
+            autoInstall.isEnabled = updates.automaticallyChecks
+        }
+        var text = L("Development build")
+        if let version, let build { text = L("%@ (build %@)", version, build) }
+        if !on { text += " \u{2014} " + L("this build doesn\u{2019}t update itself") }
+        versionLabel.stringValue = text
+    }
+
+    @objc private func updatesChanged(_ sender: NSButton) {
+        guard let updates = host?.updates else { return }
+        switch sender {
+        case autoCheck: updates.automaticallyChecks = autoCheck.state == .on
+        case autoInstall: updates.automaticallyInstalls = autoInstall.state == .on
+        default: return
+        }
+        refreshUpdates()
+    }
+
+    @objc private func checkForUpdates() { host?.updates?.checkForUpdates() }
 
     @objc private func changed(_ sender: NSControl) {
         guard let host else { return }
