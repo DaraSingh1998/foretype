@@ -548,6 +548,11 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   Cmd-, (Settings), Cmd-W, Cmd-Q and the editing keys; accessory apps show no menu bar but
   still route key equivalents through it. The setup window opens when Accessibility or a
   model is missing, and on the bundled app's first run.
+- **`Icons.swift`**: the menu-bar glyph, drawn in code as an 18 pt template image, one
+  picture per state (`MenuBarIcon.set(.active / .paused / .powerPaused / .loading / .error)`);
+  `AppDelegate` maps the engine state to it (ready or idle → active, starting or loading →
+  loading, setup, waiting or error → error). The paused glyphs wait for a pause feature.
+  Also gives a bare dev binary the checkout's `mac/Resources/AppIcon.icns` as its icon.
 - **`UpdateController.swift`**: Sparkle 2 when built with `FORETYPE_SPARKLE=1` and the
   Info.plist has `SUFeedURL` and `SUPublicEDKey`; otherwise a no-op.
 - **`AX.swift`**: typed AX helpers and the debug logger.

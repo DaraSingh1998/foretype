@@ -24,12 +24,28 @@ plist() { /usr/libexec/PlistBuddy -c "Print $1" "$APP/Contents/Info.plist"; }
 VERSION="$(plist CFBundleShortVersionString)"
 BUILD="$(plist CFBundleVersion)"
 DMG="$OUT/Foretype-$VERSION.dmg"
-STAGE="$(mktemp -d "$OUT/dmg.XXXXXX")"
-trap 'rm -rf "$STAGE"' EXIT
+WORK="$(mktemp -d "$OUT/dmg.XXXXXX")"
+STAGE="$WORK/Foretype"
+trap '[ -d "$WORK/mnt" ] && hdiutil detach -force "$WORK/mnt" >/dev/null 2>&1; rm -rf "$WORK"' EXIT
+mkdir "$STAGE"
 ditto "$APP" "$STAGE/Foretype.app"
 ln -s /Applications "$STAGE/Applications"
 rm -f "$DMG"
-hdiutil create -volname "Foretype $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+if command -v SetFile >/dev/null 2>&1; then
+  # The volume icon: .VolumeIcon.icns at the root and the root's custom-icon flag, which only
+  # sticks when set on the mounted volume, so this goes through a read-write image. SetFile
+  # comes with the Command Line Tools; without it the disk image keeps the generic icon.
+  cp "$ROOT/mac/Resources/AppIcon.icns" "$STAGE/.VolumeIcon.icns"
+  hdiutil create -volname "Foretype $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDRW -ov "$WORK/rw.dmg" >/dev/null
+  mkdir "$WORK/mnt"
+  hdiutil attach -nobrowse -noautoopen -mountpoint "$WORK/mnt" "$WORK/rw.dmg" >/dev/null
+  SetFile -a C "$WORK/mnt"
+  hdiutil detach "$WORK/mnt" >/dev/null
+  rmdir "$WORK/mnt"
+  hdiutil convert "$WORK/rw.dmg" -format UDZO -o "$DMG" >/dev/null
+else
+  hdiutil create -volname "Foretype $VERSION" -srcfolder "$STAGE" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+fi
 hdiutil verify "$DMG" >/dev/null
 
 case "${FORETYPE_SIGN_IDENTITY:-}" in

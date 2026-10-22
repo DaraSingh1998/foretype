@@ -11,7 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     let settings = AppSettings()
     let models = ModelManager()
     let stats = UsageStats()
-    private var engineState = "starting"
+    private var engineState = "starting" {
+        didSet { MenuBarIcon.set(Self.menuBarState(engineState)) }
+    }
     private var engineDetail = ""
     /// The model file the running engine loaded; nil with a server backend.
     private var loadedModelPath: String?
@@ -33,13 +35,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.mask(aboutYou.logMasks)
+        AppIcon.useCheckoutIconIfUnbundled()
         // Opened from the disk image or Downloads: offer to move into Applications first (the
         // app then quits and the moved copy opens).
         if AppLocation.offerMove(settings: settings) { return }
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        let image = NSImage(systemSymbolName: "text.cursor", accessibilityDescription: "Foretype")
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        MenuBarIcon.attach(statusItem.button)
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu
@@ -407,6 +408,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     }
 
     static func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
+
+    /// The menu-bar glyph for an engine state. The paused glyphs are for pausing, which
+    /// doesn't exist yet.
+    static func menuBarState(_ state: String) -> MenuBarIcon.State {
+        switch state {
+        case "ready", "idle": return .active
+        case "starting", "loading": return .loading
+        default: return .error
+        }
+    }
 
     /// The engine state ("ready", "loading", ...) as the menu and the Settings window show it.
     static func stateName(_ state: String) -> String {

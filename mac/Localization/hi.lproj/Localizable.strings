@@ -302,3 +302,7 @@
 "Relaunch" = "फिर से खोलें";
 "Turned it on? Relaunch Foretype to use it." = "चालू कर दिया? उपयोग के लिए Foretype को फिर से खोलें।";
 "Startup:" = "शुरुआत:";
+"Foretype (paused)" = "Foretype (पॉज़ है)";
+"Foretype (paused to save power)" = "Foretype (बैटरी बचाने के लिए पॉज़)";
+"Foretype (loading)" = "Foretype (लोड हो रहा है)";
+"Foretype (needs attention)" = "Foretype (ध्यान देने की ज़रूरत है)";

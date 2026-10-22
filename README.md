@@ -1,5 +1,7 @@
 # Foretype
 
+<img src="docs/images/icon.png" width="128" align="right" alt="The Foretype icon: a white caret with a gray ghost word after it">
+
 Free, open-source, on-device inline autocomplete for every app: gray "ghost text" after
 your caret, Tab to take the next word, the key above Tab to take all of it. A Cotypist-style
 tool built so the engine can be shared across macOS, Windows and Linux.
@@ -234,8 +236,9 @@ That's needed once; updates install without asking.
   checked against a pinned SHA-256.
 - **Open Foretype when you log in** (on by default).
 
-Then Foretype lives in the menu bar (the text-cursor icon). Opened from Downloads or the
-DMG, it first offers to move itself into Applications.
+Then Foretype lives in the menu bar: a caret with a gray ghost word after it (three dots
+while a model loads, an exclamation mark when setup or a permission needs you). Opened from
+Downloads or the DMG, it first offers to move itself into Applications.
 
 **Updates.** Foretype checks GitHub once a day, downloads a new version in the background
 and installs it when you've been away from the keyboard for a few minutes, then reopens

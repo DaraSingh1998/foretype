@@ -62,6 +62,8 @@ cp "$SCRATCH/release/Foretype" "$APP/Contents/MacOS/Foretype"
 for lproj in "$ROOT"/mac/Localization/*.lproj; do
   ditto "$lproj" "$APP/Contents/Resources/$(basename "$lproj")"
 done
+# The app icon (scripts/make-icon.swift draws it).
+cp "$ROOT/mac/Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 # Licences (THIRD_PARTY_NOTICES.md says what ships).
 cp "$ROOT/THIRD_PARTY_NOTICES.md" "$ROOT/LICENSE-MIT" "$ROOT/LICENSE-APACHE" "$APP/Contents/Resources/"
 cp "$ROOT/core/data/emoji-LICENSE.txt" "$APP/Contents/Resources/gemoji-LICENSE.txt"
@@ -109,6 +111,7 @@ cat >"$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Foretype</string>
   <key>CFBundleDisplayName</key><string>Foretype</string>
   <key>CFBundleExecutable</key><string>Foretype</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleDevelopmentRegion</key><string>en</string>
   <key>CFBundleLocalizations</key><array>${LANGS}</array>
