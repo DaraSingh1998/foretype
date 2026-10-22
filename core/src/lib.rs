@@ -1227,9 +1227,11 @@ mod tests {
         assert_ne!(suggestion_for(&rx, 5).1, "autocorrect", "all caps");
         c.submit(fix(6, "I will recieve", "recieve", "receive"));
         assert_ne!(suggestion_for(&rx, 6).1, "autocorrect", "no space yet: still typing");
+        c.submit(fix(7, "ठीक है। Teh ", "Teh", "The"));
+        assert_eq!(suggestion_for(&rx, 7).1, "autocorrect", "capitalized after a danda");
         c.configure(Settings { autocorrect: false, ..Settings::default() });
-        c.submit(fix(7, "I will recieve ", "recieve", "receive"));
-        assert_ne!(suggestion_for(&rx, 7).1, "autocorrect", "turned off");
+        c.submit(fix(8, "I will recieve ", "recieve", "receive"));
+        assert_ne!(suggestion_for(&rx, 8).1, "autocorrect", "turned off");
     }
 
     #[test]

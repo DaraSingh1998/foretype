@@ -122,7 +122,7 @@ impl UserDetails {
     fn secrets(&self) -> Vec<String> {
         let mut out: Vec<String> = Field::ALL
             .iter()
-            .flat_map(|f| self.get(*f).split(|c: char| !c.is_alphanumeric()))
+            .flat_map(|f| self.get(*f).split(|c: char| !words::is_letter(c)))
             .filter(|p| p.chars().count() >= 4)
             .map(str::to_ascii_lowercase)
             .collect();

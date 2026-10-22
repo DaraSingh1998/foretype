@@ -306,7 +306,7 @@ impl Engine {
         let partial_start = full
             .char_indices()
             .rev()
-            .take_while(|(_, c)| c.is_alphanumeric() || *c == '\'' || *c == '\u{2019}')
+            .take_while(|(_, c)| words::is_letter(*c) || *c == '\'' || *c == '\u{2019}')
             .last()
             .map_or(full.len(), |(i, _)| i);
         let partial = &full[partial_start..];

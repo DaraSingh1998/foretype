@@ -2,7 +2,19 @@
 
 /// Characters that can belong to the word currently being typed.
 pub fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || matches!(c, '\'' | '\u{2019}' | '-' | '_')
+    is_letter(c) || matches!(c, '\'' | '\u{2019}' | '-' | '_')
+}
+
+/// Letters and digits, including the signs Unicode doesn't count as alphabetic but that sit
+/// inside words in Indic scripts: the virama that joins consonants (क्या, "kya"), the nukta
+/// (फ़) and the zero-width (non-)joiners around them. Without them a Hindi word splits in two
+/// and token healing starts from half a syllable.
+pub fn is_letter(c: char) -> bool {
+    let cp = c as u32;
+    c.is_alphanumeric()
+        // Devanagari to Malayalam share one block layout: nukta at 0x3C, virama at 0x4D.
+        || ((0x0900..=0x0D7F).contains(&cp) && matches!(cp & 0x7F, 0x3C | 0x4D))
+        || matches!(cp, 0x0951..=0x0954 | 0x0D3B | 0x0DCA | 0x200C | 0x200D)
 }
 
 /// Splits the text before the caret into a stable committed prefix and the fragment the
@@ -112,10 +124,11 @@ pub fn limit(s: &str, max_words: usize, stop_at_sentence: bool, truncated: bool)
     cut.trim_end().to_string()
 }
 
-/// True when `s` ends a sentence.
+/// True when `s` ends a sentence: `.` `!` `?` `…`, or the danda `।` and double danda `॥` of
+/// Hindi and other Indic scripts.
 pub fn ends_sentence(s: &str) -> bool {
     let t = s.trim_end_matches(['"', '\u{201D}', ')', '\'']);
-    t.ends_with(['.', '!', '?', '\u{2026}'])
+    t.ends_with(['.', '!', '?', '\u{2026}', '\u{964}', '\u{965}'])
 }
 
 #[cfg(test)]
@@ -162,5 +175,31 @@ mod tests {
         assert_eq!(limit("tes. Then we go on", 4, true, false), "tes.");
         assert_eq!(limit(" the reconcil", 4, true, true), " the");
         assert_eq!(limit(" one two three four five", 4, true, true), " one two three four");
+    }
+
+    #[test]
+    fn danda_ends_a_sentence() {
+        assert!(ends_sentence(" ठीक है।"));
+        assert!(ends_sentence(" ठीक है ।"));
+        assert!(ends_sentence(" सत्यमेव जयते॥"));
+        assert!(ends_sentence(" ठीक है।\""));
+        assert!(!ends_sentence(" ठीक है"));
+        assert_eq!(limit(" ठीक है। कल मिलते", 4, true, false), " ठीक है।");
+        assert_eq!(limit(" ठीक है। कल मिलते", 4, false, false), " ठीक है। कल मिलते");
+        // A danda written after a space counts as a word of its own.
+        assert_eq!(limit(" ठीक है । कल मिलते", 4, true, false), " ठीक है ।");
+    }
+
+    #[test]
+    fn indic_signs_stay_inside_words() {
+        // Virama in क्या, nukta and virama in दफ़्तर.
+        assert!("क्या".chars().all(is_word_char) && "दफ़्तर".chars().all(is_word_char));
+        assert!(!is_word_char('।') && !is_word_char('॥'));
+        assert_eq!(split_fragment("तुम क्या"), ("तुम", " क्या"));
+        assert_eq!(split_fragment("दफ़्तर। क्"), ("दफ़्तर।", " क्"));
+        assert_eq!(split_fragment("नमस्ते"), ("", "नमस्ते"));
+        // Bengali and Gujarati viramas and a zero-width joiner count; the abbreviation sign doesn't.
+        assert!(is_letter('\u{9CD}') && is_letter('\u{ACD}') && is_letter('\u{200D}'));
+        assert!(!is_letter('\u{970}'));
     }
 }
