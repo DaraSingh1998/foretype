@@ -5,6 +5,19 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### A waiting update is visible (2026-10-22)
+- With "Install updates automatically" off, a new version no longer shows only as Sparkle's
+  window from the daily check. The menu-bar menu shows **Update Available: X.Y.Z —
+  Install…** near the top and Settings ▸ General shows **Version X.Y.Z is available** with
+  an **Install…** button; both open the update window (release notes, Install, Skip This
+  Version, Remind Me Later). The offer stays after Remind Me Later and across relaunches,
+  until the update is installed or a check finds none.
+- The daily check no longer opens that window over your work, even in the background: it
+  puts a dot on the menu-bar icon (Sparkle's gentle reminders) until you open the window.
+- Skip This Version hides the offer; Check for Updates… still shows a skipped version.
+- `scripts/sparkle-local-test.sh` checks the menu line, the Settings line, the dot and the
+  window the line opens before the silent install (`FORETYPE_UPDATE_REPORT`).
+
 ### Pause, and power-aware pausing (2026-10-22)
 - **Pause** replaces the Suggestions On switch: for 15 minutes, 1 hour, until tomorrow
   (6:00) or until you resume, from the menu, Settings ▸ General, an Option-click on the

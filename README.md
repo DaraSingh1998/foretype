@@ -274,13 +274,18 @@ That's needed once; updates install without asking.
 - **Open Foretype when you log in** (on by default).
 
 Then Foretype lives in the menu bar: a caret with a gray ghost word after it (three dots
-while a model loads, an exclamation mark when setup or a permission needs you). Opened from
+while a model loads, an exclamation mark when setup or a permission needs you, a dot in the
+corner when an update is waiting). Opened from
 Downloads or the DMG, it first offers to move itself into Applications.
 
 **Updates.** Foretype checks GitHub once a day, downloads a new version in the background
 and installs it when you've been away from the keyboard for a few minutes, then reopens
 with its permissions intact. Settings ▸ General has the switches and Check Now; the menu has
-Check for Updates….
+Check for Updates…. With automatic install off, a new version waits for you: the daily
+check doesn't open a window over your work, it puts a dot on the menu-bar icon, and the menu
+shows **Update Available: X.Y.Z — Install…** and Settings ▸ General **Version X.Y.Z is
+available** with an Install button. Both open the update window (release notes, Install,
+Skip This Version, Remind Me Later). Skip This Version hides it until you check yourself.
 
 **Uninstall.** Quit Foretype from its menu, drag it from Applications to the Trash, and
 optionally delete `~/Library/Application Support/Foretype` (models, encrypted history and
@@ -451,7 +456,9 @@ Settings… and setup. Option-click the icon to pause or resume.
   Apply were not exercised there (they would type keystrokes, create a Keychain item or
   start an engine).
 - Sparkle updates work end to end with a local feed and a throwaway key
-  (`scripts/sparkle-local-test.sh`). Notarization and a real feed still need a Developer ID
+  (`scripts/sparkle-local-test.sh`): the silent install, and with automatic install off the
+  menu line, the Settings line and the icon's dot (read back from the app's own report, not
+  from a click on the real menu). Notarization and a real feed still need a Developer ID
   certificate, notary credentials and Sparkle keys (`RELEASING.md`). The release workflow
   is an untested template.
 - The setup window, Model menu and server dialog have not been exercised in the automated

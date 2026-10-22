@@ -21,7 +21,7 @@ scripts/make-signing-cert.sh                                    # once, run it y
 scripts/build-mac.sh                                            # both, then build/Foretype.app ("Foretype" if present, else ad hoc)
 FORETYPE_SPARKLE=1 scripts/build-mac.sh                         # with Sparkle (fetched by SwiftPM, .build-sparkle/)
 scripts/package-mac.sh                                          # DMG, appcast.xml, cask (see RELEASING.md)
-scripts/sparkle-local-test.sh                                   # silent update 0.0.1 -> 0.0.2 against a feed on 127.0.0.1
+scripts/sparkle-local-test.sh                                   # waiting update shown, then silent update 0.0.1 -> 0.0.2, feed on 127.0.0.1
 ```
 
 - The first core build compiles llama.cpp (Metal) through `llama-cpp-sys-2` and cmake,
@@ -60,7 +60,7 @@ scripts/sparkle-local-test.sh                                   # silent update 
 | Pause through the URL scheme: no work while paused, model freed, resume, timed pause ends by itself; CPU, wakeups and memory per phase (nothing typed unless `TYPE=1`) | `FORETYPE_MODEL=... [TYPE=1] [SAMPLE=20] scripts/e2e-pause.sh` | Accessibility for `build/Foretype.app` (signed with the Foretype identity), user idle |
 | Inline ghost text while typing in a chat composer with no AX caret (wrap, new line, list, new field) | `FORETYPE_MODEL=... scripts/e2e-inline-caret.sh [ce\|textarea]` | Accessibility and Screen Recording, user idle (throwaway Chrome profile; the page types into itself) |
 | Cache rollback | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache [--long]` | a model |
-| Sparkle update | `scripts/sparkle-local-test.sh`, then Check for Updates… in the printed app | nothing (`RELEASING.md`) |
+| Sparkle update: with automatic install off the menu line, the Settings line, the icon's dot and the update window it opens; then the silent install | `scripts/sparkle-local-test.sh`, then Check for Updates… in the printed app | nothing (`RELEASING.md`); Sparkle's window appears for a few seconds |
 | Benchmark a Mac | `scripts/bench-mac.sh [--only sw-]`, `ENERGY=1` for mJ per suggestion | the catalog models |
 | GPU energy of a command | `swiftc -O tools/energy/energy.swift -o build/ft-energy && build/ft-energy -- CMD` | nothing (CPU/DRAM: `sudo powermetrics`) |
 | What turns on Chrome's web tree | `tools/spike/probe/run_chrome_triggers.sh` (`TRIGGERS="none enhanced"` for a subset) | Accessibility (the terminal's grant) |

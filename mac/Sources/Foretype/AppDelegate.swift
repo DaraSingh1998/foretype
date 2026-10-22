@@ -73,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         stats.onChange = { [weak self] in self?.preferences?.statsChanged() }
         updater = UpdateController()
         updater?.isBusy = { [weak self] in self?.controller?.isShowingSuggestion ?? false }
+        updater?.onAvailabilityChange = { [weak self] in self?.updateAvailabilityChanged() }
+        updateIcon()
 
         // The setup window opens when something is missing, and on the bundled app's first
         // run. A dev binary started from a terminal with everything in place skips it.
@@ -84,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         } else {
             startEngine()
         }
+        writeUpdateReport()
     }
 
     /// Accessory apps show no menu bar, but key equivalents still go through the main menu.
@@ -133,6 +136,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             signal(sig, SIG_IGN)
             let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)
             src.setEventHandler { NSApp.terminate(nil) }
+            src.resume()
+            signalSources.append(src)
+        }
+        // FORETYPE_UPDATE_REPORT: SIGUSR1 chooses the menu's update line, as a click would.
+        if Self.updateReport != nil {
+            signal(SIGUSR1, SIG_IGN)
+            let src = DispatchSource.makeSignalSource(signal: SIGUSR1, queue: .main)
+            src.setEventHandler { [weak self] in
+                self?.checkForUpdates()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { self?.writeUpdateReport() }
+            }
             src.resume()
             signalSources.append(src)
         }
@@ -282,8 +296,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         } else {
             icon = Self.menuBarState(engineState)
         }
-        MenuBarIcon.set(icon)
-        statusItem?.button?.toolTip = pauseDescription.map { "Foretype \u{2014} \($0)" } ?? "Foretype"
+        MenuBarIcon.set(icon, badge: updater?.needsAttention ?? false)
+        var tip = pauseDescription.map { "Foretype \u{2014} \($0)" } ?? "Foretype"
+        if let version = updater?.availableVersion { tip += "\n" + L("Version %@ is available", version) }
+        statusItem?.button?.toolTip = tip
     }
 
     /// "Paused until 3:45 PM", "Paused \u{2014} Low Power Mode"; nil while not paused.
@@ -385,6 +401,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
                                    action: nil, keyEquivalent: "")
             saved.isEnabled = false
             menu.addItem(saved)
+        }
+        if let version = updater?.availableVersion {
+            // Sparkle's window for it: release notes, Install Update, Skip This Version.
+            let update = NSMenuItem(title: L("Update Available: %@ \u{2014} Install\u{2026}", version),
+                                    action: #selector(checkForUpdates), keyEquivalent: "")
+            update.target = self
+            menu.addItem(update)
         }
         menu.addItem(.separator())
 
@@ -732,6 +755,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     @objc private func checkForUpdates() {
         updater?.checkForUpdates()
+    }
+
+    /// An update was found, skipped or installed, or Sparkle's window for it was looked at:
+    /// the menu line, the icon's dot and the Settings line follow.
+    private func updateAvailabilityChanged() {
+        updateIcon()
+        preferences?.refresh()
+        writeUpdateReport()
+    }
+
+    /// FORETYPE_UPDATE_REPORT=<file> (scripts/sparkle-local-test.sh).
+    private static let updateReport = ProcessInfo.processInfo.environment["FORETYPE_UPDATE_REPORT"]
+
+    /// Testing: writes what the menu-bar menu, the icon, Settings ▸ General and the app's open
+    /// windows show to FORETYPE_UPDATE_REPORT, and the General pane as a picture to <file>.png.
+    /// At launch and after each change.
+    private func writeUpdateReport() {
+        guard let path = Self.updateReport else { return }
+        let menu = NSMenu()
+        menuNeedsUpdate(menu)
+        var lines = menu.items.map { "menu: " + ($0.isSeparatorItem ? "---" : $0.title) }
+        lines.append("icon: " + (MenuBarIcon.image(MenuBarIcon.state, badge: MenuBarIcon.badge).accessibilityDescription ?? ""))
+        let pane = GeneralPane(title: L("General"), host: self)
+        let view = pane.view
+        view.appearance = NSAppearance(named: .aqua)
+        view.layoutSubtreeIfNeeded()
+        view.setFrameSize(view.fittingSize)
+        lines.append("settings: " + pane.versionText)
+        lines += NSApp.windows.filter(\.isVisible).map {
+            "window: \($0.title) (\($0.windowController.map { String(describing: type(of: $0)) } ?? "-"))"
+        }
+        try? (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+        if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+            view.cacheDisplay(in: view.bounds, to: rep)
+            let image = NSImage(size: view.bounds.size, flipped: false) { r in
+                NSColor.white.setFill()
+                r.fill()
+                rep.draw(in: r)
+                return true
+            }
+            if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                try? png.write(to: URL(fileURLWithPath: path + ".png"))
+            }
+        }
     }
 
     /// Bring-your-own server: llama-server (best: grammar-based token healing) or any
