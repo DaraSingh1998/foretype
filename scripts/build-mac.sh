@@ -2,23 +2,26 @@
 # Builds the Rust core and the Swift shell, then assembles build/Foretype.app.
 #
 # Environment:
-#   FORETYPE_SIGN_IDENTITY       Code-signing identity, e.g. "Developer ID Application: Name (TEAMID)"
-#                                (hardened runtime and secure timestamp), or "-" to force ad hoc.
-#                                Unset = "Foretype Local Dev" if scripts/make-dev-cert.sh has created it
-#                                (self-signed, no hardened runtime), else ad hoc. Ad-hoc grants
-#                                (Accessibility, Screen Recording) are tied to one exact build; a
-#                                certificate keeps them across rebuilds.
+#   FORETYPE_SIGN_IDENTITY       Code-signing identity: "Foretype" (self-signed, no hardened runtime),
+#                                a "Developer ID Application: Name (TEAMID)" (hardened runtime and
+#                                secure timestamp), or "-" to force ad hoc. Unset = "Foretype" if
+#                                scripts/make-signing-cert.sh has installed it, else ad hoc. Ad-hoc
+#                                grants (Accessibility, Screen Recording) are tied to one exact
+#                                build; a certificate keeps them across rebuilds and updates.
 #   FORETYPE_SIGN_KEYCHAIN       Keychain file to find the identity in, instead of the search list.
 #   FORETYPE_SPARKLE=1           Link and embed the Sparkle 2 updater.
-#   FORETYPE_FEED_URL            Appcast URL (Info.plist SUFeedURL).
-#   FORETYPE_SPARKLE_PUBLIC_KEY  EdDSA public key from Sparkle's generate_keys (SUPublicEDKey).
+#   FORETYPE_FEED_URL            Appcast URL (Info.plist SUFeedURL; default: the latest GitHub
+#                                release's appcast.xml).
+#   FORETYPE_SPARKLE_PUBLIC_KEY  EdDSA public key (SUPublicEDKey; default:
+#                                packaging/sparkle-public-key.txt).
 #   FORETYPE_VERSION             Marketing version (default: core/Cargo.toml version).
 #   FORETYPE_BUILD               Build number, CFBundleVersion (default: commit count).
+#   FORETYPE_OUT                 Output folder for Foretype.app (default: build/).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export MACOSX_DEPLOYMENT_TARGET=14.0
-LOCAL_IDENTITY="Foretype Local Dev"
-# SHA-1 of the local identity, if present. Not `find-identity -v`: the certificate is
+LOCAL_IDENTITY="Foretype"
+# SHA-1 of the self-signed identity, if present. Not `find-identity -v`: the certificate is
 # self-signed and untrusted, which codesign and TCC don't mind but -v filters out.
 local_identity() {
   security find-identity -p codesigning ${FORETYPE_SIGN_KEYCHAIN:+"$FORETYPE_SIGN_KEYCHAIN"} 2>/dev/null \
@@ -26,13 +29,11 @@ local_identity() {
 }
 LOCAL_HASH="$(local_identity)"
 IDENTITY="${FORETYPE_SIGN_IDENTITY:-${LOCAL_HASH:--}}"
-if [ "$IDENTITY" = "-" ]; then
-  KIND=adhoc
-elif [ "$IDENTITY" = "$LOCAL_IDENTITY" ] || [ "$IDENTITY" = "$LOCAL_HASH" ]; then
-  KIND=local
-else
-  KIND=release
-fi
+case "$IDENTITY" in
+  -) KIND=adhoc ;;
+  "Developer ID Application:"*) KIND=developer-id ;;
+  *) KIND=certificate ;;
+esac
 SPARKLE="${FORETYPE_SPARKLE:-0}"
 SCRATCH="$ROOT/mac/.build"
 [ "$SPARKLE" = 1 ] && SCRATCH="$ROOT/mac/.build-sparkle"
@@ -42,7 +43,7 @@ SCRATCH="$ROOT/mac/.build"
   | grep -v "was built for newer 'macOS' version" || true)
 [ -x "$SCRATCH/release/Foretype" ] || { echo "swift build failed"; exit 1; }
 
-APP="$ROOT/build/Foretype.app"
+APP="${FORETYPE_OUT:-$ROOT/build}/Foretype.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks" "$APP/Contents/Resources"
 cp "$SCRATCH/release/Foretype" "$APP/Contents/MacOS/Foretype"
@@ -64,18 +65,24 @@ if [ "$SPARKLE" = 1 ]; then
   FW_SRC="$(find "$SCRATCH/artifacts" -type d -path "*macos*" -name Sparkle.framework 2>/dev/null | head -1)"
   [ -n "$FW_SRC" ] || { echo "Sparkle.framework not found under $SCRATCH/artifacts"; exit 1; }
   ditto "$FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
-  if [ -n "${FORETYPE_FEED_URL:-}" ] && [ -n "${FORETYPE_SPARKLE_PUBLIC_KEY:-}" ]; then
-    SPARKLE_KEYS="  <key>SUFeedURL</key><string>${FORETYPE_FEED_URL}</string>
-  <key>SUPublicEDKey</key><string>${FORETYPE_SPARKLE_PUBLIC_KEY}</string>
-  <key>SUEnableAutomaticChecks</key><true/>"
+  FEED_URL="${FORETYPE_FEED_URL:-https://github.com/DaraSingh1998/foretype/releases/latest/download/appcast.xml}"
+  PUBLIC_KEY="${FORETYPE_SPARKLE_PUBLIC_KEY:-$(cat "$ROOT/packaging/sparkle-public-key.txt" 2>/dev/null || true)}"
+  if [ -n "$PUBLIC_KEY" ]; then
+    # Checked daily; found updates download and install without asking (UpdateController
+    # installs them once the user is idle). Both can be turned off in Settings.
+    SPARKLE_KEYS="  <key>SUFeedURL</key><string>${FEED_URL}</string>
+  <key>SUPublicEDKey</key><string>${PUBLIC_KEY}</string>
+  <key>SUEnableAutomaticChecks</key><true/>
+  <key>SUAutomaticallyUpdate</key><true/>
+  <key>SUScheduledCheckInterval</key><integer>86400</integer>"
     # A feed on this Mac (scripts/sparkle-local-test.sh) is plain HTTP: let ATS allow it.
-    case "$FORETYPE_FEED_URL" in
+    case "$FEED_URL" in
       http://127.0.0.1*|http://localhost*)
         SPARKLE_KEYS="$SPARKLE_KEYS
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>" ;;
     esac
   else
-    echo "note: Sparkle embedded but FORETYPE_FEED_URL / FORETYPE_SPARKLE_PUBLIC_KEY unset: updates stay off"
+    echo "note: Sparkle embedded but no EdDSA public key (packaging/sparkle-public-key.txt): updates stay off"
   fi
 fi
 
@@ -108,11 +115,11 @@ plutil -lint "$APP/Contents/Info.plist" >/dev/null
 # The hardened runtime enforces library validation, and neither ad-hoc nor self-signed
 # signatures carry a Team ID, so such an app with Sparkle.framework embedded would fail to
 # launch ("Library missing"). Notarization needs the runtime but also a Developer ID, so only
-# a real identity (FORETYPE_SIGN_IDENTITY) gets it, and the secure timestamp with it.
+# a Developer ID gets it, and the secure timestamp with it.
 OPTS=()
 case "$KIND" in
-  release) OPTS=(--options runtime --timestamp) ;;
-  local) OPTS=(--timestamp=none) ;;
+  developer-id) OPTS=(--options runtime --timestamp) ;;
+  certificate) OPTS=(--timestamp=none) ;;
 esac
 [ "$KIND" != adhoc ] && [ -n "${FORETYPE_SIGN_KEYCHAIN:-}" ] && OPTS+=(--keychain "$FORETYPE_SIGN_KEYCHAIN")
 sign() { codesign --force ${OPTS[@]+"${OPTS[@]}"} --sign "$IDENTITY" "$@"; }
@@ -132,8 +139,8 @@ rmdir "$APP/Contents/Frameworks" 2>/dev/null || true
 sign --identifier dev.foretype.Foretype --entitlements "$ROOT/mac/Foretype.entitlements" "$APP"
 codesign --verify --strict --deep "$APP"
 case "$KIND" in
-  adhoc) SIGNED="ad hoc; re-add Accessibility and Screen Recording after each rebuild, or run scripts/make-dev-cert.sh once" ;;
-  local) SIGNED="$LOCAL_IDENTITY, self-signed; grants carry over to the next build" ;;
-  release) SIGNED="$IDENTITY, hardened runtime" ;;
+  adhoc) SIGNED="ad hoc; re-add Accessibility and Screen Recording after each rebuild, or run scripts/make-signing-cert.sh once" ;;
+  certificate) SIGNED="$(codesign -dvv "$APP" 2>&1 | sed -n 's/^Authority=//p' | head -1), no hardened runtime; grants carry over to the next build" ;;
+  developer-id) SIGNED="$IDENTITY, hardened runtime" ;;
 esac
 echo "built $APP ($VERSION build $BUILD, signed: $SIGNED)"

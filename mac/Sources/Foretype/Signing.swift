@@ -4,7 +4,7 @@ import Security
 /// How this copy of the app is signed. macOS ties an ad-hoc build's Accessibility and Screen
 /// Recording grants to that exact build (its cdhash), so after a rebuild the entry in System
 /// Settings still looks on but no longer applies: it has to be removed with − and added again.
-/// scripts/make-dev-cert.sh gives local builds a stable identity instead.
+/// scripts/make-signing-cert.sh gives builds a stable identity instead.
 enum Signing {
     /// True for an app bundle signed ad hoc. False for a bare dev binary run from a terminal,
     /// which uses the terminal's grants, and for any certificate-signed build.
