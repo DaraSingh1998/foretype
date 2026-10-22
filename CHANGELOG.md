@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.1 (2026-10-22)
+
 ### App icon and menu-bar glyph (2026-10-22)
 - Foretype has an app icon: a white caret with a gray ghost word after it on a dark ink
   tile, drawn by `scripts/make-icon.swift` into `mac/Resources/AppIcon.icns`. Finder, the
