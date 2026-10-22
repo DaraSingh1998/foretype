@@ -6,3 +6,14 @@ build/
 mac/.build-sparkle/
 tools/spike/probe/.build/
 tools/spike/probe/bundle/
+
+# Secrets: signing backups, keys and keychains (see RELEASING.md). Never commit them.
+*.p12
+*.pfx
+*.pem
+*.key
+*.keychain-db
+.env
+.env.*
+Foretype-signing*
+Foretype-sparkle*

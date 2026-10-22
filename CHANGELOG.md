@@ -23,6 +23,9 @@ the release notes are taken from it. No release has been published yet.
 - `scripts/sparkle-local-test.sh` is now automatic: 0.0.1 finds 0.0.2 on a local feed,
   installs it silently and relaunches, signed like a release; it prints PASS/FAIL.
 - `build-mac.sh` and `package-mac.sh` take `FORETYPE_OUT` (output folder).
+- `THIRD_PARTY_NOTICES.md` lists llama.cpp, Sparkle, gemoji, the Rust crates, the models and
+  the oasst1 excerpts; the app carries it in its Resources with the MIT, Apache, Sparkle and
+  gemoji licence texts. `.gitignore` now ignores signing backups, keys and keychains.
 
 ### About You: your own details, filled in exactly (2026-10-22)
 - New Settings tab **About You**: name, email, phone, company, job title, address and

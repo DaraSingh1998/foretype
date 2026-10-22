@@ -53,6 +53,9 @@ cp "$SCRATCH/release/Foretype" "$APP/Contents/MacOS/Foretype"
 for lproj in "$ROOT"/mac/Localization/*.lproj; do
   ditto "$lproj" "$APP/Contents/Resources/$(basename "$lproj")"
 done
+# Licences (THIRD_PARTY_NOTICES.md says what ships).
+cp "$ROOT/THIRD_PARTY_NOTICES.md" "$ROOT/LICENSE-MIT" "$ROOT/LICENSE-APACHE" "$APP/Contents/Resources/"
+cp "$ROOT/core/data/emoji-LICENSE.txt" "$APP/Contents/Resources/gemoji-LICENSE.txt"
 LANGS=""
 for lproj in "$ROOT"/mac/Localization/*.lproj; do
   LANGS="$LANGS<string>$(basename "$lproj" .lproj)</string>"
@@ -65,6 +68,8 @@ if [ "$SPARKLE" = 1 ]; then
   FW_SRC="$(find "$SCRATCH/artifacts" -type d -path "*macos*" -name Sparkle.framework 2>/dev/null | head -1)"
   [ -n "$FW_SRC" ] || { echo "Sparkle.framework not found under $SCRATCH/artifacts"; exit 1; }
   ditto "$FW_SRC" "$APP/Contents/Frameworks/Sparkle.framework"
+  SPARKLE_LICENSE="$(find "$SCRATCH/artifacts" -maxdepth 3 -name LICENSE -path "*Sparkle*" 2>/dev/null | head -1)"
+  [ -n "$SPARKLE_LICENSE" ] && cp "$SPARKLE_LICENSE" "$APP/Contents/Resources/Sparkle-LICENSE.txt"
   FEED_URL="${FORETYPE_FEED_URL:-https://github.com/DaraSingh1998/foretype/releases/latest/download/appcast.xml}"
   PUBLIC_KEY="${FORETYPE_SPARKLE_PUBLIC_KEY:-$(cat "$ROOT/packaging/sparkle-public-key.txt" 2>/dev/null || true)}"
   if [ -n "$PUBLIC_KEY" ]; then

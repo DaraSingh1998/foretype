@@ -411,5 +411,8 @@ length, per-app toggle, personalization, custom instructions, model, Settings…
 
 ## Licensing
 
-Core and shell: MIT OR Apache-2.0. `compat/apps.json`: CC0-1.0. Default models (Qwen3
-base) are Apache-2.0 and are not bundled.
+Core and shell: MIT OR Apache-2.0. `compat/apps.json`: CC0-1.0. The catalog models (Qwen3
+base, Gemma 4 E2B) are Apache-2.0 and are not bundled. Third-party code and data (llama.cpp,
+Sparkle, gemoji, Rust crates, oasst1 excerpts) are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which ships in the app with the licence
+texts.

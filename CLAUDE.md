@@ -65,8 +65,8 @@ downloading any model** (name, size, source).
 ## Testing on the user's Mac: safety rules (learned the hard way)
 
 - **Never run a dev build without `FORETYPE_ONLY_APPS=<bundle id>`** while the user may be
-  working. An early unrestricted run read and showed suggestions in the user's Microsoft
-  Teams for about 5 seconds (nothing was inserted). To test an app the user also has open
+  working. An early unrestricted run read and showed suggestions in a messaging app the
+  user had open for about 5 seconds (nothing was inserted). To test an app the user also has open
   (Chrome), start a separate process and pass its pid instead (`scripts/e2e-chrome-fresh.sh`).
 - The e2e scripts (`scripts/e2e-textedit.sh`, `scripts/e2e-terminal.sh`) type synthetic
   keystrokes. They restrict the app, wait for the user to be idle and pause if focus leaves,

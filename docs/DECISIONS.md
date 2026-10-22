@@ -146,7 +146,7 @@ macOS runner minutes are billed at 10× on a private repo. `ci.yml` runs on
 
 ## D19. Development safety on a shared Mac
 
-After an unrestricted dev run briefly suggested in the user's Teams: all dev and test runs
+After an unrestricted dev run briefly suggested in a messaging app the user had open: all dev and test runs
 use `FORETYPE_ONLY_APPS`; e2e tests wait for user idle, pause or abort when focus leaves,
 type only into new documents they created, and never press Send. The terminal test uses a
 `.command` window running `tee` so nothing reaches a shell and no AppleScript consent is

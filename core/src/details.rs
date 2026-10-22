@@ -150,7 +150,7 @@ impl UserDetails {
 pub struct Fill {
     pub field: Field,
     /// Text just before the caret to delete first: the typed start of the value when its
-    /// case differs ("vib" for "Vibhor"). Empty for a plain continuation.
+    /// case differs ("pri" for "Priya"). Empty for a plain continuation.
     pub replace: String,
     /// What to insert: the rest of the value, or all of it after `replace` is deleted. Starts
     /// with a space when the cue has none after it yet ("My email is").
