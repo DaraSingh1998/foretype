@@ -608,6 +608,66 @@ the word that came next:
 - The default note helps the Apple model too; reworded instructions didn't add anything with
   it, so they were not changed.
 
+## Models for Hindi and Hinglish (2026-10-22/23)
+
+Every catalog model on the Hindi (Devanagari, 13 documents, 4,616 characters) and Hinglish
+(Roman script, 12 documents, 3,632 characters) corpora of `eval/README.md`, with the English
+corpus as a control. Built-in engine at `main` fec132f (before the virama, nukta and danda
+fixes of `fix/hindi-hinglish`), Metal, 4 words, greedy, prefetch on, instant simulated user,
+no instructions. The first pass shared the GPU with another session's `ft-replay`, so the
+Hindi and Hinglish latencies below come from a second pass that started only with no other
+`ft-replay` running and checked every 2 s that none started; all of it on mains power except
+Qwen3-0.6B's second pass (battery, marked \*). English latencies are the 2026-10-20 row
+above (the English savings reproduced it: 39.9%, 41.9%, 42.8% and 44.9% against 45.0%).
+
+| Model | Hindi saved | Chars per Tab | Hindi p50 / p90 | Hinglish saved | Chars per Tab | Hinglish p50 / p90 | English saved | English p50 / p90 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Qwen3-0.6B Q8_0 | 20.0% | 2.47 | 171 / 222 ms\* | 10.8% | 2.47 | 74 / 114 ms\* | 39.9% | 46 / 61 ms |
+| Qwen3-1.7B Q4_K_M (default) | 27.7% | 2.76 | 244 / 298 ms | 15.1% | 2.61 | 108 / 148 ms | 41.9% | 73 / 101 ms |
+| Gemma 4 E2B Q4_K_M | **34.2%** | 3.24 | **125** / 340 ms | **27.7%** | 3.24 | 126 / 172 ms | 42.8% | 109 / 159 ms |
+| Qwen3-4B Q4_K_M | 32.5% | 2.95 | 369 / 383 ms | 23.0% | 3.17 | 207 / 276 ms | 44.9% | 147 / 203 ms |
+
+Tokenizer cost of the corpus text (`ft-replay --token-cost`; the three Qwen3 sizes share
+one vocabulary):
+
+| Vocabulary | Hindi chars / token | Hindi tokens / word | Hinglish chars / token | Hinglish tokens / word | English tokens / word |
+|---|---:|---:|---:|---:|---:|
+| Qwen3 (151k) | 1.06 | 4.57 | 3.26 | 1.64 | 1.16 |
+| Gemma 4 (262k) | 3.70 | 1.31 | 3.89 | 1.38 | 1.17 |
+
+- Gemma 4 E2B is the best model for both: on Hindi 6.5 points above the default Qwen3-1.7B
+  and 1.7 above Qwen3-4B, on Hinglish 12.6 and 4.7 points above them, although Qwen3-4B
+  leads it on English by 2.1. Gemma keeps 80% of its English savings on Hindi (34.2 / 42.8),
+  Qwen3-1.7B 66%; its correct words are also longer (3.24 characters per Tab against 2.76).
+- Qwen3's vocabulary spends about one token per Devanagari character (4.57 per word, 3.5
+  times Gemma's), so on Hindi it is the slow one: p50 244 ms for 1.7B and 369 ms for 4B
+  against Gemma's 125 ms, the reverse of English. p50 and p90 are close for Qwen3 on Hindi,
+  which fits most suggestions running into the decode cap (`max_words * 3 + 8` tokens plus
+  the fragment's bytes, 21 at a word start, against about 18 for four Hindi words): the ghost
+  text is likely shorter, but keystrokes saved don't depend on it, since the simulated user
+  takes one word per Tab and waits for the next suggestion.
+- Gemma's Hindi p90 (340 ms, the same in both passes) is well above its Hinglish p90; not
+  investigated.
+- Hinglish is harder than Hindi for every model: romanized spellings vary (achha / accha,
+  nahi / nahin) and the language switches mid-sentence. The 0.6B model nearly gives up on it.
+- Repeatability: both passes gave identical counts for Gemma, Qwen3-0.6B and Qwen3-1.7B on
+  Hinglish; Qwen3-1.7B Hindi gave 27.6% then 27.7%, Qwen3-4B Hindi 32.2% (852 accepts) then
+  32.5% (767 longer ones). Whether a word comes from a prefetch, type-through or a fresh call
+  depends on timing. Gemma's lead is larger than that spread.
+- Limits: small corpora written by one author for this test, one simulated (ideal) user, two
+  passes. `fix/hindi-hinglish` measured +0.3 points on Hindi for Qwen3-1.7B from keeping
+  virama and nukta words whole and stopping at a danda; not re-run here for the other models.
+
+```bash
+R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/Models"
+for f in Qwen3-0.6B-Base.Q8_0 Qwen3-1.7B-Base.Q4_K_M gemma-4-E2B.Q4_K_M Qwen3-4B-Base.Q4_K_M; do
+  for c in eval/corpus-hi.jsonl eval/corpus-hinglish.jsonl eval/corpus.jsonl; do
+    $R "$M/$f.gguf" --corpus $c --token-cost
+    $R "$M/$f.gguf" --corpus $c
+  done
+done
+```
+
 ## Pause and power (2026-10-22)
 
 Apple M3 Pro, 18 GB, macOS 27.0.1, on mains power; the dev bundle (`build/Foretype.app`,
