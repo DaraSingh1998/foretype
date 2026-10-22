@@ -151,7 +151,26 @@ enum PixelCaretSelfTest {
             print("value index, \(name): got \(got.map(String.init) ?? "none") FAILED")
             ok = false
         }
-        print("choose and value index: \(choices.count + mapped.count) cases")
+        // Electron's caret index lagging the text: held once; real changes are not.
+        func snap(_ before: String, _ after: String, _ caret: Int) -> FieldSnapshot {
+            var s = FieldSnapshot()
+            s.fieldKey = 7
+            s.textBefore = before
+            s.textAfter = after
+            s.caretIndex = caret
+            return s
+        }
+        let lags: [(String, Bool, Bool)] = [
+            ("typed letter after an unmoved caret", FocusTracker.caretLags(snap("Hello wor", "l", 9), after: snap("Hello wor", "", 9)), true),
+            ("letter typed, caret moved", FocusTracker.caretLags(snap("Hello worl", "", 10), after: snap("Hello wor", "", 9)), false),
+            ("caret moved left", FocusTracker.caretLags(snap("Hello wo", "r", 8), after: snap("Hello wor", "", 9)), false),
+            ("already mid-line", FocusTracker.caretLags(snap("Hello", " x", 5), after: snap("Hello", " ", 5)), false),
+        ]
+        for (name, got, want) in lags where got != want {
+            print("caret lag, \(name): got \(got) FAILED")
+            ok = false
+        }
+        print("choose, value index and caret lag: \(choices.count + mapped.count + lags.count) cases")
         // CPU cost of one blink step on a field-sized and a window-sized region (2×).
         for (name, w, h) in [("field 656x384 pt", 1312, 768), ("window 1492x875 pt", 2984, 1750)] {
             let blank = PixelFrame(width: w, height: h, bytes: [UInt8](repeating: 255, count: w * h * 4), origin: .zero, scale: 2)

@@ -232,11 +232,12 @@ screen: 412 chars from Microsoft Teams in 210 ms
 
 `caret=` shows the strategy (`prevEdge`, `prevEdge(zeroHigh)`, `zero`, `zero+offset`,
 `zero(wrapped)`, `pixel`, `pixel+advance`, `none` → mirror card), `after=` the characters
-after the caret on its line when there are any (letters as `a`, others as `U+XXXX`) and
-`show=` how the suggestion was drawn (`inline`, `card` under the caret, `mirror` above the
+after the caret on its line when there are any (letters as `a`, others as `U+XXXX`),
+`line=` the caret line's start index, `field=` the field's top and height, and `show=` how
+the suggestion was drawn (`inline`, `card` under the caret, `mirror` above the
 field, `hidden`). The pixel caret locator logs `pixel caret (blink|verify|solid): X,Y hH in
 N frames M ms, width scale S`, `pixel caret: no blinking caret found in BUNDLE` and `pixel
-caret: no solid caret found in BUNDLE`; `rev N pixel caret moved the suggestion: show=...`
+caret: no solid caret found in BUNDLE (N bars, direction D, from y Y)`; `rev N pixel caret moved the suggestion: show=...`
 when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's own logs.
 
 ## macOS permissions and signing (TCC)

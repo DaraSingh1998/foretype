@@ -88,6 +88,9 @@ final class FocusTracker {
     private var frontPid: pid_t = 0
     private var lastSignature: [AnyHashable] = []
     private var lastFieldKey: UInt64 = 0
+    /// The last snapshot emitted, and whether one that looked like a lagging caret is held.
+    private var lastEmitted = FieldSnapshot()
+    private var heldLagging = false
     private var revision: UInt64 = 0
     private var readPending = false
     private var fontCache: (key: UInt64, line: Int, font: NSFont?) = (0, -1, nil)
@@ -291,6 +294,16 @@ final class FocusTracker {
         let sig = s.signature
         let focusChanged = s.fieldKey != lastFieldKey
         if sig == lastSignature, !focusChanged { return }
+        // Electron updates a field's text a few milliseconds before its caret index, so the
+        // letter just typed reads as text after the caret (the mid-line card would flash).
+        // Such a snapshot is held once and the field read again.
+        if !focusChanged, !heldLagging, FocusTracker.caretLags(s, after: lastEmitted) {
+            heldLagging = true
+            perform(afterMs: 15) { self.requestRead() }
+            return
+        }
+        heldLagging = false
+        lastEmitted = s
         lastSignature = sig
         lastFieldKey = s.fieldKey
         revision += 1
@@ -415,6 +428,13 @@ final class FocusTracker {
         let parts = [kAXDescriptionAttribute, kAXPlaceholderValueAttribute, kAXTitleAttribute]
             .compactMap { AX.string(el, $0) }.filter { !$0.isEmpty }
         return String(parts.joined(separator: " | ").prefix(160))
+    }
+
+    /// Text appeared after a caret that hasn't moved, with nothing else changed: the host has
+    /// inserted what was typed but not yet moved its caret index.
+    static func caretLags(_ s: FieldSnapshot, after prev: FieldSnapshot) -> Bool {
+        s.fieldKey == prev.fieldKey && s.caretIndex == prev.caretIndex && s.textBefore == prev.textBefore
+            && prev.textAfter.isEmpty && !s.textAfter.isEmpty
     }
 
     /// Whether the field is in a web page (any AXWebArea above it), and the page's URL: the

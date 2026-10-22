@@ -542,9 +542,28 @@ moves).
   the caret on its line. The developer's installed 0.1.0 also ran on the test Chrome and
   shows the old behaviour in the same shots: its mirror card above the field, and in the
   list item its card under the line at a wrong x.
-- Self-tests: `--caret-selftest` adds 8 bar-choice cases and 6 index-mapping cases, all pass
-  (30 rendered cases unchanged, worst error 0.00 pt); `--font-selftest`, `--ocr-selftest`
-  and `cargo test` (51) pass.
+- Self-tests: `--caret-selftest` adds 8 bar-choice, 6 index-mapping and 4 caret-lag cases,
+  all pass (30 rendered cases unchanged, worst error 0.00 pt); `--font-selftest`,
+  `--ocr-selftest` and `cargo test` (51) pass.
+
+### The Claude app by hand
+
+Development build restricted to `com.anthropic.claudefordesktop`, no `FORETYPE_CARET`
+override, the installed Foretype quit; the user typed in a new chat draft (a line long
+enough to wrap, Shift+Return, a numbered list) and discarded it. The Claude app gives no AX
+caret either, so the pixel locator placed every suggestion.
+
+- 50 suggestions drawn: 47 inline, 3 as the card under the caret, no mirror card. A blink
+  found the caret when the empty composer got focus (435 ms), before the first keystroke.
+- 14 pause verifies found the caret 0–3 pt from the extrapolated position (median 1 pt).
+- Each of the 3 cards lasted 6–28 ms: a snapshot in which Electron had put the typed letter
+  into the text but not yet moved the caret index (`after=a`, caret x unchanged), followed
+  by the corrected snapshot, drawn inline. `FocusTracker` now holds such a snapshot once and
+  reads the field again 17 ms later; not yet re-run in the app.
+- The composer grows upward: every caret position had the same y. 3 solid searches found no
+  caret and the estimate stayed in use; that log had no line starts or field frames, so
+  whether a new line was found by the solid search or only at the next pause can't be told.
+  The debug line now has `line=` and `field=`.
 
 ## How to reproduce
 

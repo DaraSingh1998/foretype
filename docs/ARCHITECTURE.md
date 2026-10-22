@@ -422,7 +422,9 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   process and kept; it is checked again 0.5 s later (Chrome sometimes clears it as it
   activates) and while the app shows no focused element, and set again only when it reads
   `false`. With `FORETYPE_ONLY_APPS` (bundle IDs or pids), other apps are never read or
-  primed.
+  primed. Electron updates a field's text a few milliseconds before its caret index: a
+  snapshot whose only change is text after an unmoved caret (`caretLags`) is held once and
+  the field read again 17 ms later.
 - **`Speller.swift`**: on the AX thread, asks `NSSpellChecker` (language left to the
   checker, so it follows the user's languages and learned words) whether the partial word
   is a word, can still become one (`completions`), or is a typo, and for a word just

@@ -732,7 +732,7 @@ final class PixelCaretProvider {
             solidMiss[t.fieldKey] = CFAbsoluteTimeGetCurrent()
             if locating?.gen == gen { locating = nil }
             lock.unlock()
-            Log.debug("pixel caret: no solid caret found in \(t.bundleId)")
+            Log.debug("pixel caret: no solid caret found in \(t.bundleId) (\(found?.rects.count ?? -1) bars, direction \(direction), from y \(from.map { Int($0.minY) } ?? -1))")
             // The controller held the suggestion back for this search: show it anyway.
             onUpdate?(t.fieldKey)
             return after(blinkPause - solidDelay, gen) { self.blink(t, gen) }

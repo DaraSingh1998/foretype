@@ -265,7 +265,11 @@ final class Controller {
                 // What follows the caret on its line decides inline or card; its scalars show invisible ones.
                 let after = snap.textAfter.isEmpty ? "" : " after=" + snap.textAfter.prefix(12).unicodeScalars
                     .map { $0.properties.isAlphabetic ? "a" : String(format: "U+%04X", $0.value) }.joined(separator: ",")
-                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) show=\(panel.mode) -> \(what)")
+                // The caret line's start index and the field's top and height: new lines and a
+                // growing field, without the text.
+                let lineLength = snap.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last?.utf16.count ?? 0
+                let field = snap.frame.map { " field=\(Int($0.minY))+\(Int($0.height))" } ?? ""
+                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field) show=\(panel.mode) -> \(what)")
             }
         case let .status(state, detail):
             Log.debug("engine \(state): \(detail)")

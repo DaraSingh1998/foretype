@@ -12,7 +12,9 @@ the release notes are taken from it.
   letter typed read as text after the caret. The suggestion then showed in a card under the
   line (or not at all) and moved next to the caret only when you paused. Foretype now lines
   the two up and reads the right text on every line; an empty composer (which Chromium
-  reports as one line break) counts as empty.
+  reports as one line break) counts as empty. Electron also moves its caret index a few
+  milliseconds after inserting a typed letter; that moment is skipped, so the card no
+  longer flashes under the line.
 - Apps with no caret over Accessibility (pixel caret): once an app's caret has been seen, a
   new field, a new line or a wrapped line is found while you type with one capture (the
   caret is solid then), instead of showing the card above the field until a pause. Near the
@@ -24,7 +26,8 @@ the release notes are taken from it.
   instead of a card above the field.
 - `scripts/e2e-inline-caret.sh` with `scripts/fixtures/composer.html`, a chat composer that
   types into itself (no keystrokes sent), counts how each suggestion was drawn. The debug log
-  has `show=inline|card|mirror|hidden` and `after=` (what follows the caret on its line).
+  has `show=inline|card|mirror|hidden`, `after=` (what follows the caret on its line),
+  `line=` (the caret line's start index) and `field=` (the field's top and height).
 
 ## 0.1.0 (2026-10-22)
 
