@@ -5,6 +5,18 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### App icon and menu-bar glyph (2026-10-22)
+- Foretype has an app icon: a white caret with a gray ghost word after it on a dark ink
+  tile, drawn by `scripts/make-icon.swift` into `mac/Resources/AppIcon.icns`. Finder, the
+  Dock, alerts, System Settings' privacy lists and the update dialog show it instead of a
+  generic icon, and the DMG uses it as its volume icon. It follows Apple's icon template, so
+  macOS 26 and later fit it to their own shape instead of boxing it in a gray tile.
+- The menu-bar icon is the same caret and ghost word, drawn in code (replacing the
+  `text.cursor` symbol), and shows the engine's state: three dots while starting or loading
+  a model, an exclamation mark when setup, a permission or an error needs attention.
+  Glyphs for paused and paused-to-save-power are ready for a pause feature
+  (`MenuBarIcon.set(.paused)`).
+
 ## 0.1.0 (2026-10-22)
 
 ### Releases on GitHub and automatic updates (2026-10-22)

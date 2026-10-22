@@ -338,6 +338,20 @@ keeps its grant, so the engine starts too, restricted to TextEdit by `FORETYPE_O
 build with `FORETYPE_SIGN_IDENTITY=-` to see the setup window. `-AppleLanguages '(en)'`
 gives English.
 
+**Change the app icon or the menu-bar glyph.** The app icon is drawn by
+`scripts/make-icon.swift` (CoreGraphics and CoreText, so the Command Line Tools are
+enough): edit it, then run `swift scripts/make-icon.swift`, which rewrites
+`mac/Resources/AppIcon.icns` (every iconset size, 16 to 1024 px, through `iconutil`) and the
+README's `docs/images/icon.png`; commit both. `build-mac.sh` copies the `.icns` into the
+bundle (`CFBundleIconFile`), `package-mac.sh` makes it the DMG's volume icon (when `SetFile`
+is installed), and a bare `mac/.build/release/Foretype` loads it from the checkout. The tile
+follows Apple's template (an 824 px rounded square on the 1024 px canvas): macOS 14 and 15
+show it as drawn, macOS 26 and later scale it up to their own mask. Check what Finder shows
+with `NSWorkspace.shared.icon(forFile:)` on the built app; Finder and the Dock cache icons,
+so a changed icon may need `killall Dock` or a new path. The menu-bar glyph is drawn in code
+(`mac/Sources/Foretype/Icons.swift`, `MenuBarIcon`), one picture per state; keep its edges
+on the half-point grid so it is sharp at @2x.
+
 **Change the prompt format or decoding.** Keep everything per-keystroke at the end of the
 prompt (cache stability). Replay the corpus before and after.
 
