@@ -34,6 +34,15 @@ case "$IDENTITY" in
   "Developer ID Application:"*) KIND=developer-id ;;
   *) KIND=certificate ;;
 esac
+# Sign a self-signed identity by its SHA-1: codesign looks names up among trusted identities
+# only on some versions ("no identity found" on the macos-26 runner), and this certificate is
+# deliberately untrusted.
+if [ "$KIND" = certificate ] && ! [[ "$IDENTITY" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+  NAMED="$IDENTITY"
+  IDENTITY="$(security find-identity -p codesigning ${FORETYPE_SIGN_KEYCHAIN:+"$FORETYPE_SIGN_KEYCHAIN"} 2>/dev/null \
+    | awk -v n="\"$NAMED\"" 'index($0, n) { print $2; exit }' || true)"
+  [ -n "$IDENTITY" ] || { echo "signing identity \"$NAMED\" not found${FORETYPE_SIGN_KEYCHAIN:+ in $FORETYPE_SIGN_KEYCHAIN}"; exit 1; }
+fi
 SPARKLE="${FORETYPE_SPARKLE:-0}"
 SCRATCH="$ROOT/mac/.build"
 [ "$SPARKLE" = 1 ] && SCRATCH="$ROOT/mac/.build-sparkle"

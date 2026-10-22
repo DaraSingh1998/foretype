@@ -70,6 +70,7 @@ jobs:
           echo "$P12" | base64 --decode > "$RUNNER_TEMP/signing.p12"
           security import "$RUNNER_TEMP/signing.p12" -k "$KC" -f pkcs12 -P "$P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
           rm -f "$RUNNER_TEMP/signing.p12"
           security find-identity -p codesigning "$KC"
           echo "FORETYPE_SIGN_KEYCHAIN=$KC" >> "$GITHUB_ENV"
