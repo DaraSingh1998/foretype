@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.6 (2026-10-23)
+
 ### Text from other apps no longer holds up typing (2026-10-23)
 - When the text Foretype uses from other windows or from the screen changes, your next
   suggestion no longer waits while the model reads it: suggestions keep coming from what it
