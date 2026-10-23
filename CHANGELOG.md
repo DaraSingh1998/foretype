@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.5 (2026-10-23)
+
 ### Switching models no longer stops suggestions (2026-10-23)
 - Choosing another model in Settings ▸ Model, or turning Use Text from Other Apps on or off
   on a Mac with 16 GB or more (which restarts the model with a larger context), could stop
