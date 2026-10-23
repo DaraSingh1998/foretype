@@ -117,6 +117,14 @@ final class EngineBridge {
         return ft_engine_set_context(handle, json)
     }
 
+    /// What the core holds of other apps' text and what the last prompt took from it
+    /// (`ft_engine_context_report`), for the "What Foretype sees" window. Read only.
+    func contextReport() -> ContextReport? {
+        guard let handle, let raw = ft_engine_context_report(handle) else { return nil }
+        defer { ft_string_free(raw) }
+        return try? JSONDecoder().decode(ContextReport.self, from: Data(String(cString: raw).utf8))
+    }
+
     func historyStats() -> (records: Int, words: Int) {
         let o = historyStatsJSON()
         return (o["records"] as? Int ?? 0, o["words"] as? Int ?? 0)
@@ -160,6 +168,38 @@ final class EngineBridge {
         let data = String(cString: raw).data(using: .utf8) ?? Data()
         return (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
     }
+}
+
+/// `ft_engine_context_report`'s JSON. Tokens are the core's estimate, the budget's unit.
+struct ContextReport: Decodable, Equatable {
+    struct Passage: Decodable, Equatable {
+        /// The window's header line in the prompt ("Microsoft Word — Q3 Budget Review.docx").
+        var label: String
+        var app: String
+        var bundle_id: String
+        var ordinal: Int
+        var tokens: Int
+        var text: String
+    }
+
+    struct Last: Decodable, Equatable {
+        /// Seconds since 1970.
+        var at: Double
+        var tokens: Int
+        /// The prompt ran without its section, which didn't fit the model's context.
+        var left_out: Bool
+        /// Passages it held whose window has left the pool since (not shown).
+        var gone: Int
+        var passages: [Passage]
+    }
+
+    /// A server makes suggestions: nothing from other apps is kept or sent.
+    var server = false
+    var windows = 0
+    var passages = 0
+    var budget = 0
+    var changes = 0
+    var last: Last?
 }
 
 /// The custom instructions a fresh install starts with (`core/data/default-instructions.json`).

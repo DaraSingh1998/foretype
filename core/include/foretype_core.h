@@ -47,6 +47,13 @@ bool ft_engine_set_details(FtEngine *engine, const char *details_json);
 /// {"passages": []} clears it; ignored with a server backend. False if the JSON doesn't parse.
 bool ft_engine_set_context(FtEngine *engine, const char *context_json);
 
+/// What the core holds of other apps' text and what the last prompt took from it (read only,
+/// for the shell's "What Foretype sees" view): {"server","windows","passages","budget",
+/// "changes","last": null | {"at","tokens","left_out","gone","passages": [{"label","app",
+/// "bundle_id","ordinal","tokens","text"}]}}. Tokens are estimates; passages whose window left
+/// the pool are only counted ("gone"). Free with ft_string_free.
+char *ft_engine_context_report(FtEngine *engine);
+
 /// Installs the completer used when the config's backend is "shell".
 void ft_engine_set_completer(FtEngine *engine, FtCompleteCallback callback, void *ctx);
 

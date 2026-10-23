@@ -180,6 +180,9 @@ impl Query {
 struct Window {
     /// "Microsoft Word — Q3 Budget Review.docx", cleaned for a header line.
     label: String,
+    /// Who the window belongs to, for the shell's report view (`report`).
+    app: String,
+    bundle_id: String,
     weight: f64,
     prior: f64,
     /// When the window first came into the pool (its place in the section).
@@ -221,6 +224,22 @@ pub struct OtherApps {
     /// Sections rendered lately and the passages in them: the engine keeps serving the old
     /// one while a new one prefills (`section_alive`).
     recent: VecDeque<(String, Vec<u64>)>,
+    /// The budget of the last selection, in estimated tokens (0 before the first).
+    pub budget: usize,
+}
+
+/// One passage of a prompt's section, for the shell's "What Foretype sees" view.
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct ReportPassage {
+    /// The window's header line ("Microsoft Word — Q3 Budget Review.docx").
+    pub label: String,
+    pub app: String,
+    pub bundle_id: String,
+    /// Its place in the window's text (0 is the first passage).
+    pub ordinal: usize,
+    /// Estimated tokens (`estimate_tokens`).
+    pub tokens: usize,
+    pub text: String,
 }
 
 impl OtherApps {
@@ -290,6 +309,8 @@ impl OtherApps {
             if added {
                 self.windows.push(Window {
                     label: label(p),
+                    app: p.app.clone(),
+                    bundle_id: p.bundle_id.clone(),
                     weight,
                     prior: if p.visible { VISIBLE_PRIOR } else { 0.0 },
                     seq,
@@ -302,6 +323,7 @@ impl OtherApps {
     /// The section for this query within `budget` tokens, keeping the current selection
     /// unless another is clearly better (see the module notes). Empty when nothing fits.
     pub fn select(&mut self, q: &Query, budget: usize) -> &str {
+        self.budget = budget;
         let key = (self.generation, q.key, budget);
         if self.memo == Some(key) {
             return &self.section;
@@ -361,6 +383,39 @@ impl OtherApps {
     pub fn section_alive(&self, section: &str) -> bool {
         section.is_empty()
             || self.recent.iter().find(|(s, _)| s == section).is_some_and(|(_, ids)| ids.iter().all(|id| self.index.contains_key(id)))
+    }
+
+    /// The passages of `section`, rendered here earlier, by id: `None` for a section this
+    /// pool never rendered (or forgot). An empty section has none.
+    pub fn ids_of(&self, section: &str) -> Option<Vec<u64>> {
+        if section.is_empty() {
+            return Some(Vec::new());
+        }
+        self.recent.iter().find(|(s, _)| s == section).map(|(_, ids)| ids.clone())
+    }
+
+    /// The passages with these ids that are still in the pool, in the section's order
+    /// (windows as they first came, passages in document order). Text that left the pool is
+    /// never shown again: the second value counts the passages that did.
+    pub fn report(&self, ids: &[u64]) -> (Vec<ReportPassage>, usize) {
+        let mut found: Vec<usize> = ids.iter().filter_map(|id| self.index.get(id).copied()).collect();
+        found.sort_by_key(|&i| (self.windows[self.chunks[i].window].seq, self.chunks[i].ordinal));
+        let passages = found
+            .iter()
+            .map(|&i| {
+                let c = &self.chunks[i];
+                let w = &self.windows[c.window];
+                ReportPassage {
+                    label: w.label.clone(),
+                    app: w.app.clone(),
+                    bundle_id: w.bundle_id.clone(),
+                    ordinal: c.ordinal,
+                    tokens: c.tokens,
+                    text: c.text.clone(),
+                }
+            })
+            .collect();
+        (passages, ids.len() - found.len())
     }
 
     /// The current section, without selecting again (the engine's prefetch).
@@ -645,6 +700,42 @@ Pricing page: Omar (Web)\nPress: Grace (Comms)\nRisks\nPayment provider certific
         let old = o.select(&Query::new("", "", ""), 512).to_string();
         o.set_passages(&[], 1_000_000.0);
         assert!(!o.section_alive(&old));
+    }
+
+    #[test]
+    fn report_lists_a_sections_passages_while_they_are_in_the_pool() {
+        let budget = window("Microsoft Word", "Q3 Budget Review.docx", BUDGET, true, 0.0);
+        let launch = window("Keynote", "Spring Launch Plan.key", LAUNCH, true, 0.0);
+        let mut o = pool(&[budget.clone(), launch.clone()]);
+        let section = o.select(&Query::new("Contractors cost $68,900, the warehouse migration", "", ""), 512).to_string();
+        assert_eq!(o.budget, 512);
+        let ids = o.ids_of(&section).expect("rendered here");
+        assert_eq!(o.ids_of(""), Some(Vec::new()));
+        assert_eq!(o.ids_of("[Also open: Something else]\nnever rendered\n\n"), None);
+        let (passages, gone) = o.report(&ids);
+        assert_eq!(gone, 0);
+        assert_eq!(passages.len(), ids.len());
+        // In the section's order, each with its window and its share of the budget.
+        let mut at = 0;
+        for p in &passages {
+            let found = section[at..].find(&p.text).map(|i| at + i);
+            assert!(found.is_some(), "{:?} not after byte {at} of {section}", p.text);
+            at = found.unwrap() + p.text.len();
+            assert!(p.tokens > 0 && p.tokens == estimate_tokens(&p.text));
+            assert!(section.contains(&format!("[Also open: {}]", p.label)));
+        }
+        assert_eq!(passages[0].app, "Microsoft Word");
+        assert_eq!(passages[0].bundle_id, "com.example.microsoftword");
+        // The Word window closes: its passages aren't shown any more, only counted.
+        o.set_passages(&[launch], 1_000_000.0);
+        let (left, gone) = o.report(&ids);
+        assert!(left.iter().all(|p| p.app == "Keynote"));
+        assert_eq!(left.len() + gone, ids.len());
+        assert!(gone > 0);
+        // A cleared pool: nothing.
+        o.set_passages(&[], 1_000_000.0);
+        assert_eq!(o.report(&ids).0, Vec::new());
+        assert_eq!(o.ids_of(&section), None);
     }
 
     #[test]

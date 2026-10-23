@@ -173,6 +173,21 @@ pub unsafe extern "C" fn ft_engine_set_context(engine: *mut FtEngine, context_js
     }
 }
 
+/// What the core holds of other apps' text and what the last prompt took from it, for the
+/// shell's "What Foretype sees" view: `{"server": bool, "windows": n, "passages": n, "budget":
+/// n, "changes": n, "last": null | {"at" (seconds since 1970), "tokens", "left_out", "gone",
+/// "passages": [{"label", "app", "bundle_id", "ordinal", "tokens", "text"}]}}`. Tokens are the
+/// core's estimate, the budget's unit. Only text already in memory: passages whose window has
+/// left the pool since are counted in `gone`, not shown. Read only; free with `ft_string_free`.
+///
+/// # Safety
+/// `engine` must be live.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_context_report(engine: *mut FtEngine) -> *mut c_char {
+    let Some(e) = engine.as_ref() else { return ptr::null_mut() };
+    to_c(serde_json::to_string(&e.core.context_report()).unwrap_or_else(|_| "{}".into()))
+}
+
 /// Compatibility rule for a bundle ID as JSON (`disabled`, `insertion`, `prime`, `note`).
 ///
 /// # Safety

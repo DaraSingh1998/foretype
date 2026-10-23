@@ -35,7 +35,7 @@ use crate::context::{ContextInput, Prompt};
 use crate::details::UserDetails;
 use crate::engine::{Background, CacheStats, Engine, EngineConfig, GenError, GenOptions};
 use crate::history::{History, Record};
-use crate::others::{OtherApps, Passage, Query};
+use crate::others::{OtherApps, Passage, Query, ReportPassage};
 use crate::policy::CompatDb;
 use crate::profile::Profile;
 use crate::session::{AcceptMode, Accepted, Session};
@@ -341,6 +341,54 @@ struct Shared {
     cache: Mutex<CacheStats>,
     /// Requests served with an older header while the new one prefilled (D47).
     served_old: AtomicU64,
+    /// The other-apps section of the last prompt served (`ft_engine_context_report`).
+    last_served: Mutex<Option<Served>>,
+}
+
+/// What the last prompt served took from other apps: its section's passages by id (their
+/// text stays in the pool only), its estimated tokens and when it ran.
+#[derive(Debug, Clone, Default)]
+struct Served {
+    ids: Vec<u64>,
+    tokens: usize,
+    at: f64,
+    /// The prompt didn't fit the context with its section: it ran without it.
+    left_out: bool,
+}
+
+/// `ft_engine_context_report`'s JSON: what the core holds of other apps' text and what the
+/// last prompt took from it, for the shell's "What Foretype sees" view. Only text already in
+/// memory; nothing is read for it.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct ContextReport {
+    /// A server makes suggestions: other apps' text is never kept or sent.
+    pub server: bool,
+    /// Windows and passages in the pool.
+    pub windows: usize,
+    pub passages: usize,
+    /// The section's budget in estimated tokens: the last selection's, else the setting.
+    pub budget: usize,
+    /// The last prompt served, if any since the pool was last emptied.
+    pub last: Option<LastReport>,
+    /// How often the section changed (each change costs a full prefill).
+    pub changes: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct LastReport {
+    /// Seconds since 1970.
+    pub at: f64,
+    /// Estimated tokens of its other-apps section (0 without one).
+    pub tokens: usize,
+    pub left_out: bool,
+    /// The section's passages still in the pool, in its order.
+    pub passages: Vec<ReportPassage>,
+    /// Passages it held whose window has left the pool since: not shown.
+    pub gone: usize,
+}
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
 }
 
 fn debug() -> bool {
@@ -387,6 +435,7 @@ impl Core {
             forget: AtomicBool::new(false),
             cache: Mutex::new(CacheStats::default()),
             served_old: AtomicU64::new(0),
+            last_served: Mutex::new(None),
         });
         let engine_cfg = EngineConfig {
             model_path: config.model_path.clone(),
@@ -455,18 +504,34 @@ impl Core {
     /// apps' text only ever reaches an on-device model. An empty list clears it.
     pub fn set_context(&self, passages: Vec<Passage>) {
         let passages = if self.shared.remote_http { Vec::new() } else { passages };
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+        let now = unix_now();
         let mut o = self.shared.others.lock().unwrap();
         if passages.is_empty() && !(o.is_empty() && o.section().is_empty()) {
             // Forgotten means forgotten: the KV cache and saved contexts hold the old text.
             self.shared.forget.store(true, Ordering::SeqCst);
             self.shared.wake.notify_all();
         }
+        if passages.is_empty() {
+            *self.shared.last_served.lock().unwrap() = None;
+        }
         o.set_passages(&passages, now);
         if debug() {
             let (w, c) = o.size();
             eprintln!("[foretype] other apps: {w} windows, {c} passages ({} visible)", passages.iter().filter(|p| p.visible).count());
         }
+    }
+
+    /// What the core holds of other apps' text and what the last prompt took from it
+    /// (`ft_engine_context_report`).
+    pub fn context_report(&self) -> ContextReport {
+        let o = self.shared.others.lock().unwrap();
+        let (windows, passages) = o.size();
+        let last = self.shared.last_served.lock().unwrap().clone().map(|s| {
+            let (passages, gone) = o.report(&s.ids);
+            LastReport { at: s.at, tokens: s.tokens, left_out: s.left_out, passages, gone }
+        });
+        let budget = if o.budget > 0 { o.budget } else { self.shared.settings.read().unwrap().other_apps_tokens };
+        ContextReport { server: self.shared.remote_http, windows, passages, budget, last, changes: o.changes }
     }
 
     /// How often the other-apps section changed (each change costs a full prefill).
@@ -968,6 +1033,26 @@ fn other_apps_section(shared: &Shared, snap: &Snapshot, settings: &Settings, inp
     section
 }
 
+/// Notes what the prompt just served took from other apps, for the report view. `asked`: the
+/// request's own prompt; `old_header`: `served` kept the serving slot's older header while
+/// the new one prefills (D47), else a section missing from `served` was left out to fit.
+fn record_served(shared: &Shared, asked: &Prompt, served: &Prompt, old_header: bool) {
+    let section = served.others_section();
+    let o = shared.others.lock().unwrap();
+    // A section this pool no longer knows (emptied meanwhile) is not reported.
+    let Some(ids) = o.ids_of(section) else { return };
+    let mut last = shared.last_served.lock().unwrap();
+    if section.is_empty() && asked.others_section().is_empty() && o.is_empty() && last.is_none() {
+        return;
+    }
+    *last = Some(Served {
+        ids,
+        tokens: others::estimate_tokens(section),
+        at: unix_now(),
+        left_out: !old_header && section.is_empty() && !asked.others_section().is_empty(),
+    });
+}
+
 /// A prompt whose other-apps section didn't fit the context: the same prompt without it.
 fn without_others(p: &Prompt) -> Option<Prompt> {
     p.without_others()
@@ -1276,10 +1361,12 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                 // The prompt actually served: the request's own, or (D47) the same with the
                 // serving slot's older header while the new one prefills in the background.
                 let mut served = job.prompt.clone();
+                let mut served_old = false;
                 let mut result = match engine {
                     Runner::Local(e) => {
                         let (p, tokens, later) = plan(e, &shared, job.field_key, &job.prompt, live.as_ref());
                         let old_header = later.is_some();
+                        served_old = old_header;
                         background = old_header;
                         match later {
                             Some(t) => e.set_background(t),
@@ -1309,6 +1396,9 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     if engine.is_local() {
                         live = Some((job.field_key, served.clone()));
                     }
+                }
+                if result.is_ok() {
+                    record_served(&shared, &job.prompt, &served, served_old);
                 }
                 match result {
                     Ok(mut c) => {
@@ -1796,6 +1886,48 @@ mod tests {
         c.shared.forget.store(false, Ordering::SeqCst);
         c.set_context(Vec::new());
         assert!(!c.shared.forget.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn context_report_shows_what_the_last_prompt_took() {
+        let c = core();
+        // Nothing yet: the setting's budget, no last prompt.
+        let r = c.context_report();
+        assert!(!r.server && r.windows == 0 && r.last.is_none());
+        assert_eq!(r.budget, Settings::default().other_apps_tokens);
+        c.set_context(vec![sheet(true)]);
+        let asked = build_prompt(&c.shared, &snap(1, "Contractors came to sixty"), &c.settings(), &[], true);
+        record_served(&c.shared, &asked, &asked, false);
+        let r = c.context_report();
+        assert_eq!((r.windows, r.passages), (1, 1));
+        let last = r.last.clone().expect("a prompt was served");
+        assert_eq!(last.passages.len(), 1);
+        assert_eq!(last.passages[0].bundle_id, "com.apple.iWork.Numbers");
+        assert!(last.passages[0].text.starts_with("Contractors: $68,900"));
+        assert_eq!(last.tokens, others::estimate_tokens(asked.others_section()));
+        assert!(last.tokens <= r.budget && !last.left_out && last.gone == 0 && last.at > 0.0);
+        let json = serde_json::to_value(&r).unwrap();
+        assert_eq!(json["last"]["passages"][0]["label"], "Numbers \u{2014} Q3 budget");
+        // Served without the section to fit the context: left out. With the previous header
+        // while the new one prefills (D47): not.
+        let bare = asked.without_others().unwrap();
+        record_served(&c.shared, &asked, &bare, false);
+        assert!(c.context_report().last.unwrap().left_out);
+        record_served(&c.shared, &asked, &bare, true);
+        assert!(!c.context_report().last.unwrap().left_out);
+        record_served(&c.shared, &asked, &asked, false);
+        // The window closes: its text isn't reported any more.
+        c.set_context(vec![Passage { window_title: "Q4 budget".into(), ..sheet(true) }]);
+        let last = c.context_report().last.unwrap();
+        assert!(last.passages.is_empty() && last.gone == 1);
+        // Forgotten (Forget All Now, pause): no last prompt either.
+        c.set_context(Vec::new());
+        assert!(c.context_report().last.is_none());
+        // A server: flagged, and nothing is ever held.
+        let remote = Core::new(CoreConfig { backend: "openai".into(), backend_url: "http://127.0.0.1:9".into(), ..CoreConfig::default() }, Box::new(|_| {}));
+        remote.set_context(vec![sheet(true)]);
+        let r = remote.context_report();
+        assert!(r.server && r.windows == 0 && r.last.is_none());
     }
 
     #[test]
