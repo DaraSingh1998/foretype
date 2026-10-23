@@ -33,6 +33,10 @@ scripts/sparkle-local-test.sh                                   # waiting update
   `mac/Package.swift`) plus Metal, Accelerate, ScreenCaptureKit, Vision, IOKit, Carbon and
   libc++.
 - `dsymutil` warnings about `unicode.cpp.o` symbols during the Swift link are harmless.
+- `build-mac.sh` exits 1 with "swift build failed" when `swift build` fails, before it
+  touches `build/Foretype.app`. It goes by `swift build`'s exit status, not by whether
+  `mac/.build/release/Foretype` exists: after compile errors that file is the previous
+  build's binary, and it used to be packaged and signed as if the build had worked.
 
 ## Tests
 
