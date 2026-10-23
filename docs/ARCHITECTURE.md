@@ -141,7 +141,27 @@ never while paused.
 - **Complete** → session `set` → emit `suggestion` (`source: model`, `ms`, `prefilled`,
   `stop`). A prompt that leaves under 64 tokens of the context free (`GenError::TooLong`)
   is run again without its other-apps section (`Prompt::others` bytes at the front), and a
-  warm-up likewise. A suggestion that starts echoing a header marker (`[End of screen t`,
+  warm-up likewise.
+- **Old header while the new one prefills** (D47, built-in engine): `plan` tokenizes the
+  request's prompt and asks the engine what it would cost (`Engine::cost`: tokens left after
+  the longest prefix a slot or saved context shares with it). Up to 48 tokens, it is served
+  as it is. Otherwise, when the prompt differs from `live` (what the serving slot holds)
+  only in text read from screens, it is served with `live`'s header instead
+  (`context::with_old_header`: in the same field `live`'s whole header, other-apps section
+  and screen text; in another field only its other-apps section) and its own prompt becomes
+  the engine's background prompt. Never with a section whose passages have left the pool
+  (`OtherApps::section_alive`): a closed window, an app put on the never-read list or a
+  cleared pool is not quoted again, not even for a keystroke. The prefetch keeps the header
+  the suggestion was served with, and is skipped while a background prompt waits (the time
+  between keystrokes goes to it).
+- **Warm-up** (built-in engine): the field's prompt becomes the background prompt; nothing
+  is prefilled in the request's way.
+- **Between requests**: with a background prompt and no job queued, `background_step` runs
+  about 40 ms of prefill at a time (`BACKGROUND_STEP_MS`), checking for a job after each, so
+  a keystroke waits at most one step. Server backends still warm with one request.
+- **Forgetting**: when the other-apps pool is emptied after holding text (pause, lock,
+  sleep, the setting switched off), `set_context` raises `forget` and the worker resets the
+  engine before anything else: every slot, saved context and the background prompt go. A suggestion that starts echoing a header marker (`[End of screen t`,
   `[Also open: …`; `context::strip_marker_echo`) is cut there, the prefetch's too.
 - **Prefetch** (when `settings.prefetch`; the shell enables it on mains power only):
   complete the prompt for `text_before + suggestion` and `remember` it in the session cache.
@@ -150,9 +170,34 @@ never while paused.
 
 ### Engine (`engine.rs`)
 
-- **One context, one sequence.** `sync(tokens)` keeps the longest common prefix with the
-  tokens already in the KV cache, removes the rest (`clear_kv_cache_seq`), and prefills
-  only the tail; the last prompt token is always re-decoded so its logits are fresh.
+- **One context, a few prompts (slots).** Each slot is a llama.cpp sequence in one unified
+  KV cache (`kv_unified`), with the tokens it holds. `sync(tokens)` picks the slot (`place`),
+  keeps the longest common prefix with its tokens, removes the rest (`clear_kv_cache_seq`),
+  and prefills only the tail; the last prompt token is always re-decoded so its logits are
+  fresh. The KV cache is q8_0 by default (`EngineConfig::kv_type`; f16 before Phase D), with
+  flash attention as llama.cpp decides (on with Metal: it was already on before Phase D).
+- **Choosing a slot** (`place`, D47): a slot whose prompt the request extends or cuts back
+  a little (it keeps three quarters, or loses at most 256 tokens) is used in place;
+  otherwise the least recently used slot other than the serving one is taken: its prompt
+  is saved first when it holds 256 tokens or more, and it is seeded with the longest prefix
+  at hand, copied from another slot (`seq_cp`: the cells are shared, nothing is copied) or
+  restored from a saved context. Recurrent and hybrid models have one slot.
+- **Background prompt** (`set_background`, `background_step`): a prompt to prefill between
+  requests, into a slot other than the serving one, in steps of about the given time (from
+  the rate measured so far, 16 tokens at least, the prompt's last token left for the
+  request that uses it). The next request whose prompt is in that slot is served there and
+  that slot serves from then on. Same-field changes (a new screen text under the same
+  other-apps section) share the section's cells. With one slot the whole prompt is
+  prefilled in place, cancellable between batches, as warm-ups were before.
+- **Saved contexts**: slots' prompts copied out of the KV cache (`llama_state_seq_get_data`
+  through `state_seq_get`) into an LRU of at most `saved_bytes` (the macOS shell: 384 MB
+  from 16 GB, 128 MB from 12 GB, none under 12 GB), restored into a slot when one shares a
+  longer prefix with a request than any slot does (a restore counts as 32 tokens). Each is
+  dropped 10 minutes after it was saved, like other apps' text itself.
+- **Room**: the cache has `kv_cells` cells (default `n_ctx` per slot) shared by the slots
+  and beam search. A decode that finds no room empties the slots that are neither serving
+  nor being filled and tries once more; a background prompt that still doesn't fit is
+  dropped (the next request prefills it in the foreground).
 - **Rollback**: after generating, the generated tokens are removed again, so the cache
   always mirrors the prompt and the next keystroke prefills only 0–2 tokens.
 - **Token healing**: the prompt stops before the partial word; while the generated bytes
@@ -164,8 +209,8 @@ never while paused.
   continuation; the suggestion is capped at 3 words and cut where it starts repeating the
   rest of the line. Qwen3's fill-in-the-middle tokens were tried and produced noise on
   prose (`docs/MEASUREMENTS.md`).
-- **Phrase beam search** (`beam_width` > 1, truncating models): beams live in sequences
-  1..16 of a unified KV cache (copying a sequence only tags cells; sequence 0 keeps the
+- **Phrase beam search** (`beam_width` > 1, truncating models): beams live in the 16
+  sequences after the slots' (copying a sequence only tags cells; the serving slot keeps the
   prompt, so nothing is rolled back), one batched decode per step, the `beam_width` best
   children by summed log-probability survive, the same healing, bias and stops as greedy
   (`stop_before`), and the finished phrase with the best mean log-probability wins (its
@@ -245,6 +290,10 @@ fragment = " no"                                 ← typed partial word + its le
 - Everything that changes rarely (other apps' text, screen text, examples, header) comes
   first; everything that changes per keystroke comes last. The other-apps section heads it:
   it survives moving to another field of the same pool, and its selection is sticky.
+- `Prompt` records where its parts end: `others` (the other-apps section), `screen` (the
+  screen text) and `header` (the blank line before the body). The worker uses them to drop
+  the section from a prompt that is too long and to serve a prompt with an older header
+  while the new one prefills (`with_old_header`, `with_header_of`; D47).
 - The writer's notes are the user's custom instructions. They start as the defaults in
   `core/data/default-instructions.json` (`instructions.rs`, `ft_default_instructions`): one
   note for every app and, by bundle ID, optional notes per kind of app (none ship). The
@@ -432,9 +481,11 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_model_catalog(ram_gb)` | Model list (no engine needed) |
 | `ft_default_instructions()` | The custom instructions a fresh install starts with, `{"global", "apps": {bundle: note}}` (`core/data/default-instructions.json`; no engine needed) |
 
-**CoreConfig** (`ft_engine_new`): `model_path`, `n_ctx` (2048), `n_gpu_layers` (999),
-`n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`
-(`local`|`llama-server`|`openai`|`shell`), `backend_url`, `backend_model`, `backend_api_key`.
+**CoreConfig** (`ft_engine_new`): `model_path`, `n_ctx` (2048: the longest prompt plus 64),
+`n_gpu_layers` (999), `n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`
+(`local`|`llama-server`|`openai`|`shell`), `backend_url`, `backend_model`, `backend_api_key`,
+and the built-in engine's KV cache (D47): `kv_type` (`q8_0`; or `f16`), `slots` (2),
+`kv_cells` (0: `n_ctx` per slot), `saved_mb` (0), `flash_attn` (absent: llama.cpp decides).
 
 **Settings** (`ft_engine_configure`): `enabled`, `paused` (false), `length_words` (4), `stop_at_sentence_end`,
 `instructions`, `app_instructions` {bundle: text}, `disabled_apps`, `enabled_apps`,

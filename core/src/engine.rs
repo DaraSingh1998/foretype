@@ -944,6 +944,10 @@ impl Engine {
             self.clear_slot(s);
         }
         let from = self.slots[s].cached.len();
+        if from + 1 >= target.len() {
+            // A saved context restored into the slot held it all.
+            return self.background_done();
+        }
         let n = ((self.bg_rate * max_ms) as usize).clamp(16, self.n_batch);
         let to = (from + n).min(target.len() - 1);
         let t = Instant::now();
