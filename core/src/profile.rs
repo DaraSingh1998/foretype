@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::history::Record;
+use crate::words;
 
 /// Very common English words: frequent in everyone's writing, so biasing them says nothing
 /// about the user and only distorts the model.
@@ -38,7 +39,7 @@ impl Profile {
     }
 
     pub fn add_text(&mut self, text: &str) {
-        for raw in text.split(|c: char| !(c.is_alphanumeric() || c == '\'' || c == '\u{2019}' || c == '-')) {
+        for raw in text.split(|c: char| !(words::is_letter(c) || c == '\'' || c == '\u{2019}' || c == '-')) {
             let w = raw.trim_matches(|c: char| c == '\'' || c == '\u{2019}' || c == '-');
             if w.chars().count() < 4 || w.chars().any(|c| c.is_ascii_digit()) {
                 continue;
@@ -83,7 +84,7 @@ impl Profile {
 }
 
 fn word_set(text: &str) -> HashSet<String> {
-    text.split(|c: char| !c.is_alphanumeric())
+    text.split(|c: char| !words::is_letter(c))
         .filter(|w| w.chars().count() >= 4)
         .map(str::to_lowercase)
         .collect()
@@ -131,6 +132,13 @@ mod tests {
         assert!(w.iter().any(|(x, _)| x == "reconciliation"));
         assert!(!w.iter().any(|(x, _)| x == "the" || x == "with" || x == "Marco"));
         assert!(w.iter().all(|(_, s)| *s > 0.0 && *s <= 1.0));
+    }
+
+    #[test]
+    fn profile_keeps_hindi_words_whole() {
+        let p = Profile::from_records(&[Record { ts: 1, app: "a".into(), text: "क्या तुम दफ़्तर आ रहे हो?".into() }]);
+        assert!(p.knows("क्या") && p.knows("दफ़्तर"));
+        assert!(!p.knows("फ़"));
     }
 
     #[test]

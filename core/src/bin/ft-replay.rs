@@ -115,13 +115,13 @@ impl SpellMap {
         let text = s.text_before.as_str();
         let frag_start = text.char_indices().rev().take_while(|(_, c)| words::is_word_char(*c)).last().map_or(text.len(), |(i, _)| i);
         let fragment = &text[frag_start..];
-        if fragment.chars().count() >= 3 && fragment.chars().all(char::is_alphabetic) {
+        if fragment.chars().count() >= 3 && fragment.chars().all(words::is_letter) {
             s.spell_fragment = self.fragments.get(fragment).cloned().unwrap_or_default();
         } else if fragment.is_empty() && text.ends_with(' ') {
             let trimmed = text.trim_end_matches(' ');
             let w_start = trimmed.char_indices().rev().take_while(|(_, c)| words::is_word_char(*c)).last().map_or(trimmed.len(), |(i, _)| i);
             let word = &trimmed[w_start..];
-            if text.len() - trimmed.len() <= 2 && word.chars().count() >= 2 && word.chars().all(char::is_alphabetic) {
+            if text.len() - trimmed.len() <= 2 && word.chars().count() >= 2 && word.chars().all(words::is_letter) {
                 if let Some(fix) = self.corrections.get(word) {
                     s.spell_word = word.to_string();
                     s.spell_correction = fix.clone();

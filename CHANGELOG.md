@@ -18,6 +18,19 @@ the release notes are taken from it.
 - `FORETYPE_DEBUG` logs the font each suggestion is drawn in; `--font-selftest` checks the
   ghost font for a soft wrap, mixed sizes and a zoomed document.
 
+### Hindi and Hinglish (2026-10-22)
+- Autocorrect and the typo gate leave romanized Hindi alone. The macOS spell checker knows
+  none of it, so it offered "hain" → "hair", "mein" → "main" and "tum" → "sum", and hid
+  suggestions while typing "jaldi" or "matlab". About 470 common Hinglish words (with their
+  usual spellings: nahi/nahin/nhi, acha/accha) are now never corrected or blocked, and in a
+  field where two of the last 40 words are Hinglish, neither aid fires at all.
+- A word typed earlier in the same field and kept is no longer corrected or blocked again
+  (names, jargon, any language).
+- The Hindi danda (। and ॥) ends a sentence: **Stop at end of sentence** stops there, and a
+  capitalized word after it counts as a sentence start.
+- Hindi words with a virama or nukta (क्या, दफ़्तर) are no longer split in two, which made
+  the prompt end in half a syllable and kept them out of Learn From My Writing whole.
+
 ## 0.1.2 (2026-10-22)
 
 ### A waiting update is visible (2026-10-22)

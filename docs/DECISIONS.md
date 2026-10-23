@@ -220,7 +220,8 @@ autocorrect, with leniency for capitals, acronyms, digits and the user's own wor
 spellings and brands; the system checker knows them and costs under a millisecond. Keeping
 the policy in the core keeps it portable (another shell can plug in Hunspell).
 **Cost.** The replay tool can't call the checker, so `tools/spell-map` precomputes verdicts
-for a corpus. On the clean corpus: 4 false blocks, no change in keystrokes saved.
+for a corpus. On the clean corpus: 4 false blocks, no change in keystrokes saved. Romanized
+Hindi, which no system dictionary knows, is handled by the core's own word list (D41).
 
 ## D26. Replacement suggestions for emoji and autocorrect (2026-10-20)
 
@@ -513,3 +514,27 @@ glyph (no color). Critical updates get no special treatment. The offer kept in t
 can be up to a day stale if a release is pulled (the next check clears it). Verified with a
 local feed by the app's own report of what its menu and Settings show
 (`FORETYPE_UPDATE_REPORT`), not by clicking the real menu-bar item.
+
+## D41. Romanized Hindi: a built-in word list overrides the spell checker (user decision, 2026-10-22)
+
+**Decision.** The core carries about 470 common romanized Hindi words with their usual
+spellings (`core/src/hinglish.rs`). A listed word is never autocorrected and a fragment
+that starts one is never gated; when two of the last 40 words before the caret are listed,
+the field counts as Hinglish and autocorrect and the typo gate stand down for every word.
+A word typed earlier in the same field and kept also counts as known, in any language.
+**Why.** The macOS spell checker knows no romanized Hindi: on en_IN it offered "hain" →
+"hair", "mein" → "main", "tum" → "sum", and gated "jaldi", "matlab" and "kaam" mid-word:
+on a 12-document Hinglish corpus, 172 false fixes and 188 false blocks, 4 and 4 with a list
+written before seeing it, keystrokes saved 14.2% → 15.1%; the English corpus is unchanged
+(`docs/MEASUREMENTS.md`). In Hinglish text the checker's verdict on the other words is
+noise too, so the context rule turns it off rather than growing the list. The policy stays
+in the core, needs no FFI change and works from a field's first word. Alternatives the user
+weighed: only the field's own vocabulary (every Hinglish word still gets a wrong fix the
+first time), the shell reporting how much of the recent text the checker flags
+(language-agnostic, but an FFI change, more checker calls, and English full of names could
+trip it), and a manual "I write Hinglish" setting.
+**Cost.** English typos inside a Hinglish message are neither fixed nor gated. Words that
+are also English (main, me, par, the, hum, sun, mat) are left off the list so that English
+doesn't read as Hinglish; until a field has two listed words, unlisted spellings are still
+judged by the checker. A typo the user kept once in a field isn't offered a fix again there.
+The list is maintained by hand.
