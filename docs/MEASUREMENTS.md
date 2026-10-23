@@ -1013,8 +1013,11 @@ timetable through Accessibility in 62 ms, and the draft's first prompt carried i
 (`other apps section: ~87 tokens (budget 2048): TextEdit — ctx-source.txt#0: "Ferry
 timetable, Zanzibar crossing / …"`; 2,048 because this Mac has 18 GB). That run also showed
 a busy app's window being marked as no longer on screen when a refresh couldn't read it in
-time; such windows now stay visible with their text. With `FORETYPE_ONLY_APPS` naming no
-running app, refreshes read 0 windows.
+time; such windows now stay visible with their text. Re-run after that fix (merge `670fd59`):
+both refreshes read the timetable (25 and 13 ms) and kept it on screen, and the draft's
+first suggestion prefilled only 13 tokens, since the new section had been prefilled in the
+background when the pool arrived. With `FORETYPE_ONLY_APPS` naming no running app,
+refreshes read 0 windows.
 
 ```bash
 R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/Models"
