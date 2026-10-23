@@ -548,6 +548,9 @@ fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
     let never = || false;
     let (mut prompt_tokens, mut first, mut prefill, mut tok_s, mut keys, mut decode) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    // The first suggestion's generation phase: its time, its length, and how many the
+    // generation deadline cut.
+    let (mut gen, mut first_words, mut cut) = (Vec::new(), Vec::new(), 0usize);
     for (k, d) in docs.iter().enumerate() {
         let app = app_of(&d.header);
         let chars: Vec<char> = d.text.chars().collect();
@@ -603,6 +606,9 @@ fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
         if c.generated_tokens > 0 {
             decode.push((c.total_ms - c.prefill_ms) / c.generated_tokens as f64);
         }
+        gen.push(c.total_ms - c.prefill_ms);
+        first_words.push(words::count_words(&c.text) as f64);
+        cut += usize::from(c.stop == "deadline");
         for i in start..(start + type_chars).min(chars.len()) {
             let typed: String = chars[..=i].iter().collect();
             let c = e.complete(&prompt_for(&filler, &typed), &opts, &never).expect("complete");
@@ -611,7 +617,7 @@ fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
     }
     let (rss_end, foot_end, peak) = memory();
     println!(
-        "ctx-bench n_ctx {}: {} docs, prompt p50 {:.0} tokens, first suggestion p50 {:.0} ms p90 {:.0} ms, prefill p50 {:.0} ms p90 {:.0} ms ({:.0} tok/s), keystrokes p50 {:.0} ms p90 {:.0} ms, decode {:.1} ms/token",
+        "ctx-bench n_ctx {}: {} docs, prompt p50 {:.0} tokens, first suggestion p50 {:.0} ms p90 {:.0} ms, prefill p50 {:.0} ms p90 {:.0} ms ({:.0} tok/s), generation p50 {:.0} ms p90 {:.0} ms, {:.1} words p50, {} cut by the deadline, keystrokes p50 {:.0} ms p90 {:.0} ms, decode {:.1} ms/token",
         cfg.n_ctx,
         docs.len(),
         pct(&prompt_tokens, 0.5),
@@ -620,6 +626,10 @@ fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
         pct(&prefill, 0.5),
         pct(&prefill, 0.9),
         pct(&tok_s, 0.5),
+        pct(&gen, 0.5),
+        pct(&gen, 0.9),
+        pct(&first_words, 0.5),
+        cut,
         pct(&keys, 0.5),
         pct(&keys, 0.9),
         pct(&decode, 0.5)
