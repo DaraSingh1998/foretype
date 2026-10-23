@@ -50,6 +50,11 @@
 //!       keystrokes (default 40) reusing the cache; this process's resident memory and
 //!       footprint after loading and at the end. Run one process per n_ctx (peak footprint
 //!       is per process).
+//!   ft-replay MODEL --restart-check
+//!       swaps engines twice in one process as the app does when the model, the server or the
+//!       context size changes (other apps' text on a 16 GB Mac): a new core (n_ctx 4096, then
+//!       2048) is created while the old one is loaded and has just answered, the old one is
+//!       freed on another thread, and the new one must load and answer.
 //!   --n-ctx N: the context size in tokens for every mode (default 2048, as in the app).
 //!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
 //!       types with those custom instructions (corpus apps such as "Mail" stand in for their
@@ -392,7 +397,7 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
             )
         })
         .collect();
-    // llama.cpp's backend can be initialised once at a time, so the two passes run in turn.
+    // One engine at a time (a new one waits for the previous to be freed): the passes run in turn.
     let cfg = engine_config(model);
     let opts = GenOptions::default();
     let never = || false;
@@ -675,6 +680,78 @@ fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
     );
 }
 
+/// A core like the app's and its events; its worker starts loading the model at once.
+fn new_core(model: &str, n_ctx: u32) -> (Core, mpsc::Receiver<Event>) {
+    let (tx, rx) = mpsc::channel::<Event>();
+    let core = Core::new(
+        CoreConfig { model_path: model.to_string(), n_ctx, ..CoreConfig::default() },
+        Box::new(move |ev: &Event| {
+            let _ = tx.send(ev.clone());
+        }),
+    );
+    (core, rx)
+}
+
+/// Milliseconds until `ready`, or the error status.
+fn wait_ready(rx: &mpsc::Receiver<Event>, since: Instant) -> Result<f64, String> {
+    loop {
+        match rx.recv_timeout(Duration::from_secs(60)) {
+            Ok(Event::Status { state: "ready", .. }) => return Ok(since.elapsed().as_secs_f64() * 1000.0),
+            Ok(Event::Status { state: "error", detail }) => return Err(detail),
+            Ok(_) => continue,
+            Err(_) => return Err("no status in 60 s".into()),
+        }
+    }
+}
+
+/// Submits one snapshot and waits for the model's answer: Ok(text) or the error.
+fn ask(core: &Core, rx: &mpsc::Receiver<Event>, revision: u64) -> Result<String, String> {
+    core.submit(Snapshot {
+        revision,
+        field_key: 1,
+        bundle_id: "com.apple.mail".into(),
+        app_name: "Mail".into(),
+        role: "AXTextArea".into(),
+        text_before: "Hi Sam,\n\nThanks for the update on the project. I will send you the".into(),
+        ..Snapshot::default()
+    });
+    loop {
+        match rx.recv_timeout(Duration::from_secs(30)) {
+            Ok(Event::Suggestion { revision: r, text, source: "model", .. }) if r == revision => return Ok(text),
+            Ok(Event::Suggestion { revision: r, source: "error", reason, .. }) if r == revision => return Err(reason.unwrap_or_default()),
+            Ok(Event::Status { state: "error", detail }) => return Err(detail),
+            Ok(_) => continue,
+            Err(_) => return Err("no suggestion in 30 s".into()),
+        }
+    }
+}
+
+/// `--restart-check`: the app's engine swap (`startEngine` then `Controller.replaceEngine`),
+/// twice in one process: the new core starts loading while the old one holds a loaded model
+/// that has just answered, and the old one is freed on another thread.
+fn restart_check(model: &str) -> bool {
+    let t = Instant::now();
+    let (mut core, mut rx) = new_core(model, 2048);
+    let ready = wait_ready(&rx, t);
+    let answer = ask(&core, &rx, 1);
+    println!("restart-check: first engine ready {ready:?}, suggestion {answer:?}");
+    let mut ok = ready.is_ok() && answer.is_ok();
+    for (round, n_ctx) in [(1u64, 4096u32), (2, 2048)] {
+        let t = Instant::now();
+        let (next, next_rx) = new_core(model, n_ctx);
+        let old = std::mem::replace(&mut core, next);
+        rx = next_rx;
+        let freeing = std::thread::spawn(move || drop(old));
+        let ready = wait_ready(&rx, t);
+        freeing.join().expect("free the old core");
+        let answer = ask(&core, &rx, 10 + round);
+        println!("restart-check: swap {round} (n_ctx {n_ctx}): ready {ready:?}, suggestion {answer:?}");
+        ok &= ready.is_ok() && answer.is_ok();
+    }
+    println!("{}", if ok { "restart-check passed" } else { "restart-check FAILED" });
+    ok
+}
+
 #[derive(serde::Deserialize, Clone)]
 struct Doc {
     id: String,
@@ -753,6 +830,9 @@ fn main() {
     let flag = |name: &str| args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned();
     let has = |name: &str| args.iter().any(|a| a == name);
     let model = args[1].clone();
+    if has("--restart-check") {
+        std::process::exit(if restart_check(&model) { 0 } else { 1 });
+    }
     let length_words: usize = flag("--words").and_then(|s| s.parse().ok()).unwrap_or(4);
     let beam_width: usize = flag("--beam").and_then(|s| s.parse().ok()).unwrap_or(1);
     let mut settings = Settings { length_words, beam_width, prefetch: !has("--no-prefetch"), ..Settings::default() };

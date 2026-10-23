@@ -5,6 +5,14 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Switching models no longer stops suggestions (2026-10-23)
+- Choosing another model in Settings ▸ Model, or turning Use Text from Other Apps on or off
+  on a Mac with 16 GB or more (which restarts the model with a larger context), could stop
+  suggestions with "backend init: BackendAlreadyInitialized" in the menu, because the new
+  model started loading before the old one was freed. The engine now shares one llama.cpp
+  backend, and the new model waits for the old one to be freed, so two models are never in
+  memory at once.
+
 ### Text from other apps (opt-in) (2026-10-23)
 - New setting, off by default: **Use text from other apps** (Settings ▸ Context, and in the
   menu). Suggestions can then use what other windows show, on any display: the document,

@@ -23,6 +23,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::mem::ManuallyDrop;
 use std::num::NonZeroU32;
+use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use llama_cpp_2::context::params::LlamaContextParams;
@@ -143,8 +144,62 @@ pub struct Completion {
     pub stop: &'static str,
 }
 
+/// llama.cpp's backend, one per process. llama-cpp-2 refuses a second `LlamaBackend::init`
+/// while one is alive, and the shell starts a new engine (another model, a server, a larger
+/// context for other apps' text) before the old one has been freed. It is never freed:
+/// `llama_backend_free` only releases quantization tables, and every engine frees its own
+/// context and model in `Drop`, so nothing outlives the Metal device at exit.
+pub fn backend() -> Result<&'static LlamaBackend, String> {
+    static BACKEND: Mutex<Option<&'static LlamaBackend>> = Mutex::new(None);
+    let mut slot = BACKEND.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(b) = *slot {
+        return Ok(b);
+    }
+    let mut b = LlamaBackend::init().map_err(|e| format!("backend init: {e}"))?;
+    if std::env::var_os("FORETYPE_LLAMA_LOGS").is_none() {
+        b.void_logs();
+    }
+    let b: &'static LlamaBackend = Box::leak(Box::new(b));
+    *slot = Some(b);
+    Ok(b)
+}
+
+/// Engines alive in this process. A new engine waits (up to `REPLACE_WAIT`) for the one it
+/// replaces to be freed, so two models aren't in memory at once while the shell swaps them.
+static LIVE: (Mutex<usize>, Condvar) = (Mutex::new(0), Condvar::new());
+const REPLACE_WAIT: Duration = Duration::from_secs(10);
+
+/// One engine's place in `LIVE`, given back when the engine is dropped (after its context
+/// and model) or its load fails.
+struct LiveSlot;
+
+impl LiveSlot {
+    fn acquire() -> Self {
+        let (count, freed) = &LIVE;
+        let mut n = count.lock().unwrap_or_else(|e| e.into_inner());
+        let deadline = Instant::now() + REPLACE_WAIT;
+        while *n > 0 {
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            n = freed.wait_timeout(n, left).unwrap_or_else(|e| e.into_inner()).0;
+        }
+        *n += 1;
+        LiveSlot
+    }
+}
+
+impl Drop for LiveSlot {
+    fn drop(&mut self) {
+        let (count, freed) = &LIVE;
+        let mut n = count.lock().unwrap_or_else(|e| e.into_inner());
+        *n = n.saturating_sub(1);
+        freed.notify_all();
+    }
+}
+
 pub struct Engine {
-    backend: *mut LlamaBackend,
     model: *mut LlamaModel,
     /// Borrows `*model`; dropped by hand before the model is freed.
     ctx: ManuallyDrop<LlamaContext<'static>>,
@@ -162,6 +217,8 @@ pub struct Engine {
     snapshots: VecDeque<StateSnapshot>,
     /// The context has room for beam-search sequences (truncating models only).
     beams: bool,
+    /// Dropped last, after `Drop` has freed the context and the model.
+    _live: LiveSlot,
 }
 
 fn ms(since: Instant) -> f64 {
@@ -169,28 +226,20 @@ fn ms(since: Instant) -> f64 {
 }
 
 impl Engine {
-    /// Loads the model. The backend and model live on the heap behind raw pointers so the
-    /// context can borrow the model for `'static`; `Drop` frees all three in order (Metal
-    /// asserts at process exit if the context outlives its device).
+    /// Loads the model. The model lives on the heap behind a raw pointer so the context can
+    /// borrow it for `'static`; `Drop` frees both in order (Metal asserts at process exit if
+    /// the context outlives its device). The backend is the process's (`backend`). An engine
+    /// still being freed (the one this replaces) is waited for first, up to 10 s.
     pub fn load(cfg: &EngineConfig) -> Result<Self, String> {
         if !std::path::Path::new(&cfg.model_path).is_file() {
             return Err(format!("model file not found: {}", cfg.model_path));
         }
-        let mut backend = LlamaBackend::init().map_err(|e| format!("backend init: {e}"))?;
-        if std::env::var_os("FORETYPE_LLAMA_LOGS").is_none() {
-            backend.void_logs();
-        }
-        let backend_ptr = Box::into_raw(Box::new(backend));
-        // SAFETY: freed only in Drop, after everything that borrows it.
-        let backend: &'static LlamaBackend = unsafe { &*backend_ptr };
+        let live = LiveSlot::acquire();
+        let backend = backend()?;
         let mparams = LlamaModelParams::default().with_n_gpu_layers(cfg.n_gpu_layers);
-        let free_backend = || drop(unsafe { Box::from_raw(backend_ptr) });
         let model = match LlamaModel::load_from_file(backend, &cfg.model_path, &mparams) {
             Ok(m) => m,
-            Err(e) => {
-                free_backend();
-                return Err(format!("model load: {e}"));
-            }
+            Err(e) => return Err(format!("model load: {e}")),
         };
         let rollback = if model.is_recurrent() || model.is_hybrid() { Rollback::Snapshot } else { Rollback::Truncate };
         let model_ptr = Box::into_raw(Box::new(model));
@@ -215,7 +264,6 @@ impl Engine {
             Ok(c) => c,
             Err(e) => {
                 drop(unsafe { Box::from_raw(model_ptr) });
-                free_backend();
                 return Err(format!("context: {e}"));
             }
         };
@@ -233,7 +281,6 @@ impl Engine {
         let add_bos = vocab.should_add_bos();
 
         Ok(Self {
-            backend: backend_ptr,
             model: model_ptr,
             ctx: ManuallyDrop::new(ctx),
             batch: LlamaBatch::new((cfg.n_batch as usize).max(MAX_BEAMS), 1),
@@ -247,6 +294,7 @@ impl Engine {
             rollback,
             snapshots: VecDeque::new(),
             beams,
+            _live: live,
         })
     }
 
@@ -823,19 +871,27 @@ fn before_suffix<'a>(shown: &'a str, suffix: &str) -> &'a str {
 
 impl Drop for Engine {
     fn drop(&mut self) {
-        // SAFETY: context first (it borrows the model), then model, then backend; none of
-        // them is used again.
+        // SAFETY: context first (it borrows the model), then the model; neither is used
+        // again. The backend is the process's and stays.
         unsafe {
             ManuallyDrop::drop(&mut self.ctx);
             drop(Box::from_raw(self.model));
-            drop(Box::from_raw(self.backend));
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::before_suffix;
+    use super::{backend, before_suffix};
+
+    /// The shell replaces an engine while the old one is alive: a second backend request
+    /// must not fail (llama-cpp-2 refuses a second `LlamaBackend::init`).
+    #[test]
+    fn the_backend_is_shared_across_engines() {
+        let a = backend().expect("first backend");
+        let b = std::thread::spawn(|| backend().map(|b| b as *const _ as usize)).join().unwrap().expect("second backend");
+        assert_eq!(a as *const _ as usize, b);
+    }
 
     #[test]
     fn mid_line_suggestion_stops_where_the_line_resumes() {

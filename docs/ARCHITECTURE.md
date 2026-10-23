@@ -196,9 +196,15 @@ never while paused.
     usable the cache is cleared and the prompt prefilled from scratch.
   - `ft-replay --check-cache` types documents (with backspaces) through a reusing engine
     and through one reset before every request and counts differing suggestions.
-- The backend, model and context live behind raw pointers and are freed in order in `Drop`
-  (context, model, backend); Metal asserts at process exit if a context outlives its
-  device.
+- The model and context live behind raw pointers and are freed in order in `Drop`
+  (context, then model); Metal asserts at process exit if a context outlives its device.
+  llama.cpp's backend is one per process (`engine::backend`, created on first use and never
+  freed: `llama_backend_free` only releases quantization tables), because llama-cpp-2
+  refuses a second `LlamaBackend::init` while one is alive and the shell starts a new
+  engine (another model or server, a larger context for other apps' text) before the old
+  one is freed. A new engine waits up to 10 s for the engine it replaces to be freed
+  (`LiveSlot`), so two models aren't in memory at once; `ft-replay --restart-check` swaps
+  engines twice in one process.
 
 ### Prompt format (`context.rs`)
 

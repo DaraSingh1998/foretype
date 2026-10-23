@@ -57,6 +57,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | Pixel caret in the app (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-pixel-caret.sh [APP BUNDLE_ID FIXTURE]` | same |
 | Model download + verify | `FORETYPE_MODEL_BASE_URL=http://127.0.0.1:PORT FORETYPE_MODELS_DIR=/tmp/x mac/.build/release/Foretype --download-selftest qwen3-0.6b-base-q8` | a local `python3 -m http.server` serving the GGUF |
 | Replay quality/latency | `ft-replay` (below) | a model |
+| Engine swap in one process (a new core loads while the old one is loaded and is freed on another thread, twice, as when the model, the server or other apps' context size changes) | `core/target/release/ft-replay MODEL --restart-check` | a model |
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
 | Terminal end-to-end | `FORETYPE_MODEL=... scripts/e2e-terminal.sh` | Accessibility, user idle |
 | Fresh Chrome end-to-end (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-chrome-fresh.sh` | Accessibility, user idle |
