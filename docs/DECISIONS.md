@@ -209,6 +209,14 @@ gain little.
 **Cost.** Keystrokes saved is an estimate: it assumes one key press per character the user
 would otherwise have typed (no autocorrect or shortcuts), and counts an insertion even if
 the host app dropped it.
+**Update (2026-10-23).** General had grown taller than a MacBook screen: on a 14-inch
+MacBook Pro its update rows ran behind the Dock, out of reach. It is split into General
+(login, pause, power, version and updates), Typing (length, sentence end, typing aids,
+keys) and Context (screen context; text from other apps joins it), and Instructions moved
+to Personalization: eight tabs, which still fit the 580 pt toolbar in English and Hindi.
+Every pane also scrolls inside a window capped at its screen's visible frame, so a tall
+pane (a long model list, a new setting) can never run off screen again. Fewer, longer tabs
+would have meant scrolling on every Mac; more tabs would not fit the toolbar.
 
 ## D25. Spelling: the platform's spell checker decides, the core applies the policy (2026-10-20)
 

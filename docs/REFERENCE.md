@@ -76,7 +76,7 @@ written to refer to the visible messages, so treat this as a best case.
 
 ### Text from other apps (opt-in)
 
-With **Use text from other apps** (Settings ▸ General, or the menu; off by default),
+With **Use text from other apps** (Settings ▸ Context, or the menu; off by default),
 suggestions can quote what other windows show: a document, slides, a spreadsheet or a web
 page beside the email you are writing, on any display, and windows you looked at in the
 last 10 minutes (decisions D42 and D44).
@@ -96,7 +96,7 @@ last 10 minutes (decisions D42 and D44).
 - **Kept** in memory only, at most 12 windows; a window no longer on screen is kept 10
   minutes after it was last seen. Everything is forgotten when Foretype pauses (also while
   the Mac sleeps, the screen is locked or the display sleeps) and when the setting goes off.
-- **Never read**: the never-read list (Settings ▸ Apps; password managers to start with:
+- **Never read**: the never-read list (Settings ▸ Context; password managers to start with:
   1Password, Apple Passwords, Keychain Access, Bitwarden, Dashlane, LastPass, KeePassXC,
   Keeper, Enpass, Strongbox, Proton Pass, NordPass, MacPass, Secrets), apps where you turned
   suggestions off or paused Foretype, Foretype's own windows, windows that forbid capture,
@@ -202,7 +202,7 @@ Defaults** brings it back.
 - In **VS Code, Cursor and Windsurf** only chat inputs get suggestions; the code editor
   stays off. **Google Docs** and **Arc/Dia** show a one-time tip for the setting they need.
 
-All of these can be turned off in Settings → General.
+All of these can be turned off in Settings → Typing.
 
 ### Pausing and power
 
@@ -240,21 +240,28 @@ menu-bar icon then shows a battery instead of a pause sign.
 ### Settings window
 
 **Settings…** in the menu (Cmd-, while the menu or one of Foretype's windows is open)
-shows every setting in six tabs; changes apply at once, the same way as from the menu:
+shows every setting in eight tabs; changes apply at once, the same way as from the menu:
 
-- **General**: pause and resume, the power rules (on battery, low battery, Low Power Mode),
-  length (2, 4, 7 or 10 words), stop at the end of a sentence, screen context (with the
-  Screen Recording status), text from other apps, custom instructions.
-- **Personalization**: learn from my writing, strength, what was learned, delete history.
+- **General**: open at login, pause and resume, the power rules (on battery, low battery,
+  Low Power Mode), the version and the update switches with Check Now.
+- **Typing**: length (2, 4, 7 or 10 words), stop at the end of a sentence, the typing aids
+  (emoji, autocorrect, typo gate, mid-line) and the keys.
+- **Context**: screen context, with the Screen Recording status; text from other apps,
+  with the never-read list (Add an App…, Remove, Restore Defaults).
+- **Personalization**: custom instructions, learn from my writing, strength, what was
+  learned, import, delete history.
 - **About You**: your own details for exact fills, the writer line, fill from Contacts.
 - **Apps**: every app you switched off (or switched on where it is off by default), with
-  Remove to return it to its default; the never-read list for text from other apps, with
-  Add an App…, Remove and Restore Defaults.
+  Remove to return it to its default.
 - **Model**: the catalog and every other GGUF in the Models folder, each with its size on
   disk, Use, Download, Cancel, Resume and Delete; the folder's total disk use; the server
   settings.
 - **Statistics**: keystrokes saved, words and characters inserted, and suggestions accepted
   (Tab and accept-all), for today, the last 7 days and all time, with Reset.
+
+The window is as tall as the selected tab where the screen has room. Where it hasn't (a
+13-inch MacBook Air, a long model or app list), it stops at the screen's edge, clear of the
+menu bar and the Dock, and the tab scrolls. Moved to another display, it fits that one.
 
 ### Statistics
 
@@ -509,7 +516,8 @@ Settings… and setup. Option-click the icon to pause or resume.
   screenshot (`ftdrive`, 2026-10-20), not by an automated test; saving instructions and the
   personalization submenu were not exercised. The recorder, history and bias are covered by
   unit tests and replays.
-- The Settings window's five tabs, deleting a model (and the refusal for the one in use),
+- The Settings window's tabs (five then; the eight of today are checked by
+  `Foretype --settings-selftest` and by eye on 2026-10-23), deleting a model (and the refusal for the one in use),
   removing an app, resetting statistics, and cancel/resume/discard of a download (from a
   local test server) were checked by screenshot (`ftdrive`, 2026-10-20). Cmd-, and the
   editing shortcuts in Foretype's windows, personalization on/off and the server fields'
@@ -524,7 +532,7 @@ Settings… and setup. Option-click the icon to pause or resume.
 - Text from other apps is checked end to end only in TextEdit (`scripts/e2e-context.sh`,
   Accessibility text) and by `--context-selftest` (the pool's rules, fast OCR of a rendered
   window); reading browsers through text markers, Word, Keynote, Preview and Electron apps,
-  and the OCR fallback on a live window are untested, as is the Settings ▸ Apps never-read
+  and the OCR fallback on a live window are untested, as is the Settings ▸ Context never-read
   list beyond rendering.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by

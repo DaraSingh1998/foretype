@@ -105,21 +105,5 @@
 			<string>notes for %2$@ apps</string>
 		</dict>
 	</dict>
-	<key>Never read: %@ apps</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%1$#@count@</string>
-		<key>count</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>Never read: %2$@ app</string>
-			<key>other</key>
-			<string>Never read: %2$@ apps</string>
-		</dict>
-	</dict>
 </dict>
 </plist>

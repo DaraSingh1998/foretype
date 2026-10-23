@@ -6,20 +6,30 @@ the release notes are taken from it.
 ## Unreleased
 
 ### Text from other apps (opt-in) (2026-10-23)
-- New setting, off by default: **Use text from other apps** (Settings ▸ General, and in the
+- New setting, off by default: **Use text from other apps** (Settings ▸ Context, and in the
   menu). Suggestions can then use what other windows show, on any display: the document,
   spreadsheet, slides or web page beside the email you are writing, and windows you looked
   at in the last 10 minutes. Text is read through Accessibility, and on Macs with 12 GB of
   memory or more also with on-device OCR where an app shares no text.
 - Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac
   sleeps. Never used with a server backend. Password managers are never read; the list is in
-  Settings ▸ Apps, where you can add any app. Apps where you turned Foretype off, private
+  Settings ▸ Context, where you can add any app. Apps where you turned Foretype off, private
   browsing windows and password fields are never read either.
 - Only the passages that match what you are writing go into the suggestion's context, up to
   about 2,000 characters on Macs under 16 GB (more from 16 GB, where turning the setting on
   restarts the model with a larger context). On a test set written to quote another window,
   the default model saves 61% of keystrokes with it and 42% without (screen context on).
 - Suggestions no longer echo the prompt's own section markers (`[End of screen t…`).
+
+### Settings fit the screen (2026-10-23)
+- Settings ▸ General had grown taller than a MacBook screen: the update switches and Check
+  Now ran behind the Dock and couldn't be reached. Its settings are now in three tabs:
+  **General** (open at login, pause, the power rules, version and updates), **Typing**
+  (length, stop at the end of a sentence, emoji, spelling fixes, mid-line, the keys) and
+  **Context** (screen context). Custom instructions moved to **Personalization**.
+- The Settings window never grows past the screen it is on: a tab taller than the space
+  between the menu bar and the Dock scrolls, and the window stays on screen when you switch
+  tabs or move it to another display. The Apps list is as tall as the apps in it.
 
 ## 0.1.4 (2026-10-23)
 

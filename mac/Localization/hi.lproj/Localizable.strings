@@ -164,11 +164,13 @@
 "Using %@" = "%@ का उपयोग हो रहा है";
 "Not downloaded" = "डाउनलोड नहीं किया गया";
 
-/* Under a permission that isn't granted, on ad-hoc builds (Signing.swift; setup window and Settings ▸ General) */
+/* Under a permission that isn't granted, on ad-hoc builds (Signing.swift; setup window and Settings ▸ Context) */
 "Already on in System Settings? This build is signed ad hoc, so the old entry doesn't apply to it: remove Foretype from the list with −, then add it again." = "सिस्टम सेटिंग में पहले से चालू है? यह बिल्ड ऐड-हॉक साइन किया गया है, इसलिए पुरानी प्रविष्टि इस पर लागू नहीं होती: Foretype को सूची से − दबाकर हटाएँ, फिर दोबारा जोड़ें।";
 
 /* Settings window tabs (PreferencesWindow.swift) */
 "General" = "सामान्य";
+"Typing" = "टाइपिंग";
+"Context" = "संदर्भ";
 "Apps" = "ऐप्स";
 "Statistics" = "आँकड़े";
 "About You" = "आपके बारे में";
@@ -183,7 +185,9 @@
 "Save energy" = "ऊर्जा बचाएँ";
 "Keep going" = "चलता रहे";
 "Pause below %@" = "%@ से कम पर पॉज़ करें";
-"Saving energy, suggestions don’t look ahead or read the screen, and the model is freed after a minute without typing. Foretype always pauses while the Mac sleeps or the screen is locked, and saves energy or pauses when the Mac runs hot." = "ऊर्जा बचाते समय सुझाव आगे की तैयारी नहीं करते और स्क्रीन नहीं पढ़ते, और एक मिनट तक टाइप न करने पर मॉडल मेमोरी से हटा दिया जाता है। Mac के स्लीप में रहने या स्क्रीन लॉक रहने पर Foretype हमेशा पॉज़ रहता है, और Mac के गर्म होने पर ऊर्जा बचाता है या पॉज़ हो जाता है।";
+"Saving energy: no look-ahead or screen reading, and the model is freed after a minute without typing. Foretype always pauses while the Mac sleeps or is locked, and saves energy or pauses when it runs hot." = "ऊर्जा बचाते समय: न आगे की तैयारी, न स्क्रीन पढ़ना, और एक मिनट तक टाइप न करने पर मॉडल मेमोरी से हटा दिया जाता है। Mac के स्लीप या लॉक रहने पर Foretype हमेशा पॉज़ रहता है, और गर्म होने पर ऊर्जा बचाता है या पॉज़ हो जाता है।";
+
+/* Settings ▸ Typing */
 "Length:" = "लंबाई:";
 "Stop at the end of a sentence" = "वाक्य के अंत पर रुकें";
 "When this is off, a suggestion can run on into the next sentence." = "यह बंद होने पर सुझाव अगले वाक्य तक जा सकता है।";
@@ -195,11 +199,16 @@
 "Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before." = "दोनों आपकी भाषाओं में macOS की वर्तनी जाँच का उपयोग करते हैं, और नाम, संक्षिप्त रूप और आपके पहले लिखे शब्द छोड़ देते हैं।";
 "Suggest in the middle of a line (experimental)" = "पंक्ति के बीच में भी सुझाव दें (प्रायोगिक)";
 "Up to three words, shown in a small card under the caret." = "अधिकतम तीन शब्द, कर्सर के नीचे एक छोटे कार्ड में।";
+
+/* Settings ▸ Context */
 "Screen context:" = "स्क्रीन संदर्भ:";
 "Use text on screen near the field" = "फ़ील्ड के आसपास का स्क्रीन टेक्स्ट उपयोग करें";
 "Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away." = "आप जिस फ़ील्ड में टाइप कर रहे हैं, उसके आसपास का टेक्स्ट (जैसे वह संदेश जिसका आप जवाब दे रहे हैं) ऑन-डिवाइस OCR से पढ़ता है। इमेज तुरंत हटा दी जाती है।";
 "Screen Recording allowed" = "स्क्रीन रिकॉर्डिंग की अनुमति है";
 "Screen Recording not allowed yet" = "स्क्रीन रिकॉर्डिंग की अनुमति अभी नहीं है";
+
+/* Settings ▸ Personalization (and the keys note at the end of Settings ▸ Typing) */
+"Your writing:" = "आपका लेखन:";
 "Instructions:" = "निर्देश:";
 "Edit…" = "संपादित करें…";
 "A note about you and how you write, for all apps and for the app you were last in." = "आपके और आपकी लेखन-शैली के बारे में एक नोट, सभी ऐप्स के लिए और उस ऐप के लिए जिसमें आप पिछली बार थे।";
@@ -322,7 +331,7 @@
 "Check for updates every day" = "हर दिन अपडेट जाँचें";
 "Install updates automatically" = "अपडेट अपने-आप इंस्टॉल करें";
 "Check Now" = "अभी जाँचें";
-"A new version is installed once you have been away from the keyboard and mouse for a few minutes; Foretype then reopens by itself and keeps its permissions." = "नया संस्करण तब इंस्टॉल होता है जब आप कुछ मिनट तक कीबोर्ड और माउस से दूर रहते हैं; फिर Foretype अपने-आप दोबारा खुलता है और उसकी अनुमतियाँ बनी रहती हैं।";
+"A new version installs after a few minutes away from the keyboard and mouse; Foretype then reopens by itself and keeps its permissions." = "कीबोर्ड और माउस से कुछ मिनट दूर रहने पर नया संस्करण इंस्टॉल होता है; फिर Foretype अपने-आप दोबारा खुलता है और उसकी अनुमतियाँ बनी रहती हैं।";
 "Version:" = "संस्करण:";
 "Updates:" = "अपडेट:";
 "Development build" = "डेवलपमेंट बिल्ड";
@@ -351,10 +360,10 @@
 "Other apps:" = "दूसरे ऐप्स:";
 "Use text from other apps" = "दूसरे ऐप्स के टेक्स्ट का उपयोग करें";
 "Suggestions can use what other windows show, on any display: a document, slides or a web page beside the email you are writing, and windows you looked at in the last 10 minutes. Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac sleeps; never sent to a server." = "सुझाव किसी भी डिस्प्ले पर दूसरी विंडो में दिख रही चीज़ों का उपयोग कर सकते हैं: आप जो ईमेल लिख रहे हैं उसके बगल में खुला दस्तावेज़, स्लाइड या वेब पेज, और पिछले 10 मिनट में देखी गई विंडो। यह केवल मेमोरी में रहता है और Foretype के पॉज़ होने, स्क्रीन लॉक होने या Mac के स्लीप में जाने पर भुला दिया जाता है; किसी सर्वर पर कभी नहीं भेजा जाता।";
-"Never read: password managers" = "कभी नहीं पढ़े जाते: पासवर्ड मैनेजर";
 "Off while a server makes suggestions: other apps’ text stays on this Mac." = "सर्वर से सुझाव मिलते समय बंद: दूसरे ऐप्स का टेक्स्ट इसी Mac पर रहता है।";
 "On this Mac (under 12 GB of memory), only text apps share through Accessibility is read, and less of it." = "इस Mac पर (12 GB से कम मेमोरी), केवल वही टेक्स्ट पढ़ा जाता है जो ऐप्स ऐक्सेसिबिलिटी से साझा करते हैं, और कम मात्रा में।";
 "Never read as context" = "संदर्भ के लिए कभी नहीं पढ़े जाने वाले ऐप्स";
 "With “Use text from other apps” on, Foretype never reads these apps’ windows. Password managers are on the list to start with; apps where you turned suggestions off are never read either." = "“दूसरे ऐप्स के टेक्स्ट का उपयोग करें” चालू होने पर भी Foretype इन ऐप्स की विंडो कभी नहीं पढ़ता। शुरुआत में सूची में पासवर्ड मैनेजर हैं; जिन ऐप्स में आपने सुझाव बंद किए हैं, वे भी कभी नहीं पढ़े जाते।";
 "Let Foretype read %@" = "Foretype को %@ पढ़ने दें";
+"No apps: every app's windows can be read." = "कोई ऐप नहीं: हर ऐप की विंडो पढ़ी जा सकती है।";
 "Choose an app whose windows Foretype should never read." = "वह ऐप चुनें जिसकी विंडो Foretype को कभी नहीं पढ़नी चाहिए।";

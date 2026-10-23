@@ -53,23 +53,26 @@ protocol PreferencesHost: AnyObject {
 /// tabs. Every change applies immediately through the host; the menu stays a second way to
 /// the common settings.
 final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
-    private let tabs: PreferencesTabController
-    private let panes: [PreferencesPane]
+    let tabs: PreferencesTabController
+    let panes: [PreferencesPane]
     private let modelPane: ModelPane
     private let statsPane: StatisticsPane
+    private var fitPending = false
 
     init(host: PreferencesHost) {
         let model = ModelPane(title: L("Model"), host: host)
         let statistics = StatisticsPane(title: L("Statistics"), host: host)
-        let general = GeneralPane(title: L("General"), host: host)
-        let panes: [PreferencesPane] = [general,
+        let panes: [PreferencesPane] = [GeneralPane(title: L("General"), host: host),
+                                        TypingPane(title: L("Typing"), host: host),
+                                        ContextPane(title: L("Context"), host: host),
                                         PersonalizationPane(title: L("Personalization"), host: host),
                                         AboutYouPane(title: L("About You"), host: host),
                                         AppsPane(title: L("Apps"), host: host), model, statistics]
         let tabs = PreferencesTabController()
         tabs.tabStyle = .toolbar
         tabs.transitionOptions = []
-        let symbols = ["gearshape", "person.crop.circle", "person.text.rectangle", "square.grid.2x2", "cpu", "chart.bar"]
+        let symbols = ["gearshape", "keyboard", "text.viewfinder", "person.crop.circle", "person.text.rectangle",
+                       "square.grid.2x2", "cpu", "chart.bar"]
         for (pane, symbol) in zip(panes, symbols) {
             let item = NSTabViewItem(viewController: pane)
             item.label = pane.title ?? ""
@@ -81,11 +84,14 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         window.toolbarStyle = .preference
         self.tabs = tabs
         self.panes = panes
-        general.showApps = { [weak tabs] in tabs?.selectedTabViewItemIndex = 3 }
         modelPane = model
         statsPane = statistics
         super.init(window: window)
         window.delegate = self
+        // A display added, removed or rearranged, the Dock resized, scroll bars shown always.
+        for name in [NSApplication.didChangeScreenParametersNotification, NSScroller.preferredScrollerStyleDidChangeNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(screensChanged), name: name, object: nil)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -97,8 +103,34 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         if window?.isVisible != true {
             tabs.fit(animated: false)
             window?.center()
+            // Centring can leave a window as tall as the screen under the menu bar.
+            tabs.fit(animated: false)
         }
         window?.makeKeyAndOrderFront(nil)
+    }
+
+    @objc private func screensChanged() {
+        // After the scroll views have taken up a new scroller style.
+        DispatchQueue.main.async { [weak self] in
+            if self?.window?.isVisible == true { self?.tabs.fit(animated: false) }
+        }
+    }
+
+    /// Dragged onto another display: fits the pane to that one once the mouse is let go
+    /// (moving the window during the drag would fight it).
+    func windowDidChangeScreen(_ notification: Notification) {
+        guard !fitPending else { return }
+        fitPending = true
+        fitAfterDrag()
+    }
+
+    private func fitAfterDrag() {
+        guard NSEvent.pressedMouseButtons & 1 == 0 else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in self?.fitAfterDrag() }
+            return
+        }
+        fitPending = false
+        tabs.fit(animated: true)
     }
 
     /// Settings, engine status or permissions may have changed.
@@ -124,34 +156,56 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
 
 /// Toolbar tabs that size the window to the selected pane.
 final class PreferencesTabController: NSTabViewController {
+    /// Where the window must fit: its screen's visible frame (below the menu bar, beside the
+    /// Dock). --settings-selftest puts made-up screens here.
+    var visibleFrame: (NSWindow) -> NSRect? = { ($0.screen ?? NSScreen.main)?.visibleFrame }
+
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
         (tabViewItem?.viewController as? PreferencesPane)?.refresh()
         fit(animated: true)
     }
 
-    /// Resizes the window to the selected pane's fitting size, keeping its top edge.
+    /// Resizes the window to the selected pane, keeping its top edge: as tall as the pane's
+    /// rows where the screen has room, otherwise as tall as the screen allows with the rows
+    /// scrolling. Then moves the window back inside the screen if it sticks out.
     func fit(animated: Bool) {
-        guard selectedTabViewItemIndex >= 0, let pane = tabViewItems[selectedTabViewItemIndex].viewController,
+        guard selectedTabViewItemIndex >= 0,
+              let pane = tabViewItems[selectedTabViewItemIndex].viewController as? PreferencesPane,
               let window = view.window, let content = window.contentView else { return }
-        pane.view.layoutSubtreeIfNeeded()
-        let want = pane.view.fittingSize
-        let dw = want.width - content.frame.width, dh = want.height - content.frame.height
-        guard abs(dw) > 0.5 || abs(dh) > 0.5 else { return }
-        var f = window.frame
-        f.size.width += dw
-        f.size.height += dh
-        f.origin.y -= dh
+        let chrome = NSSize(width: window.frame.width - content.frame.width, height: window.frame.height - content.frame.height)
+        let visible = visibleFrame(window)
+        let want = pane.contentHeight
+        let height = visible.map { min(want, floor($0.height - chrome.height)) } ?? want
+        let width = pane.setScrolls(want > height)
+        let f = Self.frame(content: NSSize(width: width, height: height), chrome: chrome, current: window.frame, visible: visible)
+        let w = window.frame
+        guard [f.minX - w.minX, f.minY - w.minY, f.width - w.width, f.height - w.height].contains(where: { abs($0) > 0.5 }) else { return }
         window.setFrame(f, display: true, animate: animated && window.isVisible)
+    }
+
+    /// The window frame for `content`: `current`'s top edge kept, then moved inside `visible`.
+    static func frame(content: NSSize, chrome: NSSize, current: NSRect, visible: NSRect?) -> NSRect {
+        var f = current
+        f.size = NSSize(width: content.width + chrome.width, height: content.height + chrome.height)
+        f.origin.y = current.maxY - f.height
+        guard let v = visible else { return f }
+        f.origin.x = max(min(f.minX, v.maxX - f.width), v.minX)
+        f.origin.y = max(min(f.minY, v.maxY - f.height), v.minY)
+        return f
     }
 }
 
 // MARK: - Panes
 
-/// One tab: a vertical stack of rows, fixed width, as tall as its content.
+/// One tab: a vertical stack of rows, fixed width, in a scroll view. The window shows every
+/// row where the screen has room and scrolls them where it hasn't
+/// (`PreferencesTabController.fit`).
 class PreferencesPane: NSViewController {
     weak var host: PreferencesHost?
     let stack = NSStackView()
+    private let scroll = NSScrollView()
+    private var widthConstraint: NSLayoutConstraint?
     static let width: CGFloat = 580
     static let inset: CGFloat = 24
 
@@ -164,27 +218,86 @@ class PreferencesPane: NSViewController {
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let v = NSView()
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
         stack.edgeInsets = NSEdgeInsets(top: 20, left: Self.inset, bottom: 20, right: Self.inset)
         stack.translatesAutoresizingMaskIntoConstraints = false
-        v.addSubview(stack)
+        let doc = FlippedView()
+        doc.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(stack)
+        scroll.documentView = doc
+        scroll.drawsBackground = false
+        scroll.autohidesScrollers = true
+        scroll.hasVerticalScroller = false
+        scroll.verticalScrollElasticity = .none
+        let width = scroll.widthAnchor.constraint(equalToConstant: Self.width)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: v.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: v.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: v.topAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: v.bottomAnchor),
-            v.widthAnchor.constraint(equalToConstant: Self.width),
+            stack.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: doc.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
+            stack.widthAnchor.constraint(equalToConstant: Self.width),
+            doc.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            doc.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            width,
         ])
-        view = v
+        widthConstraint = width
+        view = scroll
         build()
         refresh()
     }
 
     func build() {}
     func refresh() {}
+
+    /// The height of all the rows.
+    var contentHeight: CGFloat {
+        _ = view
+        stack.layoutSubtreeIfNeeded()
+        return ceil(stack.fittingSize.height)
+    }
+
+    /// The window is shorter than the rows: they scroll.
+    var scrolls: Bool { scroll.hasVerticalScroller }
+
+    /// Turns scrolling on or off and returns the pane's width: wider by the scroller where
+    /// scroll bars take room (System Settings ▸ Appearance ▸ Show scroll bars: Always), so
+    /// the scroller covers no control.
+    func setScrolls(_ on: Bool) -> CGFloat {
+        _ = view
+        if !on, scroll.hasVerticalScroller {
+            scroll.contentView.scroll(to: .zero)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        scroll.hasVerticalScroller = on
+        scroll.verticalScrollElasticity = on ? .automatic : .none
+        let bar = on && scroll.scrollerStyle == .legacy ? NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy) : 0
+        widthConstraint?.constant = Self.width + bar
+        return Self.width + bar
+    }
+
+    /// All the rows as a PNG, light or dark (FORETYPE_UPDATE_REPORT, --settings-selftest).
+    func png(dark: Bool = false) -> Data? {
+        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        view.appearance = appearance
+        view.setFrameSize(NSSize(width: Self.width, height: contentHeight))
+        view.layoutSubtreeIfNeeded()
+        guard let rep = stack.bitmapImageRepForCachingDisplay(in: stack.bounds) else { return nil }
+        stack.cacheDisplay(in: stack.bounds, to: rep)
+        var background = NSColor.white
+        appearance?.performAsCurrentDrawingAppearance {
+            background = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? background
+        }
+        let image = NSImage(size: stack.bounds.size, flipped: false) { r in
+            background.setFill()
+            r.fill()
+            rep.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
+            return true
+        }
+        guard let tiff = image.tiffRepresentation else { return nil }
+        return NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+    }
 
     /// Adds a row that spans the pane's width.
     func add(_ v: NSView, spacingAfter: CGFloat? = nil) {
@@ -263,9 +376,114 @@ private final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
+/// A bordered list of rows (`AppList.row`) with separators: as tall as its rows between
+/// `minHeight` and `maxHeight`, scrolling beyond, so the buttons under it stay in view.
+final class AppList: NSScrollView {
+    private let list = NSStackView()
+    private let minHeight: CGFloat
+    private let maxHeight: CGFloat
+    private var height: NSLayoutConstraint!
+
+    init(minHeight: CGFloat = 60, maxHeight: CGFloat = 240) {
+        self.minHeight = minHeight
+        self.maxHeight = maxHeight
+        super.init(frame: .zero)
+        list.orientation = .vertical
+        list.alignment = .leading
+        list.spacing = 0
+        list.translatesAutoresizingMaskIntoConstraints = false
+        let doc = FlippedView()
+        doc.translatesAutoresizingMaskIntoConstraints = false
+        doc.addSubview(list)
+        hasVerticalScroller = true
+        autohidesScrollers = true
+        borderType = .bezelBorder
+        drawsBackground = true
+        backgroundColor = .textBackgroundColor
+        documentView = doc
+        height = heightAnchor.constraint(equalToConstant: minHeight)
+        NSLayoutConstraint.activate([
+            list.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
+            list.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
+            list.topAnchor.constraint(equalTo: doc.topAnchor),
+            list.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
+            doc.widthAnchor.constraint(equalTo: contentView.widthAnchor),
+            doc.topAnchor.constraint(equalTo: contentView.topAnchor),
+            height,
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// Replaces the rows; `empty` (a wrapping note) shows when there are none.
+    func setRows(_ rows: [NSView], empty: NSView? = nil) {
+        list.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        var views = rows
+        if rows.isEmpty, let empty {
+            let pad = NSStackView(views: [empty])
+            pad.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
+            views = [pad]
+        }
+        for (i, v) in views.enumerated() {
+            if i > 0 {
+                let sep = PreferencesPane.separator()
+                list.addArrangedSubview(sep)
+                sep.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+            }
+            list.addArrangedSubview(v)
+            v.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
+        }
+        list.layoutSubtreeIfNeeded()
+        height.constant = min(max(ceil(list.fittingSize.height) + 2, minHeight), maxHeight)
+    }
+
+    /// One app: icon, name and bundle ID, a status (`state`, may be empty) and a Remove
+    /// button whose tooltip is `removeTip` with the app's name.
+    static func row(bundle: String, state: String, stateColor: NSColor = .secondaryLabelColor,
+                    removeTip: String, onRemove: @escaping () -> Void) -> NSView {
+        var name = bundle
+        var icon: NSImage?
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
+            name = FileManager.default.displayName(atPath: url.path)
+            if name.hasSuffix(".app") { name = String(name.dropLast(4)) }
+            icon = NSWorkspace.shared.icon(forFile: url.path)
+        }
+        let image = NSImageView(image: icon ?? NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil)!)
+        image.widthAnchor.constraint(equalToConstant: 24).isActive = true
+        image.heightAnchor.constraint(equalToConstant: 24).isActive = true
+        let title = NSTextField(labelWithString: name)
+        // Not installed: the bundle ID is already the title.
+        let id = NSTextField(labelWithString: icon == nil ? L("not installed") : bundle)
+        id.font = .systemFont(ofSize: 10)
+        id.textColor = .tertiaryLabelColor
+        let names = NSStackView(views: [title, id])
+        names.orientation = .vertical
+        names.alignment = .leading
+        names.spacing = 1
+        let status = NSTextField(labelWithString: state)
+        status.textColor = stateColor
+        status.isHidden = state.isEmpty
+        let remove = ActionButton.make(L("Remove"), onRemove)
+        remove.controlSize = .small
+        remove.toolTip = String(format: removeTip, name)
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [image, names, spacer, status, remove])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        row.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
+        return row
+    }
+}
+
 // MARK: General
 
+/// When Foretype runs (login, pause, power) and its version and updates.
 final class GeneralPane: PreferencesPane {
+    /// --settings-selftest: shows the update rows, which builds without Sparkle hide.
+    static var showsUpdatesForTesting = false
+    private let openAtLogin = NSButton(checkboxWithTitle: L("Open Foretype when you log in"), target: nil, action: nil)
     private let pauseStatus = NSTextField(labelWithString: "")
     private let pauseMenu = NSPopUpButton(frame: .zero, pullsDown: true)
     private let resume = NSButton(title: L("Resume"), target: nil, action: nil)
@@ -273,26 +491,6 @@ final class GeneralPane: PreferencesPane {
     private let lowPower = NSPopUpButton()
     private let batteryLevel = NSPopUpButton()
     private var batteryRows: [NSGridRow] = []
-    private let length = NSPopUpButton()
-    private let sentenceEnd = NSButton(checkboxWithTitle: L("Stop at the end of a sentence"), target: nil, action: nil)
-    private let screen = NSButton(checkboxWithTitle: L("Use text on screen near the field"), target: nil, action: nil)
-    private let emoji = NSButton(checkboxWithTitle: L("Offer emoji for :shortcodes"), target: nil, action: nil)
-    private let autocorrect = NSButton(checkboxWithTitle: L("Offer a fix for a misspelled word"), target: nil, action: nil)
-    private let typoGate = NSButton(checkboxWithTitle: L("Wait while a word looks misspelled"), target: nil, action: nil)
-    private let midLine = NSButton(checkboxWithTitle: L("Suggest in the middle of a line (experimental)"), target: nil, action: nil)
-    private let screenStatus = NSTextField(labelWithString: "")
-    private let screenAllow = NSButton(title: L("Allow Screen Recording\u{2026}"), target: nil, action: nil)
-    private let screenRelaunch = NSButton(title: L("Relaunch"), target: nil, action: nil)
-    private let openAtLogin = NSButton(checkboxWithTitle: L("Open Foretype when you log in"), target: nil, action: nil)
-    private let screenHint = PreferencesPane.note(Signing.staleGrantHint, width: 400)
-    private var screenHintRow: NSGridRow?
-    private let otherApps = NSButton(checkboxWithTitle: L("Use text from other apps"), target: nil, action: nil)
-    private let neverReadSummary = NSTextField(labelWithString: "")
-    private let otherAppsStatus = NSTextField(labelWithString: "")
-    private var otherAppsStatusRow: NSGridRow?
-    /// Opens the Apps tab, where the never-read list is edited.
-    var showApps: (() -> Void)?
-    private let instructionsSummary = NSTextField(labelWithString: "")
     private let autoCheck = NSButton(checkboxWithTitle: L("Check for updates every day"), target: nil, action: nil)
     private let autoInstall = NSButton(checkboxWithTitle: L("Install updates automatically"), target: nil, action: nil)
     private let checkNow = NSButton(title: L("Check Now"), target: nil, action: nil)
@@ -300,10 +498,12 @@ final class GeneralPane: PreferencesPane {
     private let availableLabel = NSTextField(labelWithString: "")
     private let installUpdate = NSButton(title: L("Install\u{2026}"), target: nil, action: nil)
     private var availableRow: NSGridRow?
-    private let updateNote = PreferencesPane.note(L("A new version is installed once you have been away from the keyboard and mouse for a few minutes; Foretype then reopens by itself and keeps its permissions."), width: 400)
+    private let updateNote = PreferencesPane.note(L("A new version installs after a few minutes away from the keyboard and mouse; Foretype then reopens by itself and keeps its permissions."), width: 400)
     private var updateRows: [NSGridRow] = []
 
     override func build() {
+        openAtLogin.target = self
+        openAtLogin.action = #selector(loginChanged)
         pauseMenu.addItem(withTitle: L("Pause"))
         pauseMenu.addItems(withTitles: PauseChoice.allCases.map(\.title))
         pauseMenu.target = self
@@ -319,33 +519,6 @@ final class GeneralPane: PreferencesPane {
             p.target = self
             p.action = #selector(powerChanged(_:))
         }
-        otherApps.target = self
-        otherApps.action = #selector(otherAppsChanged)
-        neverReadSummary.textColor = .secondaryLabelColor
-        neverReadSummary.lineBreakMode = .byTruncatingTail
-        neverReadSummary.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
-        otherAppsStatus.font = .systemFont(ofSize: 11)
-        otherAppsStatus.textColor = .systemOrange
-        let editNeverRead = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editNeverRead))
-        editNeverRead.controlSize = .small
-        for (b, sel) in [(sentenceEnd, #selector(changed(_:))), (screen, #selector(changed(_:))),
-                         (emoji, #selector(changed(_:))), (autocorrect, #selector(changed(_:))), (typoGate, #selector(changed(_:))),
-                         (midLine, #selector(changed(_:)))] {
-            b.target = self
-            b.action = sel
-        }
-        length.addItems(withTitles: AppSettings.lengthPresets.map(\.name))
-        length.target = self
-        length.action = #selector(changed(_:))
-        screenAllow.target = self
-        screenAllow.action = #selector(allowScreen)
-        screenAllow.controlSize = .small
-        screenRelaunch.target = self
-        screenRelaunch.action = #selector(relaunch)
-        screenRelaunch.controlSize = .small
-        openAtLogin.target = self
-        openAtLogin.action = #selector(loginChanged)
-        screenStatus.font = .systemFont(ofSize: 11)
         for b in [autoCheck, autoInstall] {
             b.target = self
             b.action = #selector(updatesChanged(_:))
@@ -358,40 +531,15 @@ final class GeneralPane: PreferencesPane {
         installUpdate.action = #selector(checkForUpdates)
         installUpdate.controlSize = .small
         availableLabel.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        let edit = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editInstructions))
-        instructionsSummary.textColor = .secondaryLabelColor
-        instructionsSummary.lineBreakMode = .byTruncatingTail
-        instructionsSummary.widthAnchor.constraint(lessThanOrEqualToConstant: 330).isActive = true
 
         let available = Self.hstack([availableLabel, installUpdate])
-        let w: CGFloat = 400
         let grid = Self.form([
             [Self.formLabel(L("Startup:")), openAtLogin],
             [Self.formLabel(L("Suggestions:")), Self.hstack([pauseStatus, pauseMenu, resume])],
             [Self.formLabel(L("On battery:")), battery],
             [Self.formLabel(L("Low battery:")), batteryLevel],
             [Self.formLabel(L("Low Power Mode:")), lowPower],
-            [NSGridCell.emptyContentView, Self.note(L("Saving energy, suggestions don\u{2019}t look ahead or read the screen, and the model is freed after a minute without typing. Foretype always pauses while the Mac sleeps or the screen is locked, and saves energy or pauses when the Mac runs hot."), width: w)],
-            [Self.formLabel(L("Length:")), length],
-            [NSGridCell.emptyContentView, sentenceEnd],
-            [NSGridCell.emptyContentView, Self.note(L("When this is off, a suggestion can run on into the next sentence."), width: w)],
-            [Self.formLabel(L("Typing aids:")), emoji],
-            [NSGridCell.emptyContentView, Self.note(L("Type a colon and a name, like :tada, then Tab."), width: w)],
-            [NSGridCell.emptyContentView, autocorrect],
-            [NSGridCell.emptyContentView, typoGate],
-            [NSGridCell.emptyContentView, Self.note(L("Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before."), width: w)],
-            [NSGridCell.emptyContentView, midLine],
-            [NSGridCell.emptyContentView, Self.note(L("Up to three words, shown in a small card under the caret."), width: w)],
-            [Self.formLabel(L("Screen context:")), screen],
-            [NSGridCell.emptyContentView, Self.note(L("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away."), width: w)],
-            [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow, screenRelaunch])],
-            [NSGridCell.emptyContentView, screenHint],
-            [Self.formLabel(L("Other apps:")), otherApps],
-            [NSGridCell.emptyContentView, Self.note(L("Suggestions can use what other windows show, on any display: a document, slides or a web page beside the email you are writing, and windows you looked at in the last 10 minutes. Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac sleeps; never sent to a server."), width: w)],
-            [NSGridCell.emptyContentView, Self.hstack([neverReadSummary, editNeverRead])],
-            [NSGridCell.emptyContentView, otherAppsStatus],
-            [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
-            [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
+            [NSGridCell.emptyContentView, Self.note(L("Saving energy: no look-ahead or screen reading, and the model is freed after a minute without typing. Foretype always pauses while the Mac sleeps or is locked, and saves energy or pauses when it runs hot."), width: 400)],
             [Self.formLabel(L("Version:")), versionLabel],
             [NSGridCell.emptyContentView, available],
             [Self.formLabel(L("Updates:")), autoCheck],
@@ -399,19 +547,18 @@ final class GeneralPane: PreferencesPane {
             [NSGridCell.emptyContentView, updateNote],
             [NSGridCell.emptyContentView, checkNow],
         ])
-        screenHintRow = grid.cell(for: screenHint)?.row
-        otherAppsStatusRow = grid.cell(for: otherAppsStatus)?.row
+        grid.row(at: 6).topPadding = 8
         batteryRows = [battery, batteryLevel].compactMap { grid.cell(for: $0)?.row }
         updateRows = [autoCheck, autoInstall, updateNote, checkNow].compactMap { grid.cell(for: $0)?.row }
         availableRow = grid.cell(for: available)?.row
-        add(grid, spacingAfter: 18)
-        add(Self.separator())
-        add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere.")))
+        add(grid)
     }
 
     override func refresh() {
         guard let host else { return }
         let s = host.settings
+        openAtLogin.state = AppLocation.opensAtLogin ? .on : .off
+        openAtLogin.isEnabled = AppLocation.isBundledApp
         let pause = host.pause
         pauseStatus.stringValue = host.pauseDescription ?? L("On")
         pauseStatus.textColor = pause.isPaused ? .secondaryLabelColor : .labelColor
@@ -423,43 +570,6 @@ final class GeneralPane: PreferencesPane {
         lowPower.selectItem(at: PowerPolicy.LowPowerMode.allCases.firstIndex(of: s.lowPowerMode) ?? 1)
         batteryLevel.selectItem(at: PowerPolicy.batteryLevels.firstIndex(of: s.pauseBelowBattery) ?? 0)
         for row in batteryRows { row.isHidden = !host.powerState.hasBattery }
-        length.selectItem(at: AppSettings.lengthPresets.firstIndex { $0.words == s.lengthWords } ?? 1)
-        sentenceEnd.state = s.stopAtSentenceEnd ? .on : .off
-        screen.state = s.useScreenContext ? .on : .off
-        emoji.state = s.emoji ? .on : .off
-        autocorrect.state = s.autocorrect ? .on : .off
-        typoGate.state = s.typoGate ? .on : .off
-        midLine.state = s.midLine ? .on : .off
-        let allowed = ScreenContextProvider.hasPermission
-        screenStatus.stringValue = allowed ? "\u{2713} " + L("Screen Recording allowed") : L("Screen Recording not allowed yet")
-        screenStatus.textColor = allowed ? .systemGreen : .secondaryLabelColor
-        screenAllow.isHidden = allowed || !s.useScreenContext
-        // macOS applies a new Screen Recording grant only when the app starts.
-        screenRelaunch.isHidden = allowed || !s.useScreenContext || !s.askedForScreenRecording || !AppLocation.isBundledApp
-        openAtLogin.state = AppLocation.opensAtLogin ? .on : .off
-        openAtLogin.isEnabled = AppLocation.isBundledApp
-        screenHint.isHidden = allowed || !s.useScreenContext || !Signing.isAdHocBundle
-        screenHintRow?.isHidden = screenHint.isHidden
-        otherApps.state = s.useOtherApps ? .on : .off
-        let never = s.neverReadApps.count
-        neverReadSummary.stringValue = s.neverReadIsDefault ? L("Never read: password managers")
-            : LCount(never, "Never read: %@ apps", one: "Never read: %@ app")
-        // What this Mac and this backend allow.
-        if !s.backendIsOnDevice {
-            otherAppsStatus.stringValue = L("Off while a server makes suggestions: other apps\u{2019} text stays on this Mac.")
-        } else if !ContextPool.memoryAllowsOCR {
-            otherAppsStatus.stringValue = L("On this Mac (under 12 GB of memory), only text apps share through Accessibility is read, and less of it.")
-        } else {
-            otherAppsStatus.stringValue = ""
-        }
-        otherAppsStatus.isHidden = otherAppsStatus.stringValue.isEmpty || !s.useOtherApps
-        otherAppsStatusRow?.isHidden = otherAppsStatus.isHidden
-        let global = s.instructions.replacingOccurrences(of: "\n", with: " ")
-        let apps = s.appInstructions.values.filter { !$0.isEmpty }.count
-        var summary = global.isEmpty ? L("No note for all apps") : "\u{201C}\(global)\u{201D}"
-        if s.instructionsAreDefault && !global.isEmpty { summary = L("Default: %@", summary) }
-        if apps > 0 { summary += ", " + LCount(apps, "notes for %@ apps", one: "notes for %@ app") }
-        instructionsSummary.stringValue = summary
         refreshUpdates()
     }
 
@@ -469,7 +579,7 @@ final class GeneralPane: PreferencesPane {
         let build = info["CFBundleVersion"] as? String
         let updates = host?.updates
         let on = updates?.isConfigured ?? false
-        for row in updateRows { row.isHidden = !on }
+        for row in updateRows { row.isHidden = !on && !Self.showsUpdatesForTesting }
         if let updates, on {
             autoCheck.state = updates.automaticallyChecks ? .on : .off
             autoInstall.state = updates.automaticallyInstalls ? .on : .off
@@ -522,13 +632,63 @@ final class GeneralPane: PreferencesPane {
         host.powerSettingsChanged()
     }
 
+    @objc private func loginChanged() {
+        AppLocation.setOpensAtLogin(openAtLogin.state == .on)
+        refresh()
+    }
+}
+
+// MARK: Typing
+
+/// How suggestions read and what they offer while you type, and the keys.
+final class TypingPane: PreferencesPane {
+    private let length = NSPopUpButton()
+    private let sentenceEnd = NSButton(checkboxWithTitle: L("Stop at the end of a sentence"), target: nil, action: nil)
+    private let emoji = NSButton(checkboxWithTitle: L("Offer emoji for :shortcodes"), target: nil, action: nil)
+    private let autocorrect = NSButton(checkboxWithTitle: L("Offer a fix for a misspelled word"), target: nil, action: nil)
+    private let typoGate = NSButton(checkboxWithTitle: L("Wait while a word looks misspelled"), target: nil, action: nil)
+    private let midLine = NSButton(checkboxWithTitle: L("Suggest in the middle of a line (experimental)"), target: nil, action: nil)
+
+    override func build() {
+        length.addItems(withTitles: AppSettings.lengthPresets.map(\.name))
+        for c in [length, sentenceEnd, emoji, autocorrect, typoGate, midLine] as [NSControl] {
+            c.target = self
+            c.action = #selector(changed(_:))
+        }
+        let w: CGFloat = 400
+        let grid = Self.form([
+            [Self.formLabel(L("Length:")), length],
+            [NSGridCell.emptyContentView, sentenceEnd],
+            [NSGridCell.emptyContentView, Self.note(L("When this is off, a suggestion can run on into the next sentence."), width: w)],
+            [Self.formLabel(L("Typing aids:")), emoji],
+            [NSGridCell.emptyContentView, Self.note(L("Type a colon and a name, like :tada, then Tab."), width: w)],
+            [NSGridCell.emptyContentView, autocorrect],
+            [NSGridCell.emptyContentView, typoGate],
+            [NSGridCell.emptyContentView, Self.note(L("Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before."), width: w)],
+            [NSGridCell.emptyContentView, midLine],
+            [NSGridCell.emptyContentView, Self.note(L("Up to three words, shown in a small card under the caret."), width: w)],
+        ])
+        add(grid, spacingAfter: 18)
+        add(Self.separator())
+        add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere.")))
+    }
+
+    override func refresh() {
+        guard let s = host?.settings else { return }
+        length.selectItem(at: AppSettings.lengthPresets.firstIndex { $0.words == s.lengthWords } ?? 1)
+        sentenceEnd.state = s.stopAtSentenceEnd ? .on : .off
+        emoji.state = s.emoji ? .on : .off
+        autocorrect.state = s.autocorrect ? .on : .off
+        typoGate.state = s.typoGate ? .on : .off
+        midLine.state = s.midLine ? .on : .off
+    }
+
     @objc private func changed(_ sender: NSControl) {
         guard let host else { return }
         let s = host.settings
         switch sender {
         case length: s.lengthWords = AppSettings.lengthPresets[max(0, length.indexOfSelectedItem)].words
         case sentenceEnd: s.stopAtSentenceEnd = sentenceEnd.state == .on
-        case screen: s.useScreenContext = screen.state == .on
         case emoji: s.emoji = emoji.state == .on
         case autocorrect: s.autocorrect = autocorrect.state == .on
         case typoGate: s.typoGate = typoGate.state == .on
@@ -537,26 +697,112 @@ final class GeneralPane: PreferencesPane {
         }
         host.settingsChanged()
     }
+}
 
-    @objc private func allowScreen() { host?.openScreenRecordingSettings() }
+// MARK: Context
+
+/// What suggestions may read besides the field itself: the text on screen around it and,
+/// opt-in, other apps' windows (with the apps never read). Each source is a labelled section
+/// of `grid`, with its note and status rows under its switch.
+final class ContextPane: PreferencesPane {
+    private let screen = NSButton(checkboxWithTitle: L("Use text on screen near the field"), target: nil, action: nil)
+    private let screenStatus = NSTextField(labelWithString: "")
+    private let screenAllow = NSButton(title: L("Allow Screen Recording\u{2026}"), target: nil, action: nil)
+    private let screenRelaunch = NSButton(title: L("Relaunch"), target: nil, action: nil)
+    private let screenHint = PreferencesPane.note(Signing.staleGrantHint, width: 400)
+    private var screenHintRow: NSGridRow?
+    private let otherApps = NSButton(checkboxWithTitle: L("Use text from other apps"), target: nil, action: nil)
+    private let otherAppsStatus = NSTextField(labelWithString: "")
+    private var otherAppsStatusRow: NSGridRow?
+    private let neverRead = AppList(minHeight: 44, maxHeight: 200)
+
+    override func build() {
+        screen.target = self
+        screen.action = #selector(screenChanged)
+        screenStatus.font = .systemFont(ofSize: 11)
+        screenAllow.target = self
+        screenAllow.action = #selector(allowScreen)
+        screenAllow.controlSize = .small
+        screenRelaunch.target = self
+        screenRelaunch.action = #selector(relaunch)
+        screenRelaunch.controlSize = .small
+        otherApps.target = self
+        otherApps.action = #selector(otherAppsChanged)
+        otherAppsStatus.font = .systemFont(ofSize: 11)
+        otherAppsStatus.textColor = .systemOrange
+        let grid = Self.form([
+            [Self.formLabel(L("Screen context:")), screen],
+            [NSGridCell.emptyContentView, Self.note(L("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away."), width: 400)],
+            [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow, screenRelaunch])],
+            [NSGridCell.emptyContentView, screenHint],
+            [Self.formLabel(L("Other apps:")), otherApps],
+            [NSGridCell.emptyContentView, Self.note(L("Suggestions can use what other windows show, on any display: a document, slides or a web page beside the email you are writing, and windows you looked at in the last 10 minutes. Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac sleeps; never sent to a server."), width: 400)],
+            [NSGridCell.emptyContentView, otherAppsStatus],
+        ])
+        screenHintRow = grid.cell(for: screenHint)?.row
+        otherAppsStatusRow = grid.cell(for: otherAppsStatus)?.row
+        grid.cell(for: otherApps)?.row?.topPadding = 8
+        add(grid, spacingAfter: 18)
+        add(Self.heading(L("Never read as context")))
+        add(neverRead)
+        add(Self.hstack([ActionButton.make(L("Add an App\u{2026}")) { [weak self] in self?.host?.addNeverReadApp() },
+                         ActionButton.make(L("Restore Defaults")) { [weak self] in
+                             guard let host = self?.host else { return }
+                             host.settings.neverReadApps = ContextPool.passwordManagers
+                             host.settingsChanged()
+                         }]))
+        add(Self.note(L("With \u{201C}Use text from other apps\u{201D} on, Foretype never reads these apps\u{2019} windows. Password managers are on the list to start with; apps where you turned suggestions off are never read either.")))
+    }
+
+    override func refresh() {
+        guard let s = host?.settings else { return }
+        screen.state = s.useScreenContext ? .on : .off
+        let allowed = ScreenContextProvider.hasPermission
+        screenStatus.stringValue = allowed ? "\u{2713} " + L("Screen Recording allowed") : L("Screen Recording not allowed yet")
+        screenStatus.textColor = allowed ? .systemGreen : .secondaryLabelColor
+        screenAllow.isHidden = allowed || !s.useScreenContext
+        // macOS applies a new Screen Recording grant only when the app starts.
+        screenRelaunch.isHidden = allowed || !s.useScreenContext || !s.askedForScreenRecording || !AppLocation.isBundledApp
+        screenHint.isHidden = allowed || !s.useScreenContext || !Signing.isAdHocBundle
+        screenHintRow?.isHidden = screenHint.isHidden
+        otherApps.state = s.useOtherApps ? .on : .off
+        // What this Mac and this backend allow.
+        if !s.backendIsOnDevice {
+            otherAppsStatus.stringValue = L("Off while a server makes suggestions: other apps\u{2019} text stays on this Mac.")
+        } else if !ContextPool.memoryAllowsOCR {
+            otherAppsStatus.stringValue = L("On this Mac (under 12 GB of memory), only text apps share through Accessibility is read, and less of it.")
+        } else {
+            otherAppsStatus.stringValue = ""
+        }
+        otherAppsStatus.isHidden = otherAppsStatus.stringValue.isEmpty || !s.useOtherApps
+        otherAppsStatusRow?.isHidden = otherAppsStatus.isHidden
+        neverRead.setRows(s.neverReadApps.map { bundle in
+            AppList.row(bundle: bundle, state: "", removeTip: L("Let Foretype read %@")) { [weak self] in
+                guard let host = self?.host else { return }
+                host.settings.neverReadApps.removeAll { $0 == bundle }
+                host.settingsChanged()
+            }
+        }, empty: Self.note(L("No apps: every app's windows can be read.")))
+    }
 
     @objc private func otherAppsChanged() { host?.setUseOtherApps(otherApps.state == .on) }
 
-    @objc private func editNeverRead() { showApps?() }
-
-    @objc private func relaunch() { AppLocation.relaunch() }
-
-    @objc private func loginChanged() {
-        AppLocation.setOpensAtLogin(openAtLogin.state == .on)
-        refresh()
+    @objc private func screenChanged() {
+        guard let host else { return }
+        host.settings.useScreenContext = screen.state == .on
+        host.settingsChanged()
     }
 
-    @objc private func editInstructions() { host?.openInstructions() }
+    @objc private func allowScreen() { host?.openScreenRecordingSettings() }
+
+    @objc private func relaunch() { AppLocation.relaunch() }
 }
 
 // MARK: Personalization
 
+/// Your note for the model (Instructions) and learning from your writing.
 final class PersonalizationPane: PreferencesPane {
+    private let instructionsSummary = NSTextField(labelWithString: "")
     private let learn = NSButton(checkboxWithTitle: L("Learn from my writing"), target: nil, action: nil)
     private let strength = NSSegmentedControl(labels: AppSettings.strengthNames, trackingMode: .selectOne, target: nil, action: nil)
     private let learned = NSTextField(labelWithString: "")
@@ -571,9 +817,15 @@ final class PersonalizationPane: PreferencesPane {
         let delete = NSButton(title: L("Delete Writing History\u{2026}"), target: self, action: #selector(deleteHistory))
         importButton.target = self
         importButton.action = #selector(importWriting)
+        let edit = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editInstructions))
+        instructionsSummary.textColor = .secondaryLabelColor
+        instructionsSummary.lineBreakMode = .byTruncatingTail
+        instructionsSummary.widthAnchor.constraint(lessThanOrEqualToConstant: 330).isActive = true
         let w: CGFloat = 400
         let grid = Self.form([
-            [NSGridCell.emptyContentView, learn],
+            [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
+            [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
+            [Self.formLabel(L("Your writing:")), learn],
             [NSGridCell.emptyContentView, Self.note(L("Off by default. Only fields where you accepted a suggestion are kept, only the text you typed there, at least 20 characters, never secure fields. Stored encrypted on this Mac (key in your Keychain); nothing leaves it."), width: w)],
             [Self.formLabel(L("Strength:")), strength],
             [NSGridCell.emptyContentView, Self.note(L("How strongly suggestions lean towards words you use often."), width: w)],
@@ -581,12 +833,19 @@ final class PersonalizationPane: PreferencesPane {
             [NSGridCell.emptyContentView, Self.hstack([importButton, delete])],
             [NSGridCell.emptyContentView, Self.note(L("Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words."), width: w)],
         ])
+        grid.row(at: 2).topPadding = 8
         add(grid)
     }
 
     override func refresh() {
         guard let host else { return }
         let s = host.settings
+        let global = s.instructions.replacingOccurrences(of: "\n", with: " ")
+        let apps = s.appInstructions.values.filter { !$0.isEmpty }.count
+        var summary = global.isEmpty ? L("No note for all apps") : "\u{201C}\(global)\u{201D}"
+        if s.instructionsAreDefault && !global.isEmpty { summary = L("Default: %@", summary) }
+        if apps > 0 { summary += ", " + LCount(apps, "notes for %@ apps", one: "notes for %@ app") }
+        instructionsSummary.stringValue = summary
         learn.state = s.personalize ? .on : .off
         strength.selectedSegment = min(max(s.personalizeStrength, 0), 2)
         strength.isEnabled = s.personalize
@@ -611,6 +870,8 @@ final class PersonalizationPane: PreferencesPane {
     @objc private func deleteHistory() { host?.confirmDeleteHistory() }
 
     @objc private func importWriting() { host?.importWriting() }
+
+    @objc private func editInstructions() { host?.openInstructions() }
 }
 
 // MARK: About You
@@ -733,134 +994,32 @@ final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
 
 // MARK: Apps
 
+/// Apps whose default the user changed (suggestions off, or on where they are off by default).
 final class AppsPane: PreferencesPane {
-    private let list = NSStackView()
-    private let neverList = NSStackView()
+    private let list = AppList(minHeight: 44, maxHeight: 280)
     private let empty = PreferencesPane.note(L("You haven't changed any app yet. Add an app below, or choose \u{201C}Suggest in \u{2026}\u{201D} in the Foretype menu while that app is in front."))
     private let onlyApps = NSTextField(labelWithString: "")
 
     override func build() {
+        empty.preferredMaxLayoutWidth = Self.width - 2 * Self.inset - 30
         add(Self.heading(L("Apps you changed")))
-        add(Self.scrolling(list, height: 160))
+        add(list)
         add(Self.hstack([ActionButton.make(L("Add an App\u{2026}")) { [weak self] in self?.host?.addAppException() }]))
-        add(Self.note(L("Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts.")), spacingAfter: 18)
-        add(Self.heading(L("Never read as context")))
-        add(Self.scrolling(neverList, height: 120))
-        add(Self.hstack([ActionButton.make(L("Add an App\u{2026}")) { [weak self] in self?.host?.addNeverReadApp() },
-                         ActionButton.make(L("Restore Defaults")) { [weak self] in
-                             guard let host = self?.host else { return }
-                             host.settings.neverReadApps = ContextPool.passwordManagers
-                             host.settingsChanged()
-                         }]))
-        add(Self.note(L("With \u{201C}Use text from other apps\u{201D} on, Foretype never reads these apps\u{2019} windows. Password managers are on the list to start with; apps where you turned suggestions off are never read either.")))
+        add(Self.note(L("Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts.")))
         onlyApps.font = .systemFont(ofSize: 11)
         onlyApps.textColor = .systemOrange
         add(onlyApps)
     }
 
-    /// A bordered, scrolling list of rows, `height` tall.
-    private static func scrolling(_ list: NSStackView, height: CGFloat) -> NSScrollView {
-        list.orientation = .vertical
-        list.alignment = .leading
-        list.spacing = 0
-        list.translatesAutoresizingMaskIntoConstraints = false
-        let doc = FlippedView()
-        doc.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(list)
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        scroll.drawsBackground = true
-        scroll.backgroundColor = .textBackgroundColor
-        scroll.documentView = doc
-        NSLayoutConstraint.activate([
-            list.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
-            list.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
-            list.topAnchor.constraint(equalTo: doc.topAnchor),
-            list.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
-            doc.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            doc.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            scroll.heightAnchor.constraint(equalToConstant: height),
-        ])
-        return scroll
-    }
-
     override func refresh() {
         guard let s = host?.settings else { return }
-        list.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let rows = s.disabledApps.map { ($0, L("Off"), true) } + s.enabledApps.map { ($0, L("On (off by default)"), false) }
-        if rows.isEmpty {
-            let pad = NSStackView(views: [empty])
-            pad.edgeInsets = NSEdgeInsets(top: 10, left: 10, bottom: 10, right: 10)
-            list.addArrangedSubview(pad)
-            pad.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
-            empty.preferredMaxLayoutWidth = Self.width - 2 * Self.inset - 30
-        }
-        for (i, (bundle, state, off)) in rows.enumerated() {
-            let row = appRow(bundle: bundle, state: state, off: off)
-            list.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
-            if i < rows.count - 1 {
-                let sep = Self.separator()
-                list.addArrangedSubview(sep)
-                sep.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
-            }
-        }
-        neverList.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let never = s.neverReadApps
-        for (i, bundle) in never.enumerated() {
-            let row = appRow(bundle: bundle, state: "", off: true) { [weak self] in
-                guard let host = self?.host else { return }
-                host.settings.neverReadApps.removeAll { $0 == bundle }
-                host.settingsChanged()
-            }
-            neverList.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: neverList.widthAnchor).isActive = true
-            if i < never.count - 1 {
-                let sep = Self.separator()
-                neverList.addArrangedSubview(sep)
-                sep.widthAnchor.constraint(equalTo: neverList.widthAnchor).isActive = true
-            }
-        }
+        let apps = s.disabledApps.map { ($0, true) } + s.enabledApps.map { ($0, false) }
+        list.setRows(apps.map { bundle, off in
+            AppList.row(bundle: bundle, state: off ? L("Off") : L("On (off by default)"), stateColor: off ? .secondaryLabelColor : .systemGreen,
+                        removeTip: L("Return %@ to its default")) { [weak self] in self?.remove(bundle, off: off) }
+        }, empty: empty)
         onlyApps.stringValue = s.onlyApps.isEmpty ? "" : L("Development: limited to %@ (FORETYPE_ONLY_APPS)", s.onlyApps.joined(separator: ", "))
         onlyApps.isHidden = s.onlyApps.isEmpty
-    }
-
-    private func appRow(bundle: String, state: String, off: Bool, onRemove: (() -> Void)? = nil) -> NSView {
-        var name = bundle
-        var icon: NSImage?
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
-            name = FileManager.default.displayName(atPath: url.path)
-            if name.hasSuffix(".app") { name = String(name.dropLast(4)) }
-            icon = NSWorkspace.shared.icon(forFile: url.path)
-        }
-        let image = NSImageView(image: icon ?? NSImage(systemSymbolName: "app.dashed", accessibilityDescription: nil)!)
-        image.widthAnchor.constraint(equalToConstant: 24).isActive = true
-        image.heightAnchor.constraint(equalToConstant: 24).isActive = true
-        let title = NSTextField(labelWithString: name)
-        // Not installed: the bundle ID is already the title.
-        let id = NSTextField(labelWithString: icon == nil ? L("not installed") : bundle)
-        id.font = .systemFont(ofSize: 10)
-        id.textColor = .tertiaryLabelColor
-        let names = NSStackView(views: [title, id])
-        names.orientation = .vertical
-        names.alignment = .leading
-        names.spacing = 1
-        let status = NSTextField(labelWithString: state)
-        status.textColor = off ? .secondaryLabelColor : .systemGreen
-        let remove = ActionButton.make(L("Remove")) { [weak self] in
-            if let onRemove { onRemove() } else { self?.remove(bundle, off: off) }
-        }
-        remove.controlSize = .small
-        remove.toolTip = onRemove == nil ? L("Return %@ to its default", name) : L("Let Foretype read %@", name)
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let row = NSStackView(views: [image, names, spacer, status, remove])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        row.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 6, right: 10)
-        return row
     }
 
     private func remove(_ bundle: String, off: Bool) {

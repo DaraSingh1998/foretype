@@ -47,6 +47,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
 | Pause and power rules (decisions, Resume Anyway, migration, saved pause) | `mac/.build/release/Foretype --pause-selftest` | nothing (a defaults suite of its own) |
 | Other apps' text pool (10-minute expiry, the 12-window cap, what is sent and when, the never-read and FORETYPE_ONLY_APPS gates, capture-forbidding and private windows, covered windows) | `mac/.build/release/Foretype --context-selftest` | nothing (made-up windows) |
+| Settings window layout (every pane fits a 13-inch MacBook Air; a tall pane scrolls in a window kept on screen, also on a display above; every tab in the toolbar); `DIR` gets a PNG of each pane, light and dark | `mac/.build/release/Foretype --settings-selftest [DIR]`; Hindi: `build/Foretype.app/Contents/MacOS/Foretype --settings-selftest DIR -AppleLanguages '(hi)'` | nothing (reads the settings, never writes them; the window is never shown) |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
 | About You fills in TextEdit (email, phone from its typed start, name after Regards, no match, nothing in the log) | `FORETYPE_MODEL=... scripts/e2e-about-you.sh` | Accessibility, user idle (fictional details from `FORETYPE_ABOUT_YOU`; the stored ones are untouched) |
 | Typing aids in TextEdit (emoji, autocorrect, typo gate, mid-line) | `FORETYPE_MODEL=... scripts/e2e-typing-aids.sh` | Accessibility, user idle |
@@ -308,7 +309,7 @@ when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps lla
   `kTCCServiceScreenCapture`); see it with
   `log stream --predicate 'subsystem == "com.apple.TCC"' --info`. Fix: remove the entry with
   − and add the app again (toggling isn't enough). On ad-hoc builds the setup window and
-  Settings ▸ General say so under a permission that isn't granted.
+  Settings ▸ Context say so under a permission that isn't granted.
 - **Stable identity (one-time setup).** `scripts/make-signing-cert.sh` creates
   "Foretype", the self-signed code-signing certificate and key that releases are signed
   with too (D36), in the login keychain, and writes a PKCS#12 backup for the release workflow
@@ -350,7 +351,11 @@ when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps lla
   history key when personalization is on in the binary's defaults domain. The binary blocks
   in `Keychain.get` until someone answers. Run development binaries with
   `FORETYPE_ABOUT_YOU='{}'` (empty details, the store untouched), as `e2e-inline-caret.sh`
-  and `e2e-textedit.sh` do, and never type the password into a prompt a test raised.
+  and `e2e-textedit.sh` do, and never type the password into a prompt a test raised. The
+  bundled dev build shares the installed app's defaults, so with personalization on there it
+  asks for the history key too: add `--args -personalize NO` to `open` (the argument domain
+  overrides the setting for that process; nothing is saved). Quitting the binary dismisses
+  a prompt it raised.
 - On macOS 27, system-wide `AXFocusedApplication` always fails (`cannotComplete`); the
   tracker uses `NSWorkspace.frontmostApplication` and `AXUIElementCreateApplication(pid)`.
 
@@ -376,7 +381,10 @@ suggestions as a fresh context, then the corpus replay, and record both in
 **Add a setting.** Rust `Settings` (with a default) → Swift `AppSettings` property and
 `coreDict` key → a control in the Settings window (`PreferencesWindow.swift`, the pane's
 `build()` and `refresh()`) and, if it is a common one, the menu → `host.settingsChanged()`
-(`Controller.applySettings()`) pushes it and refreshes the window.
+(`Controller.applySettings()`) pushes it and refreshes the window. Put it in the pane it
+belongs to (General: when Foretype runs; Typing: what suggestions do; Context: what they
+read) with its note right under it, and run `Foretype --settings-selftest`: it fails when a
+pane no longer fits a 13-inch MacBook Air without scrolling.
 
 **Add or change a UI string.** Write it as `L("English text")` in Swift; a format takes
 numbered arguments, `L("Delete %@?", name)` or `L("%1$@ of %2$@", a, b)`, all strings
