@@ -14,6 +14,8 @@
 # usage: FORETYPE_MODEL=/path/model.gguf scripts/e2e-inline-caret.sh [ce|textarea] [outdir]
 #        FORETYPE_CARET=pixel (the default here) forces the pixel caret locator, as in apps
 #        that report no caret; FORETYPE_CARET= (empty) leaves Chrome's own AX caret on.
+#        WINDOW_POS=X,Y opens the test window there (global points, top-left origin), e.g. on a
+#        display above the main one (negative y).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="${BIN:-$ROOT/mac/.build/release/Foretype}"
@@ -39,7 +41,8 @@ until [ "$(idle)" -ge "$IDLE" ]; do sleep 2; done
 
 BEFORE="$("$DRIVE" front-pid)"
 PROFILE="$(mktemp -d -t foretype-chrome)"
-"$CHROME" --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check --new-window "$PAGE" >/dev/null 2>&1 &
+"$CHROME" --user-data-dir="$PROFILE" --no-first-run --no-default-browser-check \
+  ${WINDOW_POS:+--window-position="$WINDOW_POS" --window-size=1000,600} --new-window "$PAGE" >/dev/null 2>&1 &
 CH=$!
 # Appending (O_APPEND), so the segment marks this script adds are not overwritten.
 : >"$LOG"

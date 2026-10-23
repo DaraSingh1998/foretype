@@ -230,8 +230,8 @@ enum PixelCaret {
         }
 
         /// The toggling bar, if exactly one plausible one changed. `hint` (global) breaks ties.
-        func bar(hint: CGPoint?, minHeight: CGFloat = 6, maxHeight: CGFloat = 90) -> (CaretBar, CaretLook)? {
-            guard count >= 2 else { return nil }
+        /// Each pixel's change over the frames, and the pixels that changed enough to count.
+        private func changes() -> (strength: [UInt8], mask: [UInt8]) {
             let n = width * height
             var strength = [UInt8](repeating: 0, count: n)
             var mask = [UInt8](repeating: 0, count: n)
@@ -245,17 +245,43 @@ enum PixelCaret {
                     }
                 }
             }
+            return (strength, mask)
+        }
+
+        /// The changed bars, and those left after each test a caret must pass: thin and tall,
+        /// filled, clear on both sides, nothing else changed around it (typing or scrolling
+        /// during the captures changes glyphs around the bar).
+        private func stages(_ mask: [UInt8], minHeight: CGFloat, maxHeight: CGFloat) -> [[CaretBar]] {
             let maxW = max(3, Int((3.5 * scale).rounded()))
-            let candidates = PixelCaret.bars(mask: mask, width: width, height: height,
-                                             minH: Int(minHeight * scale), maxH: Int(maxHeight * scale), maxW: maxW)
-                .filter { b in
-                    b.height >= 3 * b.width
-                        && PixelCaret.fill(b, mask: mask, width: width) >= 0.75
-                        && PixelCaret.sideFill(b, mask: mask, width: width, gap: 2, cols: 2, left: true) <= 0.2
-                        && PixelCaret.sideFill(b, mask: mask, width: width, gap: 2, cols: 2, left: false) <= 0.2
-                        // Typing or scrolling during the captures changes glyphs around the bar.
-                        && PixelCaret.clutter(b, mask: mask, width: width, height: height, dx: Int(24 * scale)) <= b.width * b.height
-                }
+            let all = PixelCaret.bars(mask: mask, width: width, height: height,
+                                      minH: Int(minHeight * scale), maxH: Int(maxHeight * scale), maxW: maxW)
+            let shaped = all.filter { $0.height >= 3 * $0.width }
+            let filled = shaped.filter { PixelCaret.fill($0, mask: mask, width: width) >= 0.75 }
+            let clear = filled.filter {
+                PixelCaret.sideFill($0, mask: mask, width: width, gap: 2, cols: 2, left: true) <= 0.2
+                    && PixelCaret.sideFill($0, mask: mask, width: width, gap: 2, cols: 2, left: false) <= 0.2
+            }
+            let quiet = clear.filter { PixelCaret.clutter($0, mask: mask, width: width, height: height, dx: Int(24 * scale)) <= $0.width * $0.height }
+            return [all, shaped, filled, clear, quiet]
+        }
+
+        /// For the debug log when no caret was found: the frames, how many pixels changed and
+        /// how many bars passed each test, with the sizes of the last ones (points). Nothing of
+        /// the image itself.
+        func diagnosis(minHeight: CGFloat = 6, maxHeight: CGFloat = 90) -> String {
+            guard count >= 2 else { return "\(count) frame" }
+            let (_, mask) = changes()
+            let s = stages(mask, minHeight: minHeight, maxHeight: maxHeight)
+            let last = s.last { !$0.isEmpty } ?? []
+            let sizes = last.prefix(4).map { String(format: "%.1fx%.0f", CGFloat($0.width) / scale, CGFloat($0.height) / scale) }
+            return "\(count) frames of \(width)x\(height) px at \(Int(scale))x, \(mask.reduce(0) { $0 + Int($1) }) px changed, bars "
+                + s.map { String($0.count) }.joined(separator: "/") + " (all/thin/filled/clear/quiet) " + sizes.joined(separator: " ")
+        }
+
+        func bar(hint: CGPoint?, minHeight: CGFloat = 6, maxHeight: CGFloat = 90) -> (CaretBar, CaretLook)? {
+            guard count >= 2 else { return nil }
+            let (strength, mask) = changes()
+            let candidates = stages(mask, minHeight: minHeight, maxHeight: maxHeight).last ?? []
             let chosen: CaretBar?
             if let hint {
                 let hx = (hint.x - origin.x) * scale, hy = (hint.y - origin.y) * scale
@@ -345,14 +371,15 @@ enum PixelCaret {
     // MARK: - Capture
 
     private static let windowLock = NSLock()
-    private static var windowCache: (pid: pid_t, windows: [SCWindow], at: CFAbsoluteTime)?
+    private static var windowCache: (pid: pid_t, windows: [SCWindow], displays: [SCDisplay], at: CFAbsoluteTime)?
 
-    /// The app's on-screen windows (cached for 2 s; ScreenCaptureKit's list costs 10–40 ms).
-    private static func windows(pid: pid_t, refresh: Bool) -> [SCWindow] {
+    /// The app's on-screen windows and the displays (cached for 2 s; ScreenCaptureKit's list
+    /// costs 10–40 ms).
+    private static func windows(pid: pid_t, refresh: Bool) -> (windows: [SCWindow], displays: [SCDisplay]) {
         windowLock.lock()
         if !refresh, let c = windowCache, c.pid == pid, CFAbsoluteTimeGetCurrent() - c.at < 2 {
             windowLock.unlock()
-            return c.windows
+            return (c.windows, c.displays)
         }
         windowLock.unlock()
         let done = DispatchSemaphore(value: 0)
@@ -361,14 +388,14 @@ enum PixelCaret {
             content = c
             done.signal()
         }
-        guard done.wait(timeout: .now() + 1.5) == .success, let content else { return [] }
+        guard done.wait(timeout: .now() + 1.5) == .success, let content else { return ([], []) }
         let list = content.windows.filter {
             $0.owningApplication?.processID == pid && $0.windowLayer == 0 && $0.frame.width > 40 && $0.frame.height > 30
         }
         windowLock.lock()
-        windowCache = (pid, list, CFAbsoluteTimeGetCurrent())
+        windowCache = (pid, list, content.displays, CFAbsoluteTimeGetCurrent())
         windowLock.unlock()
-        return list
+        return (list, content.displays)
     }
 
     /// Captures `region` (global points) of the app window that contains it. Only that
@@ -376,60 +403,41 @@ enum PixelCaret {
     /// pointer is left out. Blocks up to 1.5 s; call off the main thread.
     static func capture(pid: pid_t, windowFrame: CGRect?, region: CGRect) -> PixelFrame? {
         for refresh in [false, true] {
-            let list = windows(pid: pid, refresh: refresh)
+            let (list, displays) = windows(pid: pid, refresh: refresh)
             let center = CGPoint(x: region.midX, y: region.midY)
             let window = list.filter { $0.frame.contains(center) }.min { a, b in
                 guard let wf = windowFrame else { return a.frame.width * a.frame.height < b.frame.width * b.frame.height }
                 return abs(a.frame.minX - wf.minX) + abs(a.frame.minY - wf.minY) + abs(a.frame.width - wf.width)
                     < abs(b.frame.minX - wf.minX) + abs(b.frame.minY - wf.minY) + abs(b.frame.width - wf.width)
             }
-            guard let window else { continue }
-            if let f = capture(window, region: region) { return f }
+            guard let window,
+                  let shot = WindowCapture.image(of: window, rect: region.intersection(window.frame), displays: displays) else { continue }
+            return PixelFrame(image: shot.image, origin: shot.origin, scale: shot.scale)
         }
         return nil
-    }
-
-    private static func capture(_ window: SCWindow, region: CGRect) -> PixelFrame? {
-        let wf = window.frame
-        let clipped = region.intersection(wf)
-        guard !clipped.isNull, clipped.width >= 2, clipped.height >= 2 else { return nil }
-        let filter = SCContentFilter(desktopIndependentWindow: window)
-        let scale = CGFloat(filter.pointPixelScale)
-        // Whole pixels, so the bytes map exactly onto points.
-        let local = CGRect(x: floor((clipped.minX - wf.minX) * scale) / scale, y: floor((clipped.minY - wf.minY) * scale) / scale,
-                           width: ceil(clipped.width * scale) / scale, height: ceil(clipped.height * scale) / scale)
-        let config = SCStreamConfiguration()
-        config.sourceRect = local
-        config.width = Int((local.width * scale).rounded())
-        config.height = Int((local.height * scale).rounded())
-        config.showsCursor = false
-        config.ignoreShadowsSingleWindow = true
-        let done = DispatchSemaphore(value: 0)
-        var image: CGImage?
-        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { img, _ in
-            image = img
-            done.signal()
-        }
-        guard done.wait(timeout: .now() + 1.5) == .success, let image else { return nil }
-        return PixelFrame(image: image, origin: CGPoint(x: wf.minX + local.minX, y: wf.minY + local.minY),
-                          scale: CGFloat(image.width) / local.width)
     }
 
     // MARK: - Detection runs (blocking; call on a background queue)
 
     /// Captures `region` every `interval` until the caret blinks or `timeout` passes.
     /// `cancelled` is checked before every capture.
+    /// `failed` gets the reason when it finds nothing (for the debug log).
     static func blink(pid: pid_t, windowFrame: CGRect?, region: CGRect, hint: CGPoint?,
-                      interval: Double = 0.12, timeout: Double = 1.3, cancelled: () -> Bool = { false }) -> PixelCaretHit? {
+                      interval: Double = 0.12, timeout: Double = 1.3, cancelled: () -> Bool = { false },
+                      failed: (String) -> Void = { _ in }) -> PixelCaretHit? {
         let t0 = CFAbsoluteTimeGetCurrent()
         var acc: BlinkAccumulator?
         while CFAbsoluteTimeGetCurrent() - t0 < timeout {
             if cancelled() { return nil }
             let shot = CFAbsoluteTimeGetCurrent()
-            guard let f = capture(pid: pid, windowFrame: windowFrame, region: region) else { return nil }
+            guard let f = capture(pid: pid, windowFrame: windowFrame, region: region) else {
+                failed("no capture of \(Int(region.width))x\(Int(region.height)) pt")
+                return nil
+            }
             if acc == nil {
                 acc = BlinkAccumulator(f)
             } else if acc?.add(f) != true {
+                failed("frame size changed")
                 return nil
             }
             if let acc, let (bar, look) = acc.bar(hint: hint) {
@@ -440,6 +448,7 @@ enum PixelCaret {
             let wait = interval - (CFAbsoluteTimeGetCurrent() - shot)
             if wait > 0 { usleep(useconds_t(wait * 1_000_000)) }
         }
+        if let acc { failed(acc.diagnosis()) }
         return nil
     }
 
@@ -496,6 +505,63 @@ enum PixelCaret {
             if attempt < attempts, wait > 0 { usleep(useconds_t(wait * 1_000_000)) }
         }
         return nil
+    }
+}
+
+// MARK: - Window capture
+
+/// One screenshot of `rect` (global points) of one window alone: no other window, Foretype's
+/// overlay or the pointer is in it. A window in full screen (its own Space) can't be captured
+/// as a desktop-independent window (ScreenCaptureKit error -3811, "audio/video capture
+/// failure"); such a window is captured through its display with only that window included,
+/// and remembered so the failing attempt isn't repeated. Blocks up to 1.5 s per attempt; call
+/// off the main thread.
+enum WindowCapture {
+    private static let lock = NSLock()
+    private static var viaDisplay: Set<CGWindowID> = []
+
+    static func image(of window: SCWindow, rect: CGRect, displays: [SCDisplay]) -> (image: CGImage, origin: CGPoint, scale: CGFloat)? {
+        guard !rect.isNull, rect.width >= 2, rect.height >= 2 else { return nil }
+        lock.lock()
+        let known = viaDisplay.contains(window.windowID)
+        lock.unlock()
+        if !known, let shot = shot(SCContentFilter(desktopIndependentWindow: window), rect: rect, origin: window.frame.origin) {
+            return shot
+        }
+        let centre = CGPoint(x: rect.midX, y: rect.midY)
+        guard let display = displays.first(where: { $0.frame.contains(centre) }),
+              let shot = shot(SCContentFilter(display: display, including: [window]), rect: rect.intersection(display.frame),
+                              origin: display.frame.origin) else { return nil }
+        if !known {
+            lock.lock()
+            let first = viaDisplay.insert(window.windowID).inserted  // screen context may race here
+            lock.unlock()
+            if first { Log.debug("capture: \(window.owningApplication?.applicationName ?? "?") window \(window.windowID) only through its display (full screen)") }
+        }
+        return shot
+    }
+
+    /// `rect` relative to `origin` (the filter's own origin), in whole pixels so the bytes map
+    /// exactly onto points.
+    private static func shot(_ filter: SCContentFilter, rect: CGRect, origin: CGPoint) -> (image: CGImage, origin: CGPoint, scale: CGFloat)? {
+        guard !rect.isNull, rect.width >= 2, rect.height >= 2 else { return nil }
+        let scale = CGFloat(filter.pointPixelScale)
+        let local = CGRect(x: floor((rect.minX - origin.x) * scale) / scale, y: floor((rect.minY - origin.y) * scale) / scale,
+                           width: ceil(rect.width * scale) / scale, height: ceil(rect.height * scale) / scale)
+        let config = SCStreamConfiguration()
+        config.sourceRect = local
+        config.width = Int((local.width * scale).rounded())
+        config.height = Int((local.height * scale).rounded())
+        config.showsCursor = false
+        config.ignoreShadowsSingleWindow = true
+        let done = DispatchSemaphore(value: 0)
+        var image: CGImage?
+        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { img, _ in
+            image = img
+            done.signal()
+        }
+        guard done.wait(timeout: .now() + 1.5) == .success, let image else { return nil }
+        return (image, CGPoint(x: origin.x + local.minX, y: origin.y + local.minY), CGFloat(image.width) / local.width)
     }
 }
 
@@ -685,18 +751,20 @@ final class PixelCaretProvider {
         if recent { return after(0.8, gen) { self.blink(t, gen) } }
         var hit: PixelCaretHit?
         var usedWindow = wide
+        var why: [String] = []
         for whole in wide ? [true] : [false, true] {
             guard let region = region(t, wholeWindow: whole) else { continue }
             usedWindow = whole
             hit = PixelCaret.blink(pid: t.pid, windowFrame: t.windowFrame, region: region, hint: nil,
-                                   cancelled: { [weak self] in self?.current(gen) != true })
+                                   cancelled: { [weak self] in self?.current(gen) != true },
+                                   failed: { why.append("\(whole ? "window" : "field"): \($0)") })
             if hit != nil || !current(gen) { break }
         }
         lock.lock()
         lastBlink[t.fieldKey] = CFAbsoluteTimeGetCurrent()
         lock.unlock()
         guard let hit, current(gen) else {
-            if current(gen) { Log.debug("pixel caret: no blinking caret found in \(t.bundleId)") }
+            if current(gen) { Log.debug("pixel caret: no blinking caret found in \(t.bundleId) (\(why.joined(separator: "; ")))") }
             return
         }
         if usedWindow, !wide, let f = t.fieldFrame, !f.insetBy(dx: -6, dy: -6).contains(CGPoint(x: hit.rect.minX, y: hit.rect.midY)) {

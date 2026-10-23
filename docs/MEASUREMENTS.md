@@ -764,6 +764,35 @@ don't depend on timing.
   tokens per Devanagari word against 1.64 for Hinglish (नहीं 5 tokens, "nahi" 2), and a
   suggestion is limited in words; gemma-4-E2B spends 1.31 (`llama-tokenize`).
 
+## WhatsApp Web in full-screen Chrome (2026-10-23)
+
+Report: in WhatsApp Web the suggestion never showed after the caret, only in a card
+(⇥ …) under the line at the text's left edge. Setup: the user's own Chrome (dev build
+limited to its pid, Gemma 4 E2B Q4_K_M, installed Foretype quit), in native full screen on
+a 1920×1080 display at 1× arranged above the built-in one (AX y −1080…0); the user typed an
+unsent draft in "Message yourself" with pauses and deleted it. WhatsApp Web, like the
+Claude app, gives no AX caret, so the pixel locator has to place the ghost text.
+
+- Before (main `29a50d6`): 56 suggestions drawn as the mirror card, 1 inline; all 8 blink
+  searches found nothing. The card was under the line because `GhostPanel` moved it below
+  the field when its top was at y < 0, "above the screen"; on a display above the main
+  one every y is negative.
+- Diagnostic run (blink failure reasons logged): every capture returned nothing, for the
+  field (1125×36 pt) and for the whole window (1920×992 pt). A probe outside Foretype: for
+  that window `SCContentFilter(desktopIndependentWindow:)` fails with error -3811 ("Failed
+  to start stream due to audio/video capture failure"); `SCContentFilter(display:including:)`
+  with only that window captures the same rectangle.
+- The chat-composer fixture with its window on the upper display (`WINDOW_POS`, not full
+  screen, main build): 63 of 63 suggestions inline, so 1× and negative coordinates were
+  not the problem.
+- After (this fix, same setup): 33 of 33 suggestions inline, no card; the user saw the
+  ghost text right after the caret. The first capture logged `only through its display
+  (full screen)`; a blink found the caret when the field got focus (4 frames, 484 ms),
+  before the first keystroke, and the first suggestion was drawn inline 0.2 s after it.
+  3 blinks and 7 pause verifies in all, 1 solid search found no caret. Screen context
+  (same capture) read 702 and 708 characters (704 and 374 ms).
+- Self-tests: `--caret-selftest` (30 cases, worst error 0.00 pt) and `--font-selftest` pass.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with
