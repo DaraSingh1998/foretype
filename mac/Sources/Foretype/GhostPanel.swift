@@ -57,8 +57,7 @@ final class GhostPanel {
     var isVisible: Bool { panel.isVisible }
 
     private static func cocoaRect(fromAX r: CGRect) -> CGRect {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        return CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
+        ScreenGeometry.cocoaRect(fromGlobal: r, primaryHeight: ScreenGeometry.primaryHeight())
     }
 
     private static func attributed(_ text: String, font: NSFont, card: Bool, tag: String? = nil) -> NSAttributedString {
@@ -137,8 +136,11 @@ final class GhostPanel {
         let size = attr.size()
         let w = ceil(size.width) + view.padding.width * 2
         let h = ceil(size.height) + view.padding.height * 2
-        var axRect = CGRect(x: anchorRect.minX, y: anchorRect.minY - h - 4, width: w, height: h)
-        if axRect.minY < 0 { axRect.origin.y = anchorRect.maxY + 4 }
+        // Above the field unless that leaves its display (which may be above the primary,
+        // where every y is negative).
+        let display = ScreenGeometry.display(for: anchorRect, in: displayBounds())
+        let axRect = CGRect(x: anchorRect.minX, y: ScreenGeometry.cardY(nextTo: anchorRect, height: h, gap: 4, display: display),
+                            width: w, height: h)
         view.card = true
         view.text = attr
         anchor = nil
@@ -155,7 +157,9 @@ final class GhostPanel {
         let w = ceil(size.width) + view.padding.width * 2
         let h = ceil(size.height) + view.padding.height * 2
         var axRect = CGRect(x: rect.minX, y: rect.minY - h - 4, width: w, height: h)
-        if axRect.minY < 0 { axRect.origin.y = rect.minY + 8 }
+        if let display = ScreenGeometry.display(for: rect, in: displayBounds()), axRect.minY < display.minY {
+            axRect.origin.y = rect.minY + 8
+        }
         view.card = true
         view.text = attr
         anchor = nil

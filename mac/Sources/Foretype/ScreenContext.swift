@@ -89,12 +89,15 @@ final class ScreenContextProvider {
                 window = candidates.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
             }
             guard let window else { return }
-            let scale = NSScreen.screens.first { $0.frame.intersects(window.frame) }?.backingScaleFactor ?? 2
+            // The scale of the display the window is on. SCWindow.frame is in global
+            // coordinates (top-left origin), so it can't be matched against NSScreen frames.
+            let filter = SCContentFilter(desktopIndependentWindow: window)
+            let scale = filter.pointPixelScale > 0 ? CGFloat(filter.pointPixelScale)
+                : ScreenGeometry.scale(for: window.frame, in: ScreenGeometry.displays()) ?? 2
             let config = SCStreamConfiguration()
             config.width = Int(window.frame.width * scale)
             config.height = Int(window.frame.height * scale)
             config.showsCursor = false
-            let filter = SCContentFilter(desktopIndependentWindow: window)
             let t0 = Date()
             SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
                 guard let image else {
