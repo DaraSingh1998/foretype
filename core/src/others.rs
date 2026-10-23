@@ -30,7 +30,7 @@
 //! budget. Windows keep the order in which they first came into the pool and passages
 //! their document order, so a passage added later lands after the ones already cached.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
 use serde::{Deserialize, Serialize};
@@ -218,6 +218,9 @@ pub struct OtherApps {
     memo: Option<(u64, u64, usize)>,
     /// How often the section changed (each change costs a full prefill).
     pub changes: u64,
+    /// Sections rendered lately and the passages in them: the engine keeps serving the old
+    /// one while a new one prefills (`section_alive`).
+    recent: VecDeque<(String, Vec<u64>)>,
 }
 
 impl OtherApps {
@@ -243,6 +246,7 @@ impl OtherApps {
             self.seen.clear();
             self.current.clear();
             self.section.clear();
+            self.recent.clear();
             return;
         }
         let mut lens = 0usize;
@@ -325,6 +329,7 @@ impl OtherApps {
                 let cur: Vec<usize> = self.current.iter().map(|id| self.index[id]).collect();
                 self.section = self.render(&cur);
                 self.rendered_gen = self.generation;
+                self.remember();
             }
             return &self.section;
         }
@@ -335,7 +340,27 @@ impl OtherApps {
         self.current = ids;
         self.section = self.render(&candidate);
         self.rendered_gen = self.generation;
+        self.remember();
         &self.section
+    }
+
+    fn remember(&mut self) {
+        if self.section.is_empty() || self.recent.iter().any(|(s, _)| *s == self.section) {
+            return;
+        }
+        self.recent.push_back((self.section.clone(), self.current.clone()));
+        if self.recent.len() > 4 {
+            self.recent.pop_front();
+        }
+    }
+
+    /// Whether `section`, rendered here earlier, holds only passages still in the pool. Text
+    /// of a window that left the pool (closed, expired, its app put on the never-read list)
+    /// or of a cleared pool must not reach a prompt again, not even the old prompt served
+    /// while a new section prefills (D42, D47). An empty section is always alive.
+    pub fn section_alive(&self, section: &str) -> bool {
+        section.is_empty()
+            || self.recent.iter().find(|(s, _)| s == section).is_some_and(|(_, ids)| ids.iter().all(|id| self.index.contains_key(id)))
     }
 
     /// The current section, without selecting again (the engine's prefetch).
@@ -598,6 +623,28 @@ Pricing page: Omar (Web)\nPress: Grace (Comms)\nRisks\nPayment provider certific
         assert!(launch[0].contains("Timeline\nBeta opens"));
         // One run with no spaces is capped.
         assert_eq!(chunk(&"x".repeat(5000))[0].chars().count(), 2 * CHUNK_CHARS);
+    }
+
+    #[test]
+    fn an_old_section_is_alive_only_while_its_passages_are_in_the_pool() {
+        let launch = window("Keynote", "Spring Launch Plan.key", LAUNCH, true, 0.0);
+        let mut o = pool(&[launch.clone()]);
+        let old = o.select(&Query::new("", "", ""), 512).to_string();
+        assert!(!old.is_empty() && o.section_alive(&old));
+        assert!(o.section_alive(""));
+        assert!(!o.section_alive("[Also open: Something else]\nnever rendered here\n\n"));
+        // Another window joins: the old section's passages are still there.
+        o.set_passages(&[launch.clone(), window("Notes", "Cake", RECIPE, true, 0.0)], 1_000_000.0);
+        let _ = o.select(&Query::new("lemon cake oven", "", ""), 512);
+        assert!(o.section_alive(&old));
+        // The window closed (or its app was put on the never-read list): dead.
+        o.set_passages(&[window("Notes", "Cake", RECIPE, true, 0.0)], 1_000_000.0);
+        assert!(!o.section_alive(&old));
+        // A cleared pool forgets every section.
+        let mut o = pool(&[launch]);
+        let old = o.select(&Query::new("", "", ""), 512).to_string();
+        o.set_passages(&[], 1_000_000.0);
+        assert!(!o.section_alive(&old));
     }
 
     #[test]

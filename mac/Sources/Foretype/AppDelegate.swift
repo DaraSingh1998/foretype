@@ -185,8 +185,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
                 return
             }
             config["model_path"] = model
-            // 4,096 tokens on 16 GB Macs while other apps' text is on (D42), else 2,048.
+            // 4,096 tokens while other apps' text is on (D42), 2,048 from 16 GB without it;
+            // a q8_0 KV cache with two slots (D47).
             config["n_ctx"] = settings.contextSize
+            config.merge(settings.engineCache) { _, new in new }
             loadedContextSize = settings.contextSize
             label = URL(fileURLWithPath: model).lastPathComponent
             loadedModelPath = model
@@ -915,7 +917,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     func setUseOtherApps(_ on: Bool) {
         settings.useOtherApps = on
-        // On 16 GB Macs the built-in engine runs with a larger context while it is on.
+        // From 16 GB the built-in engine runs with a larger context while it is on.
         if settings.backend == "local", controller != nil, loadedContextSize != settings.contextSize {
             Log.debug("other apps \(on ? "on" : "off"): engine restarts with n_ctx \(settings.contextSize)")
             startEngine()

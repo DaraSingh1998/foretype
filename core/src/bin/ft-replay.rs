@@ -29,6 +29,10 @@
 //!       pass 512 tokens (Gemma 4's sliding window). --fresh-batch N adds a third pass, fresh
 //!       but prefilled in batches of N: it differs from the first fresh pass only in float
 //!       rounding, which shows how much of a mismatch rate is noise rather than rollback.
+//!       --fields N interleaves N documents 15 requests at a time, each with its own long
+//!       screen text (implies --long), and before each request prefills it in the background
+//!       first (D47): slot reuse, shared prefixes, background prefill and, with --saved-mb,
+//!       saved contexts all have to give what a fresh prefill gives.
 //!   ft-replay MODEL --corpus CORPUS.jsonl --token-cost
 //!       tokenizer cost: characters per token and tokens per word of the corpus text.
 //!   ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --context-mode none|focused|other|both
@@ -55,7 +59,21 @@
 //!       context size changes (other apps' text on a 16 GB Mac): a new core (n_ctx 4096, then
 //!       2048) is created while the old one is loaded and has just answered, the old one is
 //!       freed on another thread, and the new one must load and answer.
+//!   ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --switch-bench [--key-ms 150] [--other-tokens N] [--chars N]
+//!       double buffering (D47): types each document at a fixed pace (a key every --key-ms,
+//!       default 150 ms, whatever the suggestion's latency), with its other window and screen
+//!       text, then swaps the other-apps pool for a long window that fills the section budget
+//!       (as when the user switches windows) and types on: latency of the keystrokes before,
+//!       of the first one after the change and of those while the new header prefills, how
+//!       many were served with the previous header, and how long the new one took to be ready.
+//!   ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --chunk-bench [--n-ctx N] [--fill F]
+//!       background prefill step size (D47): per document a prompt filled to F of the window
+//!       (default 0.5) is prefilled in the background with steps of 10 to 640 ms of work: the
+//!       time until it is ready, and how long one step takes (what a keystroke may wait).
 //!   --n-ctx N: the context size in tokens for every mode (default 2048, as in the app).
+//!   --kv f16|q8_0, --fa on|off, --slots N, --kv-cells N, --saved-mb N: the engine's KV cache
+//!       (D47; defaults are the engine's: q8_0, flash attention as llama.cpp decides, 2 slots,
+//!       n_ctx cells per slot, no saved contexts).
 //!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
 //!       types with those custom instructions (corpus apps such as "Mail" stand in for their
 //!       bundle IDs); without either, with none.
@@ -136,13 +154,45 @@ fn n_ctx_arg() -> u32 {
         .unwrap_or(EngineConfig::default().n_ctx)
 }
 
+fn arg_value(name: &str) -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
 /// The engine configuration for the modes that drive the engine directly.
 fn engine_config(model: &str) -> EngineConfig {
+    let d = EngineConfig::default();
     EngineConfig {
         model_path: model.to_string(),
         n_ctx: n_ctx_arg(),
-        n_gpu_layers: if std::env::args().any(|a| a == "--cpu") { 0 } else { EngineConfig::default().n_gpu_layers },
-        ..EngineConfig::default()
+        n_gpu_layers: if std::env::args().any(|a| a == "--cpu") { 0 } else { d.n_gpu_layers },
+        kv_type: arg_value("--kv").unwrap_or(d.kv_type),
+        flash_attn: arg_value("--fa").map(|v| v == "on"),
+        slots: arg_value("--slots").and_then(|v| v.parse().ok()).unwrap_or(d.slots),
+        kv_cells: arg_value("--kv-cells").and_then(|v| v.parse().ok()).unwrap_or(d.kv_cells),
+        saved_bytes: arg_value("--saved-mb").and_then(|v| v.parse::<usize>().ok()).map_or(d.saved_bytes, |mb| mb << 20),
+        ..d
+    }
+}
+
+/// The core's configuration for `model`, with the engine flags above.
+fn core_config(model: &str, settings: Settings) -> CoreConfig {
+    let e = engine_config(model);
+    CoreConfig {
+        model_path: model.to_string(),
+        settings,
+        backend: arg_value("--backend").unwrap_or_else(|| "local".into()),
+        backend_url: arg_value("--url").unwrap_or_default(),
+        backend_model: arg_value("--remote-model").unwrap_or_default(),
+        // --cpu: no Metal offload (CI runners may have no usable GPU).
+        n_gpu_layers: e.n_gpu_layers,
+        n_ctx: e.n_ctx,
+        kv_type: e.kv_type,
+        flash_attn: e.flash_attn,
+        slots: e.slots,
+        kv_cells: e.kv_cells,
+        saved_mb: e.saved_bytes >> 20,
+        ..CoreConfig::default()
     }
 }
 
@@ -217,22 +267,9 @@ impl SpellMap {
 impl Replayer {
     fn new(model: &str, settings: Settings, verbose: bool) -> Self {
         let (tx, rx) = mpsc::channel::<Event>();
-        let arg = |name: &str| {
-            let args: Vec<String> = std::env::args().collect();
-            args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
-        };
+        let arg = arg_value;
         let core = Core::new(
-            CoreConfig {
-                model_path: model.to_string(),
-                settings,
-                backend: arg("--backend").unwrap_or_else(|| "local".into()),
-                backend_url: arg("--url").unwrap_or_default(),
-                backend_model: arg("--remote-model").unwrap_or_default(),
-                // --cpu: no Metal offload (CI runners may have no usable GPU).
-                n_gpu_layers: if std::env::args().any(|a| a == "--cpu") { 0 } else { CoreConfig::default().n_gpu_layers },
-                n_ctx: n_ctx_arg(),
-                ..CoreConfig::default()
-            },
+            core_config(model, settings),
             Box::new(move |ev: &Event| {
                 let _ = tx.send(ev.clone());
             }),
@@ -345,18 +382,24 @@ impl Replayer {
 /// decoding makes them equal unless a rollback is wrong; batched and single-token decodes
 /// can still differ in the last bits of a logit, so a dense model's mismatch rate is the
 /// baseline to compare against.
-fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, long: bool, fresh_batch: Option<u32>) {
-    // Earlier writing and screen text for --long: the last documents of the corpus.
-    let lead: String = if long {
-        let all: Vec<&str> = docs.iter().rev().map(|d| d.text.as_str()).collect();
-        let joined = all.join("\n\n");
-        joined.chars().take(1400).collect::<String>() + "\n\n"
-    } else {
-        String::new()
+fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, long: bool, fresh_batch: Option<u32>, fields: usize) {
+    let long = long || fields > 1;
+    // Earlier writing and screen text for --long: the last documents of the corpus (a
+    // different stretch of them per document with --fields).
+    let all: Vec<&str> = docs.iter().rev().map(|d| d.text.as_str()).collect();
+    let joined = all.join("\n\n");
+    let lead_for = |di: usize| -> String {
+        if !long {
+            return String::new();
+        }
+        let skip = if fields > 1 { di * 997 } else { 0 };
+        joined.chars().cycle().skip(skip).take(1400).collect::<String>() + "\n\n"
     };
+    let lead = lead_for(0);
     // The keystroke sequence: (document index, text before the caret).
     let mut requests: Vec<(usize, String)> = Vec::new();
     for (di, d) in docs.iter().enumerate().take(max_docs) {
+        let lead = lead_for(di);
         let chars: Vec<char> = d.text.chars().take(max_chars).collect();
         let mut typed = lead.clone();
         let (mut i, mut step) = (0, 0);
@@ -377,10 +420,32 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
             }
         }
     }
+    if fields > 1 {
+        // Round robin over `fields` documents at a time, 15 requests from each in turn.
+        let mut queues: Vec<std::collections::VecDeque<(usize, String)>> = Vec::new();
+        for r in requests.drain(..) {
+            if queues.last().is_none_or(|q| q[0].0 != r.0) {
+                queues.push(Default::default());
+            }
+            queues.last_mut().unwrap().push_back(r);
+        }
+        for group in queues.chunks_mut(fields) {
+            while group.iter().any(|q| !q.is_empty()) {
+                for q in group.iter_mut() {
+                    for _ in 0..15 {
+                        if let Some(r) = q.pop_front() {
+                            requests.push(r);
+                        }
+                    }
+                }
+            }
+        }
+    }
     let prompts: Vec<_> = requests
         .iter()
         .map(|(di, typed)| {
             let app = app_of(&docs[*di].header);
+            let lead = lead_for(*di);
             context::build(
                 &ContextInput {
                     other_apps: "",
@@ -397,6 +462,7 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
             )
         })
         .collect();
+    let _ = lead;
     // One engine at a time (a new one waits for the previous to be freed): the passes run in turn.
     let cfg = engine_config(model);
     let opts = GenOptions::default();
@@ -406,11 +472,22 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
         if !reset {
             eprintln!("rollback: {:?}", e.rollback());
         }
+        let mut background_ms = Vec::new();
         let out = prompts
             .iter()
             .map(|p| {
                 if reset {
                     e.reset();
+                } else if fields > 1 {
+                    // The shell's warm-up: the prompt prefilled between requests first.
+                    let t = Instant::now();
+                    e.set_background(e.tokenize(&p.prefix));
+                    for _ in 0..200 {
+                        if !matches!(e.background_step(40.0, &never), foretype_core::engine::Background::Working(_)) {
+                            break;
+                        }
+                    }
+                    background_ms.push(t.elapsed().as_secs_f64() * 1000.0);
                 }
                 match e.complete(p, &opts, &never) {
                     Ok(c) => c,
@@ -420,7 +497,10 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
             })
             .collect::<Vec<_>>();
         if !reset {
-            eprintln!("snapshots held: {:.1} MB", e.snapshot_bytes() as f64 / 1e6);
+            eprintln!("snapshots held: {:.1} MB; cache {:?}", e.snapshot_bytes() as f64 / 1e6, e.stats());
+            if fields > 1 {
+                eprintln!("background prefill per request: p50 {:.1} ms, max {:.0} ms", pct(&background_ms, 0.5), pct(&background_ms, 1.0));
+            }
         }
         out
     };
@@ -680,11 +760,194 @@ fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
     );
 }
 
+/// One keystroke at a fixed pace: submits `typed`, waits for the answer, then until `key_ms`
+/// have passed since the key. Returns (milliseconds to the answer, its source).
+fn key_at_pace(r: &mut Replayer, base: &Snapshot, typed: &str, key_ms: u64) -> (f64, &'static str) {
+    r.rev += 1;
+    let rev = r.rev;
+    let t = Instant::now();
+    r.core.submit(Snapshot { revision: rev, text_before: typed.to_string(), ..base.clone() });
+    let mut answer = (0.0, "none");
+    while let Ok(ev) = r.rx.recv_timeout(Duration::from_secs(20)) {
+        if let Event::Suggestion { revision, source, .. } = ev {
+            if revision == rev && source != "pending" {
+                answer = (t.elapsed().as_secs_f64() * 1000.0, source);
+                break;
+            }
+        }
+    }
+    let pace = Duration::from_millis(key_ms);
+    if t.elapsed() < pace {
+        std::thread::sleep(pace - t.elapsed());
+    }
+    answer
+}
+
+/// `--switch-bench` (D47): typing across a change of the other-apps section.
+fn switch_bench(r: &mut Replayer, docs: &[Doc], key_ms: u64, before_chars: usize, after_chars: usize) {
+    let filler: String = docs.iter().map(|d| format!("{}\n\n{}", d.context, d.text)).collect::<Vec<_>>().join("\n\n");
+    let (mut before, mut first, mut during, mut after, mut ready, mut old, mut held) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut not_ready = 0;
+    for (i, d) in docs.iter().enumerate() {
+        if d.context.is_empty() {
+            continue;
+        }
+        let app = app_of(&d.header);
+        let base = Snapshot {
+            field_key: 7000 + i as u64,
+            bundle_id: app.clone(),
+            app_name: app,
+            role: "AXTextArea".into(),
+            screen_context: d.screen.clone(),
+            ..Snapshot::default()
+        };
+        r.core.set_context(vec![passage_of(d, true, 0.0)]);
+        // Focus: the shell warms the field; the user starts typing a second later.
+        r.rev += 1;
+        r.core.warm(Snapshot { revision: r.rev, ..base.clone() });
+        std::thread::sleep(Duration::from_millis(1000));
+        let chars: Vec<char> = d.text.chars().collect();
+        let mut typed = String::new();
+        let mut k = 0;
+        while k < before_chars.min(chars.len()) {
+            typed.push(chars[k]);
+            k += 1;
+            let (ms, src) = key_at_pace(r, &base, &typed, key_ms);
+            if src == "model" {
+                before.push(ms);
+            }
+        }
+        // The change: a long window opens beside the document, as when the user switches to
+        // another app and back; the shell sends the pool and warms the field.
+        let start: usize = (i * 2003) % filler.len().max(1);
+        let long: String = filler.chars().cycle().skip(start).take(16_000).collect();
+        let window = Passage {
+            app: "Notes".into(),
+            bundle_id: "corpus.notes".into(),
+            window_title: format!("Background notes {i}"),
+            text: long,
+            captured_at: unix_now(),
+            visible: true,
+            ..Passage::default()
+        };
+        let (ready0, old0) = (r.core.cache_stats().ready, r.core.served_old());
+        r.core.set_context(vec![passage_of(d, true, 0.0), window]);
+        r.rev += 1;
+        r.core.warm(Snapshot { revision: r.rev, text_before: typed.clone(), ..base.clone() });
+        let mut first_seen = false;
+        while k < (before_chars + after_chars).min(chars.len()) {
+            typed.push(chars[k]);
+            k += 1;
+            let was = r.core.served_old();
+            let (ms, src) = key_at_pace(r, &base, &typed, key_ms);
+            if src != "model" {
+                continue;
+            }
+            if !first_seen {
+                first.push(ms);
+                first_seen = true;
+            } else if r.core.served_old() > was || r.core.cache_stats().ready == ready0 {
+                during.push(ms);
+            } else {
+                after.push(ms);
+            }
+        }
+        // Typing ended first: wait for the new header.
+        let t = Instant::now();
+        while r.core.cache_stats().ready == ready0 && t.elapsed() < Duration::from_secs(30) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let st = r.core.cache_stats();
+        if st.ready == ready0 {
+            not_ready += 1;
+        } else {
+            ready.push(st.last_ready_ms);
+        }
+        old.push((r.core.served_old() - old0) as f64);
+        held.push(st.slots.iter().copied().max().unwrap_or(0) as f64);
+        if r.verbose {
+            eprintln!("{}: ready {:.0} ms, {} served old, cache {:?}", d.id, st.last_ready_ms, r.core.served_old() - old0, st);
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        while r.rx.try_recv().is_ok() {}
+    }
+    let (_, _, peak) = memory();
+    println!(
+        "switch-bench: {} docs, a key every {key_ms} ms, prompt after the change p50 {:.0} tokens; keystrokes before p50 {:.0} p90 {:.0} ms; first after the change p50 {:.0} p90 {:.0} max {:.0} ms; while the new header prefills p50 {:.0} p90 {:.0} ms ({} keys); after p50 {:.0} p90 {:.0} ms; served with the old header p50 {:.0} per change; new header ready p50 {:.0} p90 {:.0} max {:.0} ms ({} never); peak footprint {:.0} MB",
+        old.len(),
+        pct(&held, 0.5),
+        pct(&before, 0.5),
+        pct(&before, 0.9),
+        pct(&first, 0.5),
+        pct(&first, 0.9),
+        pct(&first, 1.0),
+        pct(&during, 0.5),
+        pct(&during, 0.9),
+        during.len(),
+        pct(&after, 0.5),
+        pct(&after, 0.9),
+        pct(&old, 0.5),
+        pct(&ready, 0.5),
+        pct(&ready, 0.9),
+        pct(&ready, 1.0),
+        not_ready,
+        mb(peak)
+    );
+}
+
+/// `--chunk-bench` (D47): ready time against step length for background prefill.
+fn chunk_bench(model: &str, docs: &[Doc], fill: f64) {
+    let cfg = engine_config(model);
+    let mut e = Engine::load(&cfg).expect("load model");
+    let pool: String = docs.iter().map(|d| format!("{}\n{}\n", d.context, d.text)).collect::<Vec<_>>().join("\n");
+    let never = || false;
+    for max_ms in [10.0, 20.0, 40.0, 80.0, 160.0, 640.0] {
+        let (mut ready, mut steps, mut longest, mut all) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        for (k, d) in docs.iter().enumerate().take(8) {
+            let start = (k * 997) % pool.len().max(1);
+            let filler: String = pool.chars().cycle().skip(start).take(cfg.n_ctx as usize * 6).collect();
+            let mut tokens = e.tokenize(&format!("[Text visible on screen]\n{filler}\n[End of screen text]\n\n[Written in Mail]\n\n{}", d.text));
+            tokens.truncate((cfg.n_ctx as f64 * fill) as usize);
+            e.reset();
+            // Something in the serving slot first, as in the app.
+            let _ = e.warm("[Written in Mail]\n\nHello", &never);
+            let t = Instant::now();
+            e.set_background(tokens);
+            let mut n = 0;
+            let mut worst: f64 = 0.0;
+            loop {
+                let ts = Instant::now();
+                let st = e.background_step(max_ms, &never);
+                let ms = ts.elapsed().as_secs_f64() * 1000.0;
+                if !matches!(st, foretype_core::engine::Background::Working(_)) {
+                    break;
+                }
+                n += 1;
+                worst = worst.max(ms);
+                all.push(ms);
+            }
+            ready.push(t.elapsed().as_secs_f64() * 1000.0);
+            steps.push(n as f64);
+            longest.push(worst);
+        }
+        println!(
+            "chunk-bench n_ctx {} fill {fill}: step {max_ms:.0} ms: ready p50 {:.0} ms, {:.0} steps, a step p50 {:.0} p90 {:.0} max {:.0} ms",
+            cfg.n_ctx,
+            pct(&ready, 0.5),
+            pct(&steps, 0.5),
+            pct(&all, 0.5),
+            pct(&all, 0.9),
+            pct(&longest, 1.0)
+        );
+    }
+}
+
 /// A core like the app's and its events; its worker starts loading the model at once.
 fn new_core(model: &str, n_ctx: u32) -> (Core, mpsc::Receiver<Event>) {
     let (tx, rx) = mpsc::channel::<Event>();
     let core = Core::new(
-        CoreConfig { model_path: model.to_string(), n_ctx, ..CoreConfig::default() },
+        CoreConfig { n_ctx, ..core_config(model, Settings::default()) },
         Box::new(move |ev: &Event| {
             let _ = tx.send(ev.clone());
         }),
@@ -865,11 +1128,16 @@ fn main() {
             let type_chars = flag("--type").and_then(|s| s.parse().ok()).unwrap_or(40);
             return ctx_bench(&model, &docs, fill, type_chars);
         }
+        if has("--chunk-bench") {
+            let fill = flag("--fill").and_then(|s| s.parse().ok()).unwrap_or(0.5);
+            return chunk_bench(&model, &docs, fill);
+        }
         if has("--check-cache") {
             let n_docs = flag("--docs").and_then(|s| s.parse().ok()).unwrap_or(6);
             let n_chars = flag("--chars").and_then(|s| s.parse().ok()).unwrap_or(250);
             let fresh_batch = flag("--fresh-batch").and_then(|s| s.parse().ok());
-            return check_cache(&model, &docs, n_docs, n_chars, has("--long"), fresh_batch);
+            let fields = flag("--fields").and_then(|s| s.parse().ok()).unwrap_or(1);
+            return check_cache(&model, &docs, n_docs, n_chars, has("--long"), fresh_batch, fields);
         }
         let mut r = Replayer::new(&model, settings.clone(), has("-v"));
         r.think = Duration::from_millis(flag("--think").and_then(|s| s.parse().ok()).unwrap_or(0));
@@ -898,6 +1166,11 @@ fn main() {
         if let Some(n) = flag("--other-tokens").and_then(|s| s.parse().ok()) {
             settings.other_apps_tokens = n;
             r.core.configure(settings.clone());
+        }
+        if has("--switch-bench") {
+            let key_ms = flag("--key-ms").and_then(|s| s.parse().ok()).unwrap_or(150);
+            let n = flag("--chars").and_then(|s| s.parse().ok()).unwrap_or(40);
+            return switch_bench(&mut r, &docs, key_ms, n, n);
         }
         let snap_for = |i: usize, d: &Doc| Snapshot {
             field_key: 1000 + i as u64,

@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::context::{ContextInput, Prompt};
 use crate::details::UserDetails;
-use crate::engine::{Engine, EngineConfig, GenError, GenOptions};
+use crate::engine::{Background, CacheStats, Engine, EngineConfig, GenError, GenOptions};
 use crate::history::{History, Record};
 use crate::others::{OtherApps, Passage, Query};
 use crate::policy::CompatDb;
@@ -205,6 +205,15 @@ pub struct CoreConfig {
     /// Model name for OpenAI-compatible servers.
     pub backend_model: String,
     pub backend_api_key: String,
+    /// The built-in engine's KV cache (D47): element type ("f16" or "q8_0"), prompts held at
+    /// once (2: a new header prefills in the background while the old one serves), cells
+    /// (0: `n_ctx` per slot), memory for saved contexts in MB, and flash attention (absent:
+    /// llama.cpp decides).
+    pub kv_type: String,
+    pub slots: usize,
+    pub kv_cells: u32,
+    pub saved_mb: usize,
+    pub flash_attn: Option<bool>,
 }
 
 impl Default for CoreConfig {
@@ -222,6 +231,11 @@ impl Default for CoreConfig {
             backend_url: String::new(),
             backend_model: String::new(),
             backend_api_key: String::new(),
+            kv_type: e.kv_type,
+            slots: e.slots,
+            kv_cells: e.kv_cells,
+            saved_mb: e.saved_bytes >> 20,
+            flash_attn: e.flash_attn,
         }
     }
 }
@@ -320,6 +334,13 @@ struct Shared {
     others: Mutex<OtherApps>,
     /// The engine's context size in tokens: the prompt must leave 64 of it free.
     n_ctx: usize,
+    /// The pool was emptied (pause, lock, sleep, the setting off): the engine drops every
+    /// prompt and saved context holding other apps' text before its next request.
+    forget: AtomicBool,
+    /// The engine's cache after its last request or background step (measurements, logs).
+    cache: Mutex<CacheStats>,
+    /// Requests served with an older header while the new one prefilled (D47).
+    served_old: AtomicU64,
 }
 
 fn debug() -> bool {
@@ -363,12 +384,20 @@ impl Core {
             remote_http: matches!(config.backend.as_str(), "llama-server" | "openai"),
             others: Mutex::new(OtherApps::default()),
             n_ctx: config.n_ctx as usize,
+            forget: AtomicBool::new(false),
+            cache: Mutex::new(CacheStats::default()),
+            served_old: AtomicU64::new(0),
         });
         let engine_cfg = EngineConfig {
             model_path: config.model_path.clone(),
             n_ctx: config.n_ctx,
             n_gpu_layers: config.n_gpu_layers,
             n_threads: config.n_threads,
+            kv_type: config.kv_type.clone(),
+            slots: config.slots,
+            kv_cells: config.kv_cells,
+            saved_bytes: config.saved_mb << 20,
+            flash_attn: config.flash_attn,
             ..EngineConfig::default()
         };
         let remote = (config.backend != "local" && !config.backend.is_empty()).then(|| RemoteConfig {
@@ -428,6 +457,11 @@ impl Core {
         let passages = if self.shared.remote_http { Vec::new() } else { passages };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
         let mut o = self.shared.others.lock().unwrap();
+        if passages.is_empty() && !(o.is_empty() && o.section().is_empty()) {
+            // Forgotten means forgotten: the KV cache and saved contexts hold the old text.
+            self.shared.forget.store(true, Ordering::SeqCst);
+            self.shared.wake.notify_all();
+        }
         o.set_passages(&passages, now);
         if debug() {
             let (w, c) = o.size();
@@ -438,6 +472,16 @@ impl Core {
     /// How often the other-apps section changed (each change costs a full prefill).
     pub fn context_changes(&self) -> u64 {
         self.shared.others.lock().unwrap().changes
+    }
+
+    /// The built-in engine's cache after its last request or background step.
+    pub fn cache_stats(&self) -> CacheStats {
+        self.shared.cache.lock().unwrap().clone()
+    }
+
+    /// Requests served with an older header while a new one prefilled (D47).
+    pub fn served_old(&self) -> u64 {
+        self.shared.served_old.load(Ordering::SeqCst)
     }
 
     /// (records, distinct words) in the personalization history.
@@ -926,7 +970,7 @@ fn other_apps_section(shared: &Shared, snap: &Snapshot, settings: &Settings, inp
 
 /// A prompt whose other-apps section didn't fit the context: the same prompt without it.
 fn without_others(p: &Prompt) -> Option<Prompt> {
-    (p.others > 0).then(|| Prompt { prefix: p.prefix[p.others..].to_string(), others: 0, ..p.clone() })
+    p.without_others()
 }
 
 struct RemoteConfig {
@@ -943,13 +987,6 @@ enum Runner {
 }
 
 impl Runner {
-    fn warm(&mut self, prefix: &str, cancel: &dyn Fn() -> bool) -> Result<usize, GenError> {
-        match self {
-            Runner::Local(e) => e.warm(prefix, cancel),
-            Runner::Remote(b) => b.warm(prefix),
-        }
-    }
-
     fn complete(&mut self, prompt: &Prompt, opts: &GenOptions, cancel: &dyn Fn() -> bool) -> Result<engine::Completion, GenError> {
         match self {
             Runner::Local(e) => e.complete(prompt, opts, cancel),
@@ -967,6 +1004,45 @@ impl Runner {
     fn is_local(&self) -> bool {
         matches!(self, Runner::Local(_))
     }
+}
+
+/// Tokens a request may prefill before it is served with the serving slot's older header
+/// instead, while its own prefills in the background (D47): a keystroke's worth.
+const FAST_PREFILL: usize = 48;
+
+/// Milliseconds of background prefill between checks for a new request (D47): what a
+/// keystroke arriving meanwhile can wait at most.
+const BACKGROUND_STEP_MS: f64 = 40.0;
+
+/// What a completion request runs on (D47): its own prompt when a slot holds it or nearly,
+/// otherwise the prompt with the header of `live` (what the serving slot holds, for field
+/// `live.0`; `context::with_old_header`), when that is cheaper and every passage of its
+/// other-apps section is still in the pool; the request's own prompt then goes to the
+/// background. Returns the prompt to serve, its tokens, and the tokens to prefill in the
+/// background.
+fn plan(e: &Engine, shared: &Shared, field: u64, target: &Prompt, live: Option<&(u64, Prompt)>) -> (Prompt, Vec<engine::Token>, Option<Vec<engine::Token>>) {
+    let mut target = target.clone();
+    let mut tokens = e.tokenize(&target.prefix);
+    if tokens.len() + 64 > shared.n_ctx {
+        if let Some(p) = target.without_others() {
+            target = p;
+            tokens = e.tokenize(&target.prefix);
+        }
+    }
+    let cost = e.cost(&tokens);
+    if e.slot_count() < 2 || cost <= FAST_PREFILL {
+        return (target, tokens, None);
+    }
+    let old = live
+        .filter(|(_, l)| shared.others.lock().unwrap().section_alive(l.others_section()))
+        .and_then(|(f, l)| context::with_old_header(l, &target, *f == field));
+    if let Some(old) = old {
+        let old_tokens = e.tokenize(&old.prefix);
+        if old_tokens.len() + 64 <= shared.n_ctx && e.cost(&old_tokens) < cost {
+            return (old, old_tokens, Some(tokens));
+        }
+    }
+    (target, tokens, None)
 }
 
 fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConfig>) {
@@ -1011,6 +1087,11 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
     let mut last_used = Instant::now();
     let mut applied_gen = 0u64;
     let mut paused = false;
+    // The prompt the serving slot holds (and its field), and whether a new header waits to
+    // be prefilled.
+    let mut live: Option<(u64, Prompt)> = None;
+    let mut background = false;
+    let publish = |e: &Engine| *shared.cache.lock().unwrap() = e.stats();
 
     loop {
         let job = {
@@ -1027,6 +1108,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                         let was_local = engine_slot.as_ref().is_some_and(Runner::is_local);
                         engine_slot = None;
                         applied_gen = 0;
+                        live = None;
+                        background = false;
                         paused = true;
                         let detail = if was_local { "model unloaded" } else { "" };
                         (shared.sink)(&Event::Status { state: "paused", detail: detail.into() });
@@ -1053,8 +1136,41 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     pending = shared.pending.lock().unwrap();
                     continue;
                 }
+                if shared.forget.swap(false, Ordering::SeqCst) {
+                    // Other apps' text was forgotten: so are the prompts holding it.
+                    if let Some(Runner::Local(e)) = engine_slot.as_mut() {
+                        e.reset();
+                        publish(e);
+                    }
+                    live = None;
+                    background = false;
+                    if debug() {
+                        eprintln!("[foretype] other apps' text forgotten: KV cache and saved contexts cleared");
+                    }
+                }
                 if let Some(job) = pending.take() {
                     break job;
+                }
+                // Between requests: the next piece of a new header (D47).
+                if background {
+                    if let Some(Runner::Local(e)) = engine_slot.as_mut() {
+                        drop(pending);
+                        let busy = || {
+                            shared.shutdown.load(Ordering::SeqCst)
+                                || shared.paused.load(Ordering::SeqCst)
+                                || shared.pending.lock().map(|p| p.is_some()).unwrap_or(true)
+                        };
+                        let step = e.background_step(BACKGROUND_STEP_MS, &busy);
+                        background = matches!(step, Background::Working(_));
+                        publish(e);
+                        if debug() && !background {
+                            eprintln!("[foretype] background prefill: {step:?}, cache {:?}", e.stats());
+                        }
+                        last_used = Instant::now();
+                        pending = shared.pending.lock().unwrap();
+                        continue;
+                    }
+                    background = false;
                 }
                 // Idle: free the model's memory (Cotypist does the same) until needed again.
                 let unload_after = shared.settings.read().unwrap().unload_after_s;
@@ -1063,6 +1179,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     drop(pending);
                     engine_slot = None;
                     applied_gen = 0;
+                    live = None;
+                    *shared.cache.lock().unwrap() = CacheStats::default();
                     (shared.sink)(&Event::Status { state: "idle", detail: "model unloaded".into() });
                     pending = shared.pending.lock().unwrap();
                     continue;
@@ -1096,16 +1214,36 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
         let latest = &shared.latest;
         let cancel = || latest.load(Ordering::SeqCst) != rev;
         match job.kind {
-            JobKind::Warm => {
-                let busy = || shared.paused.load(Ordering::SeqCst) || shared.pending.lock().map(|p| p.is_some()).unwrap_or(false);
-                let mut r = engine.warm(&job.prompt.prefix, &busy);
-                if let (Err(GenError::TooLong(_)), Some(p)) = (&r, without_others(&job.prompt)) {
-                    r = engine.warm(&p.prefix, &busy);
+            JobKind::Warm => match engine {
+                Runner::Local(e) => {
+                    // A new field or header: prefilled between requests, never in their way.
+                    let mut p = job.prompt;
+                    let mut tokens = e.tokenize(&p.prefix);
+                    if tokens.len() + 64 > shared.n_ctx {
+                        if let Some(q) = without_others(&p) {
+                            p = q;
+                            tokens = e.tokenize(&p.prefix);
+                        }
+                    }
+                    let cost = e.cost(&tokens);
+                    if cost > 1 {
+                        e.set_background(tokens);
+                        background = true;
+                    }
+                    if debug() {
+                        eprintln!("[foretype] warm rev={rev}: {cost} tokens to prefill in the background");
+                    }
                 }
-                if debug() {
-                    eprintln!("[foretype] warm rev={rev} -> {r:?}");
+                Runner::Remote(b) => {
+                    let mut r = b.warm(&job.prompt.prefix);
+                    if let (Err(GenError::TooLong(_)), Some(p)) = (&r, without_others(&job.prompt)) {
+                        r = b.warm(&p.prefix);
+                    }
+                    if debug() {
+                        eprintln!("[foretype] warm rev={rev} -> {r:?}");
+                    }
                 }
-            }
+            },
             JobKind::Complete => {
                 if cancel() {
                     continue;
@@ -1130,15 +1268,42 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     personal_strength: settings.personal_strength(),
                     beam_width: settings.beam_width,
                 };
+                // The prompt actually served: the request's own, or (D47) the same with the
+                // serving slot's older header while the new one prefills in the background.
+                let mut served = job.prompt.clone();
+                let mut result = match engine {
+                    Runner::Local(e) => {
+                        let (p, tokens, later) = plan(e, &shared, job.field_key, &job.prompt, live.as_ref());
+                        let old_header = later.is_some();
+                        background = old_header;
+                        match later {
+                            Some(t) => e.set_background(t),
+                            None => e.finish_background(),
+                        }
+                        if old_header {
+                            shared.served_old.fetch_add(1, Ordering::SeqCst);
+                            if debug() {
+                                eprintln!("[foretype] rev={rev} served with the previous header; the new one prefills in the background");
+                            }
+                        }
+                        served = p;
+                        let r = e.complete_tokens(&tokens, &served, &opts, &cancel);
+                        live = Some((job.field_key, served.clone()));
+                        publish(e);
+                        r
+                    }
+                    Runner::Remote(b) => b.complete(&served, &opts, &cancel),
+                };
                 // Too long for the context: the other apps' text is what goes first (D42).
-                let mut result = engine.complete(&job.prompt, &opts, &cancel);
-                let mut dropped_others = false;
-                if let (Err(GenError::TooLong(n)), Some(p)) = (&result, without_others(&job.prompt)) {
+                if let (Err(GenError::TooLong(n)), Some(p)) = (&result, without_others(&served)) {
                     if debug() {
                         eprintln!("[foretype] rev={rev} prompt of {n} tokens too long: other apps' text left out");
                     }
-                    result = engine.complete(&p, &opts, &cancel);
-                    dropped_others = true;
+                    served = p;
+                    result = engine.complete(&served, &opts, &cancel);
+                    if engine.is_local() {
+                        live = Some((job.field_key, served.clone()));
+                    }
                 }
                 match result {
                     Ok(mut c) => {
@@ -1176,14 +1341,16 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             label: None,
                         });
                         // Prefetch what follows the suggestion while the user reads it; any new
-                        // request cancels this between decode steps.
-                        if settings.prefetch && !mid_line && !shown.trim().is_empty() {
+                        // request cancels this between decode steps. It keeps the header the
+                        // suggestion was served with. Not while a new header waits: the time
+                        // between keystrokes goes to prefilling it (D47).
+                        if settings.prefetch && !mid_line && !shown.trim().is_empty() && !background {
                             let mut next = job.snapshot.clone();
                             next.text_before = format!("{}{}", job.text_before, shown);
                             let examples = shared.examples.lock().unwrap().get(&job.field_key).cloned().unwrap_or_default();
                             let mut prompt = build_prompt(&shared, &next, &settings, &examples, false);
-                            if dropped_others {
-                                prompt = without_others(&prompt).unwrap_or(prompt);
+                            if served.prefix[..served.header] != job.prompt.prefix[..job.prompt.header] {
+                                prompt = prompt.with_header_of(&served);
                             }
                             let busy = || {
                                 shared.shutdown.load(Ordering::SeqCst)

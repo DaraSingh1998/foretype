@@ -38,6 +38,66 @@ pub struct Prompt {
     /// Bytes at the start of `prefix` that are the other-apps section: the part dropped
     /// first when a prompt doesn't fit the context.
     pub others: usize,
+    /// Where the screen-text section ends (`others` when there is none) and where the whole
+    /// header ends: `prefix[header..]` is the text being written.
+    pub screen: usize,
+    pub header: usize,
+}
+
+impl Prompt {
+    /// A prompt with no header (tests, servers).
+    pub fn plain(prefix: &str, fragment: &str) -> Self {
+        Prompt { prefix: prefix.into(), fragment: fragment.into(), suffix: String::new(), others: 0, screen: 0, header: 0 }
+    }
+
+    /// The same prompt without its other-apps section.
+    pub fn without_others(&self) -> Option<Prompt> {
+        let n = self.others;
+        (n > 0).then(|| Prompt { prefix: self.prefix[n..].to_string(), others: 0, screen: self.screen - n, header: self.header - n, ..self.clone() })
+    }
+
+    /// The other-apps section.
+    pub fn others_section(&self) -> &str {
+        &self.prefix[..self.others]
+    }
+
+    /// The header after the screen text: the place, examples, writer and notes lines.
+    fn local(&self) -> &str {
+        &self.prefix[self.screen..self.header]
+    }
+
+    /// This prompt with `header`'s header in place of its own (the text being written kept).
+    pub fn with_header_of(&self, other: &Prompt) -> Prompt {
+        Prompt {
+            prefix: format!("{}{}", &other.prefix[..other.header], &self.prefix[self.header..]),
+            others: other.others,
+            screen: other.screen,
+            header: other.header,
+            ..self.clone()
+        }
+    }
+}
+
+/// The prompt to serve while `target`'s new header is prefilled in the background (D47):
+/// `target` with the header of `live` (the prompt the serving slot holds) wherever the two
+/// differ only in text read from screens. In the same field (`same_field`, and the place,
+/// examples and notes lines equal): `live`'s whole header, other-apps section and screen
+/// text. In another field: `live`'s other-apps section only (the pool is the same for every
+/// field), with `target`'s own screen text and lines. None when that is `target` itself.
+pub fn with_old_header(live: &Prompt, target: &Prompt, same_field: bool) -> Option<Prompt> {
+    let p = if same_field && live.local() == target.local() {
+        target.with_header_of(live)
+    } else {
+        let shift = |n: usize| n - target.others + live.others;
+        Prompt {
+            prefix: format!("{}{}", live.others_section(), &target.prefix[target.others..]),
+            others: live.others,
+            screen: shift(target.screen),
+            header: shift(target.header),
+            ..target.clone()
+        }
+    };
+    (p.prefix != target.prefix).then_some(p)
 }
 
 /// Quantum by which the front of a long text window moves, so the prompt start stays fixed
@@ -72,6 +132,12 @@ fn screen_section(raw: &str) -> String {
 
 /// The header without the other-apps section.
 pub(crate) fn header(input: &ContextInput) -> String {
+    header_parts(input).0
+}
+
+/// The header without the other-apps section, and the length of its screen-text part (at
+/// its start).
+fn header_parts(input: &ContextInput) -> (String, usize) {
     let mut place = input.app_name.trim().to_string();
     let title = truncate_chars(input.window_title.trim(), 80);
     if !title.is_empty() && title != place {
@@ -88,6 +154,7 @@ pub(crate) fn header(input: &ContextInput) -> String {
         h.push_str(&screen);
         h.push_str("\n[End of screen text]\n\n");
     }
+    let screen_len = h.len();
     let examples: Vec<String> = input
         .examples
         .iter()
@@ -114,7 +181,7 @@ pub(crate) fn header(input: &ContextInput) -> String {
     if !h.is_empty() {
         h.push('\n');
     }
-    h
+    (h, screen_len)
 }
 
 /// Start index of the body window inside `text`. It only moves in `WINDOW_STEP` jumps and
@@ -150,11 +217,14 @@ pub fn build(input: &ContextInput, max_body_chars: usize) -> Prompt {
     // The other-apps section heads the prompt (it changes least while typing in one field
     // and survives moving to another); it arrives cleaned and ends in a blank line.
     let others = input.other_apps;
+    let (header, screen) = header_parts(input);
     Prompt {
-        prefix: format!("{others}{}{committed}", header(input)),
+        prefix: format!("{others}{header}{committed}"),
         fragment: fragment.to_string(),
         suffix: String::new(),
         others: others.len(),
+        screen: others.len() + screen,
+        header: others.len() + header.len(),
     }
 }
 
@@ -262,6 +332,60 @@ mod tests {
         assert_eq!(p.others, i.other_apps.len());
         assert!(p.prefix[p.others..].starts_with("[Text visible on screen]"));
         assert_eq!(build(&input("Hi"), 2000).others, 0);
+    }
+
+    #[test]
+    fn header_offsets() {
+        let mut i = input("Total spend was four");
+        i.other_apps = "[Also open: Word \u{2014} Q3.docx]\nTotal Q3 spend was $412,600.\n\n";
+        i.screen_context = "Martin: could you send the Q3 numbers?";
+        let p = build(&i, 2000);
+        assert_eq!(&p.prefix[..p.others], i.other_apps);
+        assert!(p.prefix[p.others..p.screen].starts_with("[Text visible on screen]") && p.prefix[..p.screen].ends_with("[End of screen text]\n\n"));
+        assert_eq!(&p.prefix[p.screen..p.header], "[Written in Mail \u{2014} Re: planning]\n\n");
+        assert_eq!(&p.prefix[p.header..], "Total spend was");
+        let bare = build(&input("Hi"), 2000);
+        assert_eq!((bare.others, bare.screen), (0, 0));
+        assert_eq!(&bare.prefix[bare.header..], "");
+        let q = p.without_others().unwrap();
+        assert_eq!(&q.prefix[q.screen..q.header], "[Written in Mail \u{2014} Re: planning]\n\n");
+    }
+
+    #[test]
+    fn the_old_header_serves_while_the_new_one_prefills() {
+        let mut a = input("Thanks Martin, the total was");
+        a.other_apps = "[Also open: Word \u{2014} Q3.docx]\nTotal Q3 spend was $412,600.\n\n";
+        a.screen_context = "Martin: could you send the Q3 numbers?";
+        let live = build(&a, 2000);
+        // Same field, new screen text and a new section: the old header, the new body.
+        let mut b = input("Thanks Martin, the total was $412,600 and the");
+        b.other_apps = "[Also open: Excel \u{2014} Q3.xlsx]\nContractors: $68,900\n\n";
+        b.screen_context = "Martin: could you send the Q3 numbers?\nMartin: and contractors?";
+        let target = build(&b, 2000);
+        let old = with_old_header(&live, &target, true).unwrap();
+        assert_eq!(old.prefix, format!("{}Thanks Martin, the total was $412,600 and", &live.prefix[..live.header]));
+        assert_eq!((old.others, old.screen, old.header), (live.others, live.screen, live.header));
+        assert_eq!(old.fragment, " the");
+        // Another field: only the other-apps section is the old one.
+        let mut c = input("Hi team");
+        c.app_name = "Slack";
+        c.other_apps = b.other_apps;
+        let target = build(&c, 2000);
+        let old = with_old_header(&live, &target, false).unwrap();
+        assert_eq!(old.prefix, format!("{}{}", a.other_apps, &target.prefix[target.others..]));
+        assert_eq!(&old.prefix[old.screen..old.header], &target.prefix[target.screen..target.header]);
+        assert_eq!(&old.prefix[old.header..], "Hi");
+        // Another field with the same lines (two drafts in one app): never its screen text.
+        let mut d = input("Hi team");
+        d.other_apps = b.other_apps;
+        d.screen_context = "Someone else's thread";
+        let target = build(&d, 2000);
+        let old = with_old_header(&live, &target, false).unwrap();
+        assert!(old.prefix.starts_with(a.other_apps) && old.prefix.contains("Someone else's thread") && !old.prefix.contains("Martin:"));
+        // Nothing to substitute.
+        assert!(with_old_header(&live, &live, true).is_none());
+        let same = build(&input("Thanks Martin, the total was $412"), 2000);
+        assert!(with_old_header(&build(&input("Thanks"), 2000), &same, true).is_none());
     }
 
     #[test]

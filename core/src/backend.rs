@@ -352,7 +352,7 @@ mod tests {
             Some(if prefix.ends_with(" no") { "tes from Tuesday".into() } else { " notes from Tuesday".into() })
         }));
         let b = HttpBackend::with_completer("shell", "", "", "", slot).unwrap();
-        let p = Prompt { prefix: "Thanks for the".into(), fragment: " no".into(), suffix: String::new(), others: 0 };
+        let p = Prompt::plain("Thanks for the", " no");
         let c = b.complete(&p, &GenOptions::default(), &|| false).unwrap();
         assert_eq!(c.text, "tes from Tuesday");
     }

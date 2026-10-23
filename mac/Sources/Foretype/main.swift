@@ -21,6 +21,9 @@ if CommandLine.arguments.contains("--geometry-selftest") {
 if CommandLine.arguments.contains("--context-selftest") {
     exit(ContextPool.selfTest() ? 0 : 1)
 }
+if CommandLine.arguments.contains("--ocr-bench") {
+    exit(ContextPool.ocrBench() ? 0 : 1)
+}
 // --settings-selftest [DIR]: the Settings window on made-up screens; DIR gets a PNG per pane.
 if let i = CommandLine.arguments.firstIndex(of: "--settings-selftest") {
     let next = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil

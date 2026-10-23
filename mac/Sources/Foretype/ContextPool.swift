@@ -15,8 +15,10 @@ import Vision
 /// reads each allowed one through Accessibility (the document's text area, a web page
 /// through text markers, else the window's static texts), at most 50 ms per app. Where
 /// Accessibility gives almost nothing (and only on Macs with 12 GB or more, with Screen
-/// Recording, not while saving energy) the window is captured with ScreenCaptureKit and read
-/// with Vision's fast OCR; a window whose picture didn't change keeps its text. The window
+/// Recording, not while saving energy) the window is captured with ScreenCaptureKit at full
+/// resolution and read with Vision's fast OCR, within 400 ms per refresh; a window whose
+/// picture didn't change keeps its text, and a refresh after a typing pause doesn't capture a
+/// window read less than a minute ago (D47). The window
 /// that had focus at the previous refresh is read too, covered or not: a window the user
 /// switched away from is what they are about to quote.
 ///
@@ -77,6 +79,8 @@ final class ContextPool {
         var ocr = false
         /// The OCR'd picture's hash: an unchanged window isn't read again.
         var imageHash: UInt64?
+        /// When the window was last captured for OCR.
+        var capturedAt: Date?
     }
 
     /// The pool itself, as plain data (`--context-selftest` checks it).
@@ -185,6 +189,10 @@ final class ContextPool {
     private static let minVisibleChars = 1500
     private static let appBudget: CFAbsoluteTime = 0.05
     private static let maxWindows = 8
+    /// OCR per refresh: at most 3 windows, and no new capture once this much time has gone.
+    private static let ocrBudget: CFAbsoluteTime = 0.4
+    /// A refresh after a typing pause re-captures an OCR'd window only once this old.
+    private static let ocrMaxAge: TimeInterval = 60
 
     /// Macs under 12 GB read Accessibility text only, never OCR other windows (D42).
     static var memoryAllowsOCR: Bool { ProcessInfo.processInfo.physicalMemory >= 12 << 30 }
@@ -262,7 +270,7 @@ final class ContextPool {
             let go = self._enabled && (switched ? sgen == self.switchGeneration : gen == self.generation)
             if go { self.lastRefresh = Date() }
             self.lock.unlock()
-            if go { self.refresh() }
+            if go { self.refresh(switched: switched) }
         }
     }
 
@@ -270,7 +278,7 @@ final class ContextPool {
         queue.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, self.enabled else { return }
             self.lock.lock(); self.lastRefresh = Date(); self.lock.unlock()
-            self.refresh()
+            self.refresh(switched: true)
         }
     }
 
@@ -284,7 +292,8 @@ final class ContextPool {
         var visible: Bool
     }
 
-    private func refresh() {
+    /// `switched`: focus moved to another window or app (else a typing pause).
+    private func refresh(switched: Bool) {
         lock.lock()
         let gate = _gate, allowOCR = _allowOCR, noted = focus?.pid
         lock.unlock()
@@ -292,6 +301,7 @@ final class ContextPool {
         // A password or other secure field is focused somewhere: read nothing now.
         guard !IsSecureEventInputEnabled() else { return Log.debug("context: secure input on, not read") }
         let t0 = Date()
+        let cpu0 = ContextPool.cpuSeconds()
         let windows = ContextPool.windowsOnScreen()
         let displays = displayBounds()
         // The window being typed in is the prompt's own; it is never part of the pool. An app
@@ -362,35 +372,62 @@ final class ContextPool {
         }
         lastFocused = focusedWindow.flatMap { w in focusedKey.map { ($0, focusPid, w) } }
         let axCount = read.count
-        read += ocr(ocrCandidates)
+        let t1 = Date()
+        let (ocrRead, captured) = ocr(ocrCandidates, switched: switched)
+        read += ocrRead
+        let ocrMs = Date().timeIntervalSince(t1) * 1000
         // Windows read before and still on screen but not read this time (an app over its
         // time budget, a busy app) keep their text and stay visible; every other window is
         // no longer on screen.
         let onScreen = Set(windows.filter { $0.visible && $0.number != focusedNumber }.map { "\($0.pid):\($0.number)" })
         store.merge(read, onScreen: onScreen, now: Date())
-        Log.debug(String(format: "context: %d windows read (%d by Accessibility, %d by OCR) in %.0f ms; pool %d, %d on screen",
-                         read.count, axCount, read.count - axCount, Date().timeIntervalSince(t0) * 1000,
+        Log.debug(String(format: "context: %@ refresh, %d windows read (%d by Accessibility, %d by OCR, %d captured, OCR %.0f ms) in %.0f ms, CPU %.0f ms; pool %d, %d on screen",
+                         switched ? "switch" : "pause", read.count, axCount, read.count - axCount, captured, ocrMs,
+                         Date().timeIntervalSince(t0) * 1000, (ContextPool.cpuSeconds() - cpu0) * 1000,
                          store.entries.count, store.entries.values.filter(\.visible).count))
         push()
         scheduleExpiry()
     }
 
-    /// OCR for windows Accessibility gave (almost) nothing for, at most 3 per refresh; an
-    /// unchanged picture keeps the text read before.
-    private func ocr(_ candidates: [(Entry, CGWindow)]) -> [Entry] {
-        guard !candidates.isEmpty else { return [] }
+    /// OCR for windows Accessibility gave (almost) nothing for, at most 3 per refresh and none
+    /// started after `ocrBudget`; an unchanged picture keeps the text read before, and after a
+    /// typing pause a window read in the last minute isn't captured at all. Captures keep the
+    /// window's full resolution: Vision's fast level costs the same on a smaller picture and
+    /// reads less of it (`--ocr-bench`). Returns the windows read and how many were captured.
+    private func ocr(_ candidates: [(Entry, CGWindow)], switched: Bool) -> ([Entry], Int) {
+        guard !candidates.isEmpty else { return ([], 0) }
+        let now = Date()
+        var out: [Entry] = []
+        var fresh: [(Entry, CGWindow)] = []
+        for (entry, cg) in candidates.prefix(3) {
+            if !switched, let old = store.entries[entry.key], old.ocr, let at = old.capturedAt, now.timeIntervalSince(at) < ContextPool.ocrMaxAge {
+                var e = entry
+                e.text = old.text
+                e.ocr = true
+                e.imageHash = old.imageHash
+                e.capturedAt = at
+                if !e.text.isEmpty { out.append(e) }
+            } else {
+                fresh.append((entry, cg))
+            }
+        }
+        guard !fresh.isEmpty else { return (out, 0) }
         let done = DispatchSemaphore(value: 0)
         var content: SCShareableContent?
         SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: true) { c, _ in
             content = c
             done.signal()
         }
-        guard done.wait(timeout: .now() + 1) == .success, let content else { return [] }
-        var out: [Entry] = []
-        for (entry, cg) in candidates.prefix(3) {
+        guard done.wait(timeout: .now() + 1) == .success, let content else { return (out, 0) }
+        let deadline = CFAbsoluteTimeGetCurrent() + ContextPool.ocrBudget
+        var captured = 0
+        for (entry, cg) in fresh {
+            guard CFAbsoluteTimeGetCurrent() < deadline else { break }
             guard let window = content.windows.first(where: { $0.windowID == cg.number }),
                   let shot = WindowCapture.image(of: window, rect: window.frame, displays: content.displays) else { continue }
+            captured += 1
             var e = entry
+            e.capturedAt = now
             let hash = ContextPool.imageHash(shot.image)
             if let old = store.entries[e.key], old.imageHash == hash, old.ocr {
                 e.text = old.text
@@ -401,7 +438,14 @@ final class ContextPool {
             e.imageHash = hash
             if !e.text.isEmpty { out.append(e) }
         }
-        return out
+        return (out, captured)
+    }
+
+    /// CPU time of this process so far (every thread: Vision runs on its own).
+    static func cpuSeconds() -> Double {
+        var u = rusage()
+        getrusage(RUSAGE_SELF, &u)
+        return Double(u.ru_utime.tv_sec + u.ru_stime.tv_sec) + Double(u.ru_utime.tv_usec + u.ru_stime.tv_usec) / 1e6
     }
 
     private func push() {
@@ -581,6 +625,84 @@ final class ContextPool {
             h = (h ^ UInt64(p)) &* 0x100_0000_01b3
         }
         return h
+    }
+
+    // MARK: - OCR bench
+
+    /// `Foretype --ocr-bench`: what reading another window costs at Retina size (2 pixels per
+    /// point) and downscaled to 1.5 and 1, on a rendered document window (no permissions
+    /// needed; the capture itself isn't timed). For 13 and 11 pt text: Vision's fast level,
+    /// wall and CPU time (median of 5), the share of the document's words it got right, and
+    /// the hash. Passes when the full resolution, which captures keep, reads 97% of the words.
+    static func ocrBench() -> Bool {
+        let lines = [
+            "Q3 Budget Review", "Total Q3 spend was $412,600 against a budget of $398,000, an overrun of $14,600 (3.7%).",
+            "Most of the overrun came from contractors on the warehouse migration, which ran three weeks late.",
+            "Contractors: $68,900 (budget $52,000)", "Software licences: $37,400 (budget $39,500)",
+            "Travel: $11,200 (budget $14,000)", "Equipment: $43,800 (budget $40,500)", "Recommendations",
+            "1. Freeze new contractor engagements until the migration is signed off.",
+            "2. Move the equipment refresh for the Leeds office into Q1.", "3. Keep the travel underspend as a buffer for Q4.",
+            "Spring Launch Plan: beta opens to 500 customers on 3 March; pricing page goes live 17 March.",
+            "Public launch and press briefing: 24 March. First customer webinar: 2 April.",
+            "Owners: Lena (Product), Omar (Web), Grace (Comms). Payment provider certification may slip by one week.",
+            "Ferry timetable, Zanzibar crossing: departs 07:00, 09:30, 12:30, 15:30 and 18:00; the crossing takes two hours.",
+            "Tickets cost $35 in economy and $50 in business; children under 12 travel at half price.",
+        ]
+        let truth = Set(lines.joined(separator: " ").lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+        let size = CGSize(width: 1000, height: 720)
+        func render(points: CGFloat, scale: CGFloat) -> CGImage? {
+            let w = Int(size.width * scale), h = Int(size.height * scale)
+            guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            ctx.setFillColor(.white)
+            ctx.fill(CGRect(x: 0, y: 0, width: w, height: h))
+            ctx.translateBy(x: 0, y: CGFloat(h))
+            ctx.scaleBy(x: scale, y: -scale)
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: true)
+            let attrs: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: points), .foregroundColor: NSColor.black]
+            for (i, line) in lines.enumerated() {
+                (line as NSString).draw(at: NSPoint(x: 30, y: 30 + CGFloat(i) * points * 2.6), withAttributes: attrs)
+            }
+            NSGraphicsContext.restoreGraphicsState()
+            return ctx.makeImage()
+        }
+        func downscale(_ image: CGImage, by f: CGFloat) -> CGImage? {
+            let w = Int(CGFloat(image.width) / f), h = Int(CGFloat(image.height) / f)
+            guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            ctx.interpolationQuality = .medium
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return ctx.makeImage()
+        }
+        func measure(_ image: CGImage) -> (ms: Double, cpu: Double, recall: Double, hashMs: Double) {
+            var times: [Double] = [], cpus: [Double] = [], text = ""
+            _ = recognizeFast(image)  // Vision loads its model once
+            for _ in 0..<5 {
+                let t = Date(), c = cpuSeconds()
+                text = recognizeFast(image)
+                times.append(Date().timeIntervalSince(t) * 1000)
+                cpus.append((cpuSeconds() - c) * 1000)
+            }
+            let got = Set(text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))
+            let t = Date()
+            for _ in 0..<20 { _ = imageHash(image) }
+            return (times.sorted()[2], cpus.sorted()[2], Double(truth.intersection(got).count) / Double(truth.count), Date().timeIntervalSince(t) * 50)
+        }
+        var ok = true
+        for points in [13.0, 11.0] as [CGFloat] {
+            guard let retina = render(points: points, scale: 2) else { return false }
+            let full = measure(retina)
+            for f in [1.0, 4.0 / 3.0, 2.0] as [CGFloat] {
+                guard let img = f == 1 ? retina : downscale(retina, by: f) else { return false }
+                let m = f == 1 ? full : measure(img)
+                print(String(format: "%.0f pt, %dx%d px (%.1f per point): %.0f ms, CPU %.0f ms, words %.1f%%, hash %.1f ms",
+                             points, img.width, img.height, 2 / f, m.ms, m.cpu, m.recall * 100, m.hashMs))
+                if f == 1 && m.recall < 0.97 { ok = false }
+            }
+        }
+        print(ok ? "OCR bench passed" : "OCR bench FAILED: the full resolution reads too little")
+        return ok
     }
 
     // MARK: - Self-test
