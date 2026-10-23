@@ -1166,7 +1166,37 @@ a keystroke may wait for) and 120 ms once the user has stopped for a second. Bef
 steps were sized this way (a rate measured on small pieces kept the pieces small) the 40 ms
 row took 5.3 s.
 
-PLACEHOLDER_CHECKS
+### Slots, background prefill and saved contexts give a fresh prefill's suggestions (`--check-cache`)
+
+The reusing engine against one reset before every request (greedy, 4 words), as in
+*Cache rollback* above. `--fields 3` interleaves three documents 15 requests at a time,
+each with its own 1,400-character screen text, and prefills every request in the background
+first, so the slots, shared prefixes, background steps and (with `--saved-mb`) saved
+contexts are all exercised:
+
+| Model, KV | Check | Requests | Identical |
+|---|---|---:|---:|
+| Qwen3-1.7B, f16, before (one sequence) | `--long`, 4 documents | 798 | 99.7% (from *Cache rollback*) |
+| Qwen3-1.7B, f16, two slots | `--long`, 4 documents | 1,424 | 99.8% |
+| Qwen3-0.6B, f16, one slot | `--fields 3`, 3 documents | 420 | 100% |
+| Qwen3-0.6B, f16, two slots, saved contexts (3 saved, 225 MB) | `--fields 3` | 420 | 100% |
+| Qwen3-1.7B, f16, two slots, saved contexts (3 saved, 228 MB) | `--fields 3`, 3 documents | 636 | 100% |
+| Qwen3-1.7B, q8_0, two slots, saved contexts (5 saved, 199 MB) | `--fields 3`, 3 documents | 636 | 97.8% |
+
+- These checks only hold with the GPU to themselves: when another model ran on it at the
+  same time, generation hit the 300 ms deadline in some requests and not in others, and the
+  same configurations read 83–92% (1.7B, 0.6B). The rows above ran alone.
+- They found one bug, fixed before these runs: saving the slot about to be reused could drop
+  the saved context that was about to be restored, and another one was restored in its
+  place; the next decode failed (llama.cpp rejects a sequence with a gap in its positions),
+  or, where positions happened to line up, the slot held another field's text. Gemma 4 E2B
+  went from 72% to 96.5% identical with the fix (both runs shared the GPU).
+- With q8_0 the reusing engine and fresh prefills agree on 97.8% (above) and 95.9% (the
+  `--long` check, 1,424 requests, run while the Mac was building): q8_0 rounds the cache, so
+  a single-token decode and a 512-token batch differ a little more than in f16. Keystrokes
+  saved on both corpora don't change (first table).
+- A saved context holds a whole prompt: about 75 MB for 650 tokens in f16 and 40 MB in
+  q8_0 on Qwen3-1.7B, so the 384 MB from 16 GB keep 5 to 9 fields of that size.
 
 ### A 1,024-token section under 16 GB?
 
