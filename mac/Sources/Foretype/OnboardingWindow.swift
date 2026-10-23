@@ -1,23 +1,28 @@
 import AppKit
 import ApplicationServices
 
-/// First-run setup: the two permissions and the model download, each with its status.
+/// First-run setup: the two permissions and the model download, each with its status, and a
+/// mention of the optional "Use text from other apps" (off; only Settings turns it on).
 /// Re-opened from the menu (Setup…) whenever something is missing.
 final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
     private let models: ModelManager
     private let settings: AppSettings
     /// Main thread: setup can start the engine (Accessibility granted and a model present).
     var onReady: (() -> Void)?
+    /// Opens Settings ▸ Context, where "Use text from other apps" is switched on.
+    var onContextSettings: (() -> Void)?
 
     private let axStatus = NSTextField(labelWithString: "")
     private let screenStatus = NSTextField(labelWithString: "")
     private let modelStatus = NSTextField(labelWithString: "")
+    private let otherAppsStatus = NSTextField(labelWithString: "")
     private let axHint = OnboardingWindowController.hint()
     private let screenHint = OnboardingWindowController.hint()
     private let progress = NSProgressIndicator()
     private let axButton = NSButton(title: L("Open Settings"), target: nil, action: nil)
     private let screenButton = NSButton(title: L("Allow"), target: nil, action: nil)
     private let modelButton = NSButton(title: L("Download"), target: nil, action: nil)
+    private let otherAppsButton = NSButton(title: L("Context Settings\u{2026}"), target: nil, action: nil)
     private let doneButton = NSButton(title: L("Start Foretype"), target: nil, action: nil)
     private let loginBox = NSButton(checkboxWithTitle: L("Open Foretype when you log in"), target: nil, action: nil)
     private let cotypistNote = NSTextField(wrappingLabelWithString:
@@ -78,6 +83,7 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         axButton.target = self; axButton.action = #selector(openAccessibility)
         screenButton.target = self; screenButton.action = #selector(allowScreen)
         modelButton.target = self; modelButton.action = #selector(modelClicked)
+        otherAppsButton.target = self; otherAppsButton.action = #selector(openContextSettings)
         doneButton.target = self; doneButton.action = #selector(done)
         doneButton.keyEquivalent = "\r"
         loginBox.state = .on
@@ -105,6 +111,9 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
             row(L("Language model"),
                 rec.map { L("%1$@, %2$@. %3$@, downloaded from Hugging Face and checked against a pinned SHA-256.", $0.name, $0.sizeText, $0.license) }
                     ?? L("No model in the catalog for this Mac."), status: modelStatus, button: modelButton, extra: progress),
+            row(L("Text from other apps (optional)"),
+                L("Suggestions can also use what other windows show, such as a document beside the email you are writing. Kept in memory only, never sent anywhere. Off until you turn it on in Settings \u{25B8} Context."),
+                status: otherAppsStatus, button: otherAppsButton),
         ]
         let buttons = NSStackView(views: [loginBox, NSView(), doneButton])
         let stack = NSStackView(views: rows + [buttons])
@@ -157,6 +166,10 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
         if askedForScreen && !screen { screenStatus.stringValue = L("Turned it on? Relaunch Foretype to use it.") }
         screenHint.isHidden = screen || !settings.useScreenContext || !Signing.isAdHocBundle
         cotypistNote.isHidden = NSRunningApplication.runningApplications(withBundleIdentifier: "app.cotypist.Cotypist").isEmpty
+        // Shown as it is; setup never switches it on.
+        let others = settings.useOtherApps && settings.backendIsOnDevice
+        otherAppsStatus.stringValue = others ? "\u{2713} " + L("On") : L("Off")
+        otherAppsStatus.textColor = others ? .systemGreen : .secondaryLabelColor
 
         if settings.backend != "local" {
             modelStatus.stringValue = L("Using your server: %@", settings.backendURL)
@@ -231,6 +244,10 @@ final class OnboardingWindowController: NSWindowController, NSWindowDelegate {
             NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")!)
         }
         refresh()
+    }
+
+    @objc private func openContextSettings() {
+        onContextSettings?()
     }
 
     @objc private func modelClicked() {

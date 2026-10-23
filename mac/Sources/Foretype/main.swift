@@ -21,6 +21,11 @@ if CommandLine.arguments.contains("--geometry-selftest") {
 if CommandLine.arguments.contains("--context-selftest") {
     exit(ContextPool.selfTest() ? 0 : 1)
 }
+// --context-view-selftest [DIR]: the "What Foretype sees" window on made-up data; DIR gets PNGs.
+if let i = CommandLine.arguments.firstIndex(of: "--context-view-selftest") {
+    let next = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
+    exit(ContextViewerController.selfTest(dir: next.flatMap { $0.hasPrefix("-") ? nil : $0 }) ? 0 : 1)
+}
 if CommandLine.arguments.contains("--ocr-bench") {
     exit(ContextPool.ocrBench() ? 0 : 1)
 }

@@ -164,6 +164,9 @@ final class ContextPool {
     /// Pool queue: the core's JSON, whenever the pool changed.
     var onChange: ((String) -> Void)?
 
+    /// Posted on the main thread after the pool changed (Settings ▸ Context's status line).
+    static let changed = Notification.Name("dev.foretype.contextPoolChanged")
+
     private let queue = DispatchQueue(label: "foretype.context", qos: .utility)
     private let lock = NSLock()
     // Under `lock`:
@@ -175,6 +178,7 @@ final class ContextPool {
     private var switchGeneration = 0
     private var lastRefresh = Date.distantPast
     private var lastJSON = #"{"passages":[]}"#
+    private var lastEntries: [Entry] = []
     // On `queue`:
     private var store = Store()
     private var pushed: Int?
@@ -195,7 +199,9 @@ final class ContextPool {
     private static let ocrMaxAge: TimeInterval = 60
 
     /// Macs under 12 GB read Accessibility text only, never OCR other windows (D42).
-    static var memoryAllowsOCR: Bool { ProcessInfo.processInfo.physicalMemory >= 12 << 30 }
+    static var memoryAllowsOCR: Bool { !smallMemoryForTesting && ProcessInfo.processInfo.physicalMemory >= 12 << 30 }
+    /// --settings-selftest: Settings ▸ Context as on a Mac under 12 GB.
+    static var smallMemoryForTesting = false
 
     var enabled: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -206,6 +212,13 @@ final class ContextPool {
     var currentJSON: String {
         lock.lock(); defer { lock.unlock() }
         return lastJSON
+    }
+
+    /// The windows last sent to the core, in its order (the "What Foretype sees" window): what
+    /// is already in memory. Reading it captures nothing.
+    var entries: [Entry] {
+        lock.lock(); defer { lock.unlock() }
+        return lastEntries
     }
 
     /// Turns reading on or off; off forgets everything and sends an empty pool.
@@ -453,7 +466,8 @@ final class ContextPool {
         guard sig != pushed else { return }
         pushed = sig
         let json = store.json()
-        lock.lock(); lastJSON = json; lock.unlock()
+        let entries = store.ordered
+        lock.lock(); lastJSON = json; lastEntries = entries; lock.unlock()
         onChange?(json)
     }
 

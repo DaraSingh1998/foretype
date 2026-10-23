@@ -105,5 +105,117 @@
 			<string>notes for %2$@ apps</string>
 		</dict>
 	</dict>
+	<key>%@ characters</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ character</string>
+			<key>other</key>
+			<string>%2$@ characters</string>
+		</dict>
+	</dict>
+	<key>%@ seconds ago</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ second ago</string>
+			<key>other</key>
+			<string>%2$@ seconds ago</string>
+		</dict>
+	</dict>
+	<key>%@ minutes ago</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ minute ago</string>
+			<key>other</key>
+			<string>%2$@ minutes ago</string>
+		</dict>
+	</dict>
+	<key>%@ on screen</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ on screen</string>
+			<key>other</key>
+			<string>%2$@ on screen</string>
+		</dict>
+	</dict>
+	<key>%@ viewed in the last 10 minutes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ viewed in the last 10 minutes</string>
+			<key>other</key>
+			<string>%2$@ viewed in the last 10 minutes</string>
+		</dict>
+	</dict>
+	<key>%@ passages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ passage</string>
+			<key>other</key>
+			<string>%2$@ passages</string>
+		</dict>
+	</dict>
+	<key>(%@ more from windows that have left memory)</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>(%2$@ more from a window that has left memory)</string>
+			<key>other</key>
+			<string>(%2$@ more from windows that have left memory)</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

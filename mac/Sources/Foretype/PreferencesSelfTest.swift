@@ -5,8 +5,10 @@ import AppKit
 /// showing it: every pane fits a 13-inch MacBook Air without scrolling (Apps and Model grow
 /// with their rows and may scroll), a pane taller than the screen scrolls inside a window
 /// that stays clear of the menu bar and the Dock, on a display above the main one too, and
-/// the toolbar shows every tab. With DIR, writes each pane as DIR/<n>-<pane>-light.png and
-/// -dark.png. Run the bundled binary with `-AppleLanguages '(hi)'` to check Hindi.
+/// the toolbar shows every tab. The Context pane is checked in each state of "Use text from
+/// other apps", and the setup window must fit too. With DIR, writes each pane as
+/// DIR/<n>-<pane>-light.png and -dark.png (and setup.png). Run the bundled binary with
+/// `-AppleLanguages '(hi)'` to check Hindi.
 enum PreferencesSelfTest {
     /// Visible frames (below the menu bar, above a 48 pt Dock) in Cocoa coordinates.
     static let air13 = NSRect(x: 0, y: 72, width: 1470, height: 956 - 37 - 72)
@@ -145,6 +147,52 @@ enum PreferencesSelfTest {
         host.settings.historyKeyMismatch = false
         host.settings.historyLocked = false
         host.aboutYouLocked = false
+
+        // The Context pane in every state of "Use text from other apps" (its rows show and
+        // hide): windows in memory, paused, off. Nothing read yet (the tallest) came first.
+        let entry = ContextPool.Entry(key: "1:1", app: "TextEdit", bundleId: "com.apple.TextEdit", title: "notes.rtf", text: "Q3 budget", visible: true)
+        for (state, sight) in [("in memory", ContextSight(state: .on, entries: [entry])), ("paused", ContextSight(state: .paused)),
+                               ("off", ContextSight(state: .off))] {
+            host.contextSight = sight
+            guard let i = prefs.panes.firstIndex(where: { $0 is ContextPane }) else { break }
+            prefs.panes[i].refresh()
+            tabs.selectedTabViewItemIndex = i
+            tabs.fit(animated: false)
+            print(String(format: "Context (%@): %.0f pt", state, prefs.panes[i].contentHeight))
+            check(inside(screen) && !prefs.panes[i].scrolls, "Context (\(state)): scrolls on a 13-inch MacBook Air")
+        }
+        // Under 12 GB its note shows too, with nothing read yet: the tallest it gets.
+        ContextPool.smallMemoryForTesting = true
+        host.contextSight = ContextSight(state: .on)
+        if let i = prefs.panes.firstIndex(where: { $0 is ContextPane }) {
+            prefs.panes[i].refresh()
+            tabs.selectedTabViewItemIndex = i
+            tabs.fit(animated: false)
+            print(String(format: "Context (under 12 GB, nothing read yet): %.0f pt", prefs.panes[i].contentHeight))
+            check(inside(screen) && !prefs.panes[i].scrolls, "Context (under 12 GB): scrolls on a 13-inch MacBook Air")
+            if let dir {
+                let path = "\(dir)/\(i + 1)-Context-under-12GB.png"
+                check((try? prefs.panes[i].png(dark: false)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+            }
+        }
+        ContextPool.smallMemoryForTesting = false
+
+        // The setup window, with its optional mention of other apps' text.
+        let setup = OnboardingWindowController(models: host.models, settings: host.settings)
+        if let w = setup.window, let c = w.contentView {
+            w.layoutIfNeeded()
+            let h = c.fittingSize.height
+            print(String(format: "Setup: %.0f pt of %.0f (window content %.0f)", h, air13.height - chrome, c.frame.height))
+            check(h <= air13.height - chrome, "setup window \(h) pt doesn't fit a 13-inch MacBook Air")
+            check(c.frame.height + 0.5 >= h, "setup window content \(c.frame.height) pt cuts off rows of \(h)")
+            if let dir {
+                c.setFrameSize(NSSize(width: c.frame.width, height: c.fittingSize.height))
+                for dark in [false, true] {
+                    let path = "\(dir)/setup-\(dark ? "dark" : "light").png"
+                    check((try? PreferencesPane.png(of: c, dark: dark)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+                }
+            }
+        }
         print(failures == 0 ? "settings self-test passed" : "settings self-test: \(failures) failed")
         return failures == 0
     }
@@ -203,4 +251,7 @@ private final class StandInHost: PreferencesHost {
     func powerSettingsChanged() {}
     func setUseOtherApps(_ on: Bool) {}
     func addNeverReadApp() {}
+    /// The Context pane's tallest state: on, nothing read yet (the self-test can change it).
+    var contextSight = ContextSight(state: .on)
+    func showContextViewer() {}
 }

@@ -109,5 +109,117 @@
 			<string>%2$@ ऐप्स के लिए नोट्स</string>
 		</dict>
 	</dict>
+	<key>%@ characters</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ अक्षर</string>
+			<key>other</key>
+			<string>%2$@ अक्षर</string>
+		</dict>
+	</dict>
+	<key>%@ seconds ago</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ सेकंड पहले</string>
+			<key>other</key>
+			<string>%2$@ सेकंड पहले</string>
+		</dict>
+	</dict>
+	<key>%@ minutes ago</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ मिनट पहले</string>
+			<key>other</key>
+			<string>%2$@ मिनट पहले</string>
+		</dict>
+	</dict>
+	<key>%@ on screen</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ स्क्रीन पर</string>
+			<key>other</key>
+			<string>%2$@ स्क्रीन पर</string>
+		</dict>
+	</dict>
+	<key>%@ viewed in the last 10 minutes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ पिछले 10 मिनट में देखी गई</string>
+			<key>other</key>
+			<string>%2$@ पिछले 10 मिनट में देखी गईं</string>
+		</dict>
+	</dict>
+	<key>%@ passages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%2$@ अंश</string>
+			<key>other</key>
+			<string>%2$@ अंश</string>
+		</dict>
+	</dict>
+	<key>(%@ more from windows that have left memory)</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>(%2$@ और, उस विंडो से जो मेमोरी से हट चुकी है)</string>
+			<key>other</key>
+			<string>(%2$@ और, उन विंडो से जो मेमोरी से हट चुकी हैं)</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

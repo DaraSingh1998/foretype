@@ -32,6 +32,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     private var instructionsWindow: InstructionsWindowController?
     private var onboarding: OnboardingWindowController?
     private var preferences: PreferencesWindowController?
+    /// Settings ▸ Context ▸ What Foretype Sees…
+    private var contextViewer: ContextViewerController?
     private var updater: UpdateController?
     /// Settings ▸ About You. Read from its encrypted file only if one exists, so the Keychain
     /// is never touched for users who haven't entered anything. FORETYPE_ABOUT_YOU (testing)
@@ -85,6 +87,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             self?.preferences?.modelsChanged()
         }
         stats.onChange = { [weak self] in self?.preferences?.statsChanged() }
+        // Settings ▸ Context says what is in memory; the viewer has its own timer.
+        NotificationCenter.default.addObserver(forName: ContextPool.changed, object: nil, queue: .main) { [weak self] _ in
+            if self?.preferences?.window?.isVisible == true { self?.preferences?.refresh() }
+        }
         updater = UpdateController()
         updater?.isBusy = { [weak self] in self?.controller?.isShowingSuggestion ?? false }
         updater?.onAvailabilityChange = { [weak self] in self?.updateAvailabilityChanged() }
@@ -101,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             startEngine()
         }
         writeUpdateReport()
+        startContextReport()
     }
 
     /// Accessory apps show no menu bar, but key equivalents still go through the main menu.
@@ -140,6 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     private func showOnboarding() {
         let w = onboarding ?? OnboardingWindowController(models: models, settings: settings)
         w.onReady = { [weak self] in self?.startEngine() }
+        w.onContextSettings = { [weak self] in self?.showPreferences(pane: ContextPane.self) }
         onboarding = w
         w.show()
     }
@@ -801,6 +809,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         w.show()
     }
 
+    func showPreferences(pane: PreferencesPane.Type) {
+        let w = preferences ?? PreferencesWindowController(host: self)
+        preferences = w
+        w.show(pane: pane)
+    }
+
     var updates: UpdateController? { updater }
 
     @objc private func checkForUpdates() {
@@ -931,8 +945,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.allowedContentTypes = [.application]
         guard panel.runModal() == .OK, let url = panel.url, let bundle = Bundle(url: url)?.bundleIdentifier else { return }
+        neverRead(bundle)
+    }
+
+    /// Adds an app to the never-read list; its windows leave the pool at once.
+    private func neverRead(_ bundle: String) {
         if !settings.neverReadApps.contains(bundle) { settings.neverReadApps.append(bundle) }
         settingsChanged()
+    }
+
+    var contextSight: ContextSight {
+        let state: ContextSight.State
+        if !settings.backendIsOnDevice {
+            state = .server
+        } else if !settings.useOtherApps {
+            state = .off
+        } else if pause.isPaused {
+            state = .paused
+        } else if controller == nil {
+            state = .notRunning
+        } else {
+            state = .on
+        }
+        guard state == .on, let c = controller else { return ContextSight(state: state) }
+        return ContextSight(state: .on, entries: c.pool.entries, report: c.engine.contextReport(), now: Date(),
+                            displays: ContextSight.displayNames())
+    }
+
+    func showContextViewer() {
+        showContextViewer(activate: true)
+    }
+
+    private func showContextViewer(activate: Bool) {
+        let v = contextViewer ?? ContextViewerController { [weak self] in self?.contextSight ?? ContextSight(state: .notRunning) }
+        v.onNeverRead = { [weak self] bundle in self?.neverRead(bundle) }
+        v.onForget = { [weak self] in
+            self?.controller?.forgetContext()
+            Log.debug("context: forgotten from the What Foretype Sees window")
+        }
+        contextViewer = v
+        v.show(activate: activate)
+    }
+
+    private static let contextReport = ProcessInfo.processInfo.environment["FORETYPE_CONTEXT_REPORT"]
+    private var contextReportTimer: Timer?
+
+    /// Testing: once the engine runs, opens What Foretype Sees at the top right of the screen
+    /// without taking focus, and every 2 s writes what it shows to FORETYPE_CONTEXT_REPORT
+    /// (passages as their first 60 characters) and the window as a picture to <file>.png.
+    private func startContextReport() {
+        guard let path = Self.contextReport, contextReportTimer == nil else { return }
+        contextReportTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self, self.controller != nil else { return }
+            if self.contextViewer?.window?.isVisible != true {
+                self.showContextViewer(activate: false)
+                if let w = self.contextViewer?.window, let screen = NSScreen.main?.visibleFrame {
+                    w.setFrameTopLeftPoint(NSPoint(x: screen.maxX - w.frame.width - 20, y: screen.maxY - 20))
+                }
+            }
+            guard let v = self.contextViewer else { return }
+            v.refresh()
+            let s = v.sight
+            var lines = ["state: \(s.state)", "windows: \(s.entries.count)" + (s.entries.isEmpty ? "" : " (\(s.windowsSummary))")]
+            lines += s.entries.map { "window: \(ContextSight.title($0)) | \(s.detail($0))" }
+            lines.append("windows note: \(s.windowsNote ?? "-")")
+            lines.append("prompt: \(s.promptSummary ?? "-")")
+            lines += (s.report?.last?.passages ?? []).map { "passage: \($0.label) #\($0.ordinal), \($0.tokens) tokens: \(String($0.text.prefix(60)).replacingOccurrences(of: "\n", with: " / "))" }
+            lines.append("passages note: \(s.passagesNote ?? "-")")
+            try? (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+            try? v.png(dark: false)?.write(to: URL(fileURLWithPath: path + ".png"))
+        }
     }
 
     @objc private func openScreenRecording() {

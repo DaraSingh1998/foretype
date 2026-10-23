@@ -176,11 +176,20 @@ final class Controller {
     /// next keystroke doesn't wait for it.
     private func contextChanged(_ json: String) {
         engine.setContext(json)
+        DispatchQueue.main.async { NotificationCenter.default.post(name: ContextPool.changed, object: nil) }
         let snap = latestSnapshot
         lock.lock()
         let stopped = paused
         lock.unlock()
         if !stopped, snap.fieldKey & 0xFFFF_FFFF != 0, !snap.textBefore.isEmpty { engine.warm(snap) }
+    }
+
+    /// "Forget All Now" (What Foretype sees): every window read is dropped, and with the
+    /// core's pool emptied, so are the prompts and saved contexts holding their text (D47).
+    /// While the setting stays on, windows on screen are read again at the next switch or
+    /// typing pause.
+    func forgetContext() {
+        pool.reset()
     }
 
     private var latestSnapshot: FieldSnapshot {

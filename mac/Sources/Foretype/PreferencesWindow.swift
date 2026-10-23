@@ -52,6 +52,11 @@ protocol PreferencesHost: AnyObject {
     func setUseOtherApps(_ on: Bool)
     /// Picks an application for the never-read list.
     func addNeverReadApp()
+    /// What other apps' text is in memory and what the last prompt took from it (from memory
+    /// only; nothing is read for it).
+    var contextSight: ContextSight { get }
+    /// Opens the "What Foretype sees" window.
+    func showContextViewer()
 }
 
 /// The Settings window (menu: Settings…, Cmd-,): everything in the menu-bar menu plus the
@@ -137,6 +142,12 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         }
         fitPending = false
         tabs.fit(animated: true)
+    }
+
+    /// Opens the window at the first pane of this kind (the setup window's Context link).
+    func show(pane kind: PreferencesPane.Type) {
+        if let i = panes.firstIndex(where: { type(of: $0) == kind }) { tabs.selectedTabViewItemIndex = i }
+        show()
     }
 
     /// Settings, engine status or permissions may have changed.
@@ -285,17 +296,25 @@ class PreferencesPane: NSViewController {
 
     /// All the rows as a PNG, light or dark (FORETYPE_UPDATE_REPORT, --settings-selftest).
     func png(dark: Bool = false) -> Data? {
-        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        view.appearance = appearance
+        view.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
         view.setFrameSize(NSSize(width: Self.width, height: contentHeight))
         view.layoutSubtreeIfNeeded()
-        guard let rep = stack.bitmapImageRepForCachingDisplay(in: stack.bounds) else { return nil }
-        stack.cacheDisplay(in: stack.bounds, to: rep)
+        return Self.png(of: stack, dark: dark)
+    }
+
+    /// A view as a PNG on the window background, light or dark (self-tests). The view's
+    /// appearance is set first.
+    static func png(of v: NSView, dark: Bool) -> Data? {
+        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        v.appearance = appearance
+        v.layoutSubtreeIfNeeded()
+        guard let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { return nil }
+        v.cacheDisplay(in: v.bounds, to: rep)
         var background = NSColor.white
         appearance?.performAsCurrentDrawingAppearance {
             background = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? background
         }
-        let image = NSImage(size: stack.bounds.size, flipped: false) { r in
+        let image = NSImage(size: v.bounds.size, flipped: false) { r in
             background.setFill()
             r.fill()
             rep.draw(in: r, from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: false, hints: nil)
@@ -718,8 +737,14 @@ final class ContextPane: PreferencesPane {
     private let screenHint = PreferencesPane.note(Signing.staleGrantHint, width: 400)
     private var screenHintRow: NSGridRow?
     private let otherApps = NSButton(checkboxWithTitle: L("Use text from other apps"), target: nil, action: nil)
-    private let otherAppsStatus = NSTextField(labelWithString: "")
-    private var otherAppsStatusRow: NSGridRow?
+    /// This Mac or this backend limits the setting: under 12 GB, a server.
+    private let otherAppsLimit = PreferencesPane.note("", width: 400)
+    private var otherAppsLimitRow: NSGridRow?
+    private let viewButton = NSButton(title: L("What Foretype Sees\u{2026}"), target: nil, action: nil)
+    private let poolStatus = NSTextField(labelWithString: "")
+    /// On, but nothing read yet: what to do.
+    private let nothingYet = PreferencesPane.note(ContextSight.nothingYetNote, width: 400)
+    private var nothingYetRow: NSGridRow?
     private let neverRead = AppList(minHeight: 44, maxHeight: 200)
 
     override func build() {
@@ -734,8 +759,14 @@ final class ContextPane: PreferencesPane {
         screenRelaunch.controlSize = .small
         otherApps.target = self
         otherApps.action = #selector(otherAppsChanged)
-        otherAppsStatus.font = .systemFont(ofSize: 11)
-        otherAppsStatus.textColor = .systemOrange
+        otherAppsLimit.textColor = .systemOrange
+        viewButton.target = self
+        viewButton.action = #selector(showViewer)
+        viewButton.controlSize = .small
+        poolStatus.font = .systemFont(ofSize: 11)
+        poolStatus.textColor = .secondaryLabelColor
+        poolStatus.lineBreakMode = .byTruncatingTail
+        poolStatus.widthAnchor.constraint(lessThanOrEqualToConstant: 260).isActive = true
         let grid = Self.form([
             [Self.formLabel(L("Screen context:")), screen],
             [NSGridCell.emptyContentView, Self.note(L("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away."), width: 400)],
@@ -743,10 +774,13 @@ final class ContextPane: PreferencesPane {
             [NSGridCell.emptyContentView, screenHint],
             [Self.formLabel(L("Other apps:")), otherApps],
             [NSGridCell.emptyContentView, Self.note(L("Suggestions can use what other windows show, on any display: a document, slides or a web page beside the email you are writing, and windows you looked at in the last 10 minutes. Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac sleeps; never sent to a server."), width: 400)],
-            [NSGridCell.emptyContentView, otherAppsStatus],
+            [NSGridCell.emptyContentView, otherAppsLimit],
+            [NSGridCell.emptyContentView, Self.hstack([viewButton, poolStatus])],
+            [NSGridCell.emptyContentView, nothingYet],
         ])
         screenHintRow = grid.cell(for: screenHint)?.row
-        otherAppsStatusRow = grid.cell(for: otherAppsStatus)?.row
+        otherAppsLimitRow = grid.cell(for: otherAppsLimit)?.row
+        nothingYetRow = grid.cell(for: nothingYet)?.row
         grid.cell(for: otherApps)?.row?.topPadding = 8
         add(grid, spacingAfter: 18)
         add(Self.heading(L("Never read as context")))
@@ -771,17 +805,31 @@ final class ContextPane: PreferencesPane {
         screenRelaunch.isHidden = allowed || !s.useScreenContext || !s.askedForScreenRecording || !AppLocation.isBundledApp
         screenHint.isHidden = allowed || !s.useScreenContext || !Signing.isAdHocBundle
         screenHintRow?.isHidden = screenHint.isHidden
-        otherApps.state = s.useOtherApps ? .on : .off
-        // What this Mac and this backend allow.
+        // A server never gets other apps' text: the setting is unavailable (and kept as it
+        // was for when the model is on this Mac again).
+        otherApps.isEnabled = s.backendIsOnDevice
+        otherApps.state = s.useOtherApps && s.backendIsOnDevice ? .on : .off
         if !s.backendIsOnDevice {
-            otherAppsStatus.stringValue = L("Off while a server makes suggestions: other apps\u{2019} text stays on this Mac.")
+            otherAppsLimit.stringValue = ContextSight.serverNote
         } else if !ContextPool.memoryAllowsOCR {
-            otherAppsStatus.stringValue = L("On this Mac (under 12 GB of memory), only text apps share through Accessibility is read, and less of it.")
+            otherAppsLimit.stringValue = L("On this Mac (under 12 GB of memory), other windows are read through Accessibility only, never with OCR, and suggestions use less of their text (about %@ tokens).", formatNumber(AppSettings.otherAppsTokens))
         } else {
-            otherAppsStatus.stringValue = ""
+            otherAppsLimit.stringValue = ""
         }
-        otherAppsStatus.isHidden = otherAppsStatus.stringValue.isEmpty || !s.useOtherApps
-        otherAppsStatusRow?.isHidden = otherAppsStatus.isHidden
+        otherAppsLimit.isHidden = otherAppsLimit.stringValue.isEmpty
+        otherAppsLimitRow?.isHidden = otherAppsLimit.isHidden
+        let sight = host?.contextSight ?? ContextSight(state: .notRunning)
+        switch sight.state {
+        case .on where !sight.entries.isEmpty:
+            poolStatus.stringValue = L("In memory: %@", sight.windowsSummary)
+        case .paused:
+            poolStatus.stringValue = L("Paused: nothing is read")
+        default:
+            poolStatus.stringValue = ""
+        }
+        poolStatus.toolTip = poolStatus.stringValue
+        nothingYet.isHidden = !(sight.state == .on && sight.entries.isEmpty)
+        nothingYetRow?.isHidden = nothingYet.isHidden
         neverRead.setRows(s.neverReadApps.map { bundle in
             AppList.row(bundle: bundle, state: "", removeTip: L("Let Foretype read %@")) { [weak self] in
                 guard let host = self?.host else { return }
@@ -792,6 +840,8 @@ final class ContextPane: PreferencesPane {
     }
 
     @objc private func otherAppsChanged() { host?.setUseOtherApps(otherApps.state == .on) }
+
+    @objc private func showViewer() { host?.showContextViewer() }
 
     @objc private func screenChanged() {
         guard let host else { return }
