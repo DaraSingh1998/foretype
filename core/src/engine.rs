@@ -341,7 +341,8 @@ impl Engine {
     }
 
     /// Makes the KV cache hold exactly `tokens` and leaves the logits of the last token in
-    /// batch slot `0` of the last decode. Returns how many tokens were prefilled.
+    /// batch slot `0` of the last decode, computed: it returns once the GPU has finished.
+    /// Returns how many tokens were prefilled.
     fn sync(&mut self, tokens: &[LlamaToken], cancel: &dyn Fn() -> bool) -> Result<usize, GenError> {
         if tokens.is_empty() {
             return Err(GenError::Failed("empty prompt".into()));
@@ -367,6 +368,10 @@ impl Engine {
         } else {
             self.decode(tokens, start, tokens.len(), cancel)?;
         }
+        // llama.cpp returns from the last decode while the GPU still runs it and waits at the
+        // first logits read. Wait here instead, so the prefill is timed in full and the
+        // generation deadline doesn't start until the prompt is done.
+        self.ctx.synchronize();
         Ok(tokens.len() - start)
     }
 
