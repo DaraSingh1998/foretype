@@ -723,8 +723,9 @@ than the focused one. Where it must plug in:
   (`FORETYPE_ONLY_APPS=com.apple.mail,com.microsoft.Word`).
 - In the same place: the never-read list (password managers by default), the user's
   per-app opt-outs and disabled apps, secure input (`IsSecureEventInputEnabled`) and
-  Foretype's own windows; the feature's setting; and the backend (no reading at all for
-  `llama-server` and `openai`).
+  Foretype's own windows; the feature's setting; the backend (no reading at all for
+  `llama-server` and `openai`); and the Mac's memory (under 12 GB, Accessibility text only,
+  never OCR of other windows; the core keeps the section to 512 tokens there, D42).
 - **Coordinates.** Windows on every display come from `SCShareableContent` in global
   coordinates; use `ScreenGeometry` for anything that meets `NSScreen` or `NSWindow`.
   `onScreenWindowsOnly` lists each display's current Space only, so windows on other Spaces

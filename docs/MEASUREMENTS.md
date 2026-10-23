@@ -860,6 +860,9 @@ compute buffers, Metal allocations.
   At 4096 the feature costs an 8 GB Mac about 0.22 GB more than today (0.11 GB with a q8_0
   KV cache); at 8192, 0.67 GB (0.34 GB). The pool's text itself is small (10 minutes of
   windows: tens of kilobytes). OCR of more windows costs CPU and energy, not much memory.
+  Decided (D42): 8 GB Macs get the feature with Accessibility text only, a 512-token
+  other-app section and n_ctx kept at 2048, so no extra KV memory; with a q8_0 KV cache
+  (Phase D) n_ctx 4096 would cost what 2048 costs today.
 - `prefill_ms` as the engine reports it stops when the last batch is submitted: llama.cpp
   runs that batch on the GPU asynchronously and waits for it at the first logits read, so
   its time shows up as generation (first suggestion minus prefill: 4B at 2048, 741 ms). The
