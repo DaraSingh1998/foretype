@@ -1011,8 +1011,10 @@ impl Runner {
 const FAST_PREFILL: usize = 48;
 
 /// Milliseconds of background prefill between checks for a new request (D47): what a
-/// keystroke arriving meanwhile can wait at most.
+/// keystroke arriving meanwhile can wait at most. Longer once the user has stopped for a
+/// second (bigger pieces prefill faster: `--chunk-bench`).
 const BACKGROUND_STEP_MS: f64 = 40.0;
+const BACKGROUND_IDLE_STEP_MS: f64 = 120.0;
 
 /// What a completion request runs on (D47): its own prompt when a slot holds it or nearly,
 /// otherwise the prompt with the header of `live` (what the serving slot holds, for field
@@ -1091,6 +1093,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
     // be prefilled.
     let mut live: Option<(u64, Prompt)> = None;
     let mut background = false;
+    let mut last_request = Instant::now();
     let publish = |e: &Engine| *shared.cache.lock().unwrap() = e.stats();
 
     loop {
@@ -1160,7 +1163,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                                 || shared.paused.load(Ordering::SeqCst)
                                 || shared.pending.lock().map(|p| p.is_some()).unwrap_or(true)
                         };
-                        let step = e.background_step(BACKGROUND_STEP_MS, &busy);
+                        let step_ms = if last_request.elapsed() < Duration::from_secs(1) { BACKGROUND_STEP_MS } else { BACKGROUND_IDLE_STEP_MS };
+                        let step = e.background_step(step_ms, &busy);
                         background = matches!(step, Background::Working(_));
                         publish(e);
                         if debug() && !background {
@@ -1194,6 +1198,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
             }
         };
         last_used = Instant::now();
+        last_request = last_used;
         if shared.paused.load(Ordering::SeqCst) {
             continue;
         }

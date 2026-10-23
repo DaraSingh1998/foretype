@@ -57,8 +57,9 @@ pub struct EngineConfig {
     pub n_batch: u32,
     pub n_gpu_layers: u32,
     pub n_threads: i32,
-    /// The KV cache's element type: "f16" or "q8_0" (half the memory; needs flash
-    /// attention, which llama.cpp turns on by itself on Metal).
+    /// The KV cache's element type: "f16" or "q8_0" (half the memory, a little slower per
+    /// token on short prompts; needs flash attention, which llama.cpp turns on by itself on
+    /// Metal).
     pub kv_type: String,
     /// Flash attention: None lets llama.cpp decide (on wherever the backend supports it).
     pub flash_attn: Option<bool>,
@@ -79,7 +80,7 @@ impl Default for EngineConfig {
             n_batch: 512,
             n_gpu_layers: 999,
             n_threads: 4,
-            kv_type: "q8_0".into(),
+            kv_type: "f16".into(),
             flash_attn: None,
             slots: 2,
             kv_cells: 0,
@@ -337,8 +338,8 @@ pub struct Engine {
     active: usize,
     /// The prompt to prefill between requests, and the slot it goes to.
     background: Option<Vec<LlamaToken>>,
-    /// Background tokens prefilled per millisecond (sizes the chunks).
-    bg_rate: f64,
+    /// Tokens per background step, adjusted so a step takes about the time asked for.
+    bg_chunk: usize,
     /// When the current background prompt was first asked for, background prompts finished
     /// and the time the last one took.
     bg_since: Option<Instant>,
@@ -445,7 +446,7 @@ impl Engine {
             slots: (0..n_slots).map(|i| Slot { seq: i as i32, cached: Vec::new(), used: 0 }).collect(),
             active: 0,
             background: None,
-            bg_rate: 0.5,
+            bg_chunk: 32,
             bg_since: None,
             bg_ready: 0,
             bg_last_ms: 0.0,
@@ -911,10 +912,12 @@ impl Engine {
         Background::Ready
     }
 
-    /// Prefills the next piece of the background prompt: about `max_ms` of work (from the
-    /// rate measured so far, 16 tokens at least), into a slot other than the serving one, so
-    /// a keystroke arriving meanwhile waits at most that long and is served from the old
-    /// prompt. The prompt's last token is left for the request that uses it. With one slot
+    /// Prefills the next piece of the background prompt: about `max_ms` of work, into a slot
+    /// other than the serving one, so a keystroke arriving meanwhile waits at most that long
+    /// and is served from the old prompt. The piece grows or shrinks (at most twice or half
+    /// as many tokens a step, 16 at least) until a step takes `max_ms`: a decode costs a
+    /// fixed 10–20 ms before its first token, so a rate measured on small pieces would keep
+    /// them small. The prompt's last token is left for the request that uses it. With one slot
     /// (recurrent models) the whole prompt is prefilled in place, cancellable between
     /// batches, as before double buffering.
     pub fn background_step(&mut self, max_ms: f64, cancel: &dyn Fn() -> bool) -> Background {
@@ -948,7 +951,7 @@ impl Engine {
             // A saved context restored into the slot held it all.
             return self.background_done();
         }
-        let n = ((self.bg_rate * max_ms) as usize).clamp(16, self.n_batch);
+        let n = self.bg_chunk.clamp(16, self.n_batch);
         let to = (from + n).min(target.len() - 1);
         let t = Instant::now();
         let never = || false;
@@ -956,8 +959,8 @@ impl Engine {
             Ok(()) => {
                 self.ctx.synchronize();
                 let took = ms(t);
-                if took > 1.0 {
-                    self.bg_rate = 0.6 * self.bg_rate + 0.4 * ((to - from) as f64 / took);
+                if to - from == n && took > 1.0 {
+                    self.bg_chunk = ((n as f64 * (max_ms / took).clamp(0.5, 2.0)) as usize).clamp(16, self.n_batch);
                 }
                 if to + 1 >= target.len() {
                     self.background_done()

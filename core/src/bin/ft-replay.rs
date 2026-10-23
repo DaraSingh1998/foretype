@@ -72,7 +72,7 @@
 //!       time until it is ready, and how long one step takes (what a keystroke may wait).
 //!   --n-ctx N: the context size in tokens for every mode (default 2048, as in the app).
 //!   --kv f16|q8_0, --fa on|off, --slots N, --kv-cells N, --saved-mb N: the engine's KV cache
-//!       (D47; defaults are the engine's: q8_0, flash attention as llama.cpp decides, 2 slots,
+//!       (D47; defaults are the engine's: f16, flash attention as llama.cpp decides, 2 slots,
 //!       n_ctx cells per slot, no saved contexts).
 //!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
 //!       types with those custom instructions (corpus apps such as "Mail" stand in for their

@@ -11,9 +11,10 @@
 #                                              other-screen and both-screen are Phase A's stand-in)
 #   SWITCH="16 8"                              (default: both) typing across a change of the
 #                                              other-apps section (`--switch-bench`, D47) as a 16 GB
-#                                              Mac runs it (n_ctx 4096, two slots, 2,048-token
-#                                              section) and as one under 16 GB does (4,096 cells
-#                                              shared by both slots, 512-token section); "" skips it
+#                                              Mac runs it with other apps' text on (n_ctx 4096,
+#                                              q8_0, two slots, 2,048-token section) and as one
+#                                              under 16 GB does (4,096 cells shared by both slots,
+#                                              512-token section); "" skips it
 #   ENGINE="--kv f16 --slots 1"                (extra ft-replay flags for every run, e.g. the engine
 #                                              before Phase D)
 #
@@ -43,7 +44,10 @@ alone() {
   local log; log="$(mktemp)"
   ( while sleep 2; do [[ "$(pgrep -x ft-replay | wc -l)" -gt 1 ]] && echo shared >"$log"; done ) &
   local watcher=$!
-  local out; out="$("$R" "$@" ${ENGINE_FLAGS[@]+"${ENGINE_FLAGS[@]}"} 2>&1)" || true
+  # The model first; ENGINE's flags before the run's own, so they win (ft-replay takes the
+  # first of a flag).
+  local model="$1"; shift
+  local out; out="$("$R" "$model" ${ENGINE_FLAGS[@]+"${ENGINE_FLAGS[@]}"} "$@" 2>&1)" || true
   kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null || true
   [[ -s "$log" ]] && out="$out (shared GPU)"
   rm -f "$log"
@@ -62,8 +66,8 @@ while IFS= read -r f; do
   done
   for mac in ${SWITCH_LIST[@]+"${SWITCH_LIST[@]}"}; do
     case "$mac" in
-      16) args=(--n-ctx 4096 --other-tokens 2048) ;;
-      8) args=(--n-ctx 4096 --kv-cells 4096 --other-tokens 512) ;;
+      16) args=(--n-ctx 4096 --kv q8_0 --other-tokens 2048) ;;
+      8) args=(--n-ctx 4096 --kv q8_0 --kv-cells 4096 --other-tokens 512) ;;
       *) echo "SWITCH=$mac: expected 16 or 8"; continue ;;
     esac
     alone "$MODELS/$f" --corpus "$CORPUS" --switch-bench "${args[@]}" | grep -E '^switch-bench|shared GPU' | sed "s|^|$f ($mac GB) |"

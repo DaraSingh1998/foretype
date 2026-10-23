@@ -733,3 +733,37 @@ frames can't be recovered.
 **Cost.** A history whose key is truly gone stays locked until the user deletes it. A file
 that was written under two keys (by builds before this fix) opens with either one, and the
 next compaction under that key still drops the other key's frames.
+
+## D47. Other apps' text off the typing path: two prompts in the KV cache, the old header while the new one prefills, saved contexts, q8_0 (2026-10-23)
+
+**Decision.** Phase D of the cross-app context plan (D42):
+- **Two slots.** The built-in engine keeps two prompts in one unified KV cache, each a
+  llama.cpp sequence. When a request's prompt costs more than 48 tokens of prefill and
+  differs from what the serving slot holds only in text read from screens, it is served
+  with the serving slot's header (in the same field: its whole header, other-apps section
+  and screen text; in another field: only its other-apps section), and its own prompt is
+  prefilled into the other slot between keystrokes, about 40 ms at a time. The next request
+  whose prompt is in that slot is served from it. Prompts that share the other-apps section
+  share its cells. Warm-ups (focus changes, new screen text, a new pool) go the same way.
+  Recurrent models keep one slot and prefill as before.
+- **Never stale text that was taken away.** The old header is used only while every
+  passage of its other-apps section is still in the pool; a pool emptied after holding text
+  (pause, lock, sleep, the setting switched off) clears the KV cache and every saved
+  context before the next request.
+- **Saved contexts.** A slot about to be reused for another prompt of 256 tokens or more is
+  copied out of the KV cache (`llama_state_seq_get_data`) into an LRU in memory and
+  restored when a request shares a longer prefix with it than with any slot: 384 MB from
+  16 GB, 128 MB from 12 GB, none under 12 GB; each is dropped 10 minutes after it was
+  saved.
+- **q8_0 KV cache** on every Mac (flash attention, which it needs, was already on: llama.cpp
+  turns it on by itself with Metal). Under 16 GB the context is now 4,096 tokens in 4,096
+  cells shared by both slots, the memory 2,048 f16 cells took, whether or not other apps'
+  text is on (switching it no longer restarts the engine there); from 16 GB each slot gets
+  its whole context (2,048, or 4,096 while other apps' text is on).
+- **Cheaper OCR of other windows**: at most 400 ms of OCR per refresh, and a refresh after a
+  typing pause doesn't capture a window it OCR'd less than a minute ago. Pictures are not
+  downscaled.
+
+**Why.** MEASUREMENTS_TODO
+
+**Cost.** COST_TODO

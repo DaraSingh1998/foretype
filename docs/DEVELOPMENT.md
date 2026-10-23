@@ -66,6 +66,9 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | Pause through the URL scheme: no work while paused, model freed, resume, timed pause ends by itself; CPU, wakeups and memory per phase (nothing typed unless `TYPE=1`) | `FORETYPE_MODEL=... [TYPE=1] [SAMPLE=20] scripts/e2e-pause.sh` | Accessibility for `build/Foretype.app` (signed with the Foretype identity), user idle |
 | Inline ghost text while typing in a chat composer with no AX caret (wrap, new line, list, new field) | `FORETYPE_MODEL=... scripts/e2e-inline-caret.sh [ce\|textarea]` | Accessibility and Screen Recording, user idle (throwaway Chrome profile; the page types into itself) |
 | Cache rollback | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache [--long]` | a model |
+| Slots, background prefill and saved contexts give what a fresh prefill gives (D47) | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache --fields 3 --saved-mb 256` | a model |
+| Typing across a change of other apps' text: served from the old header, new one ready when (D47) | `ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --switch-bench --n-ctx 4096 --other-tokens 2048` | a model |
+| What OCR of another window costs, Retina against downscaled | `mac/.build/release/Foretype --ocr-bench` | nothing |
 | Sparkle update: with automatic install off the menu line, the Settings line, the icon's dot and the update window it opens; then the silent install | `scripts/sparkle-local-test.sh`, then Check for Updates… in the printed app | nothing (`RELEASING.md`); Sparkle's window appears for a few seconds |
 | Benchmark a Mac | `scripts/bench-mac.sh [--only sw-]`, `ENERGY=1` for mJ per suggestion | the catalog models |
 | GPU energy of a command | `swiftc -O tools/energy/energy.swift -o build/ft-energy && build/ft-energy -- CMD` | nothing (CPU/DRAM: `sudo powermetrics`) |
@@ -110,11 +113,18 @@ $R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo g
 $R "$M" --corpus eval/corpus-multiwindow.jsonl --context-mode both      # other app's text + focused window (none|focused|other|both; other-screen|both-screen = Phase A's stand-in)
 $R "$M" --corpus eval/corpus-multiwindow.jsonl --context-mode both --distractors 3 [--other-recent] [--other-tokens N]
 $R "$M" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 8192 # long-context latency and memory, one n_ctx per process
-scripts/bench-context.sh                                                # both, for every installed model and n_ctx 2048/4096/8192
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --switch-bench --n-ctx 4096 --other-tokens 2048   # typing across a context change (D47)
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --chunk-bench --n-ctx 4096 --fill 0.6             # background step length vs ready time
+$R "$M" --corpus eval/corpus.jsonl --check-cache --fields 3 --saved-mb 256   # slots, background prefill, saved contexts == fresh?
+scripts/bench-context.sh                                                # all of it, for every installed model and n_ctx 2048/4096/8192
+ENGINE="--kv f16 --slots 1" scripts/bench-context.sh 2048 4096         # the engine as it was before Phase D
 ```
 
 Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`, `--n-ctx N`
-(context size, default 2048 as in the app),
+(context size, default 2048 as in the app), the engine's KV cache (D47): `--kv f16|q8_0`
+(default f16; the app uses q8_0 while other apps' text is on), `--fa on|off` (default: llama.cpp decides, on with Metal), `--slots N`
+(default 2), `--kv-cells N` (default `n_ctx` per slot; the app shares one context's cells under 16 GB),
+`--saved-mb N` (default 0),
 `--remote-model NAME` (OpenAI-compatible). `FORETYPE_DEBUG=1` prints per-request prefill
 and generation timings.
 

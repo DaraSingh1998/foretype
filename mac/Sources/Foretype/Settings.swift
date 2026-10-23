@@ -126,20 +126,21 @@ final class AppSettings {
     /// from 16 GB.
     static var otherAppsTokens: Int { memoryGB >= 16 ? 2048 : 512 }
 
-    /// The built-in engine's longest prompt (D42, D47): 4,096 tokens from 16 GB while other
-    /// apps' text is on, so its 2,048-token section fits, else 2,048; under 16 GB always 4,096,
-    /// which the q8_0 KV cache holds in the memory 2,048 f16 tokens took (`engineCache`).
-    var contextSize: Int { AppSettings.memoryGB < 16 || useOtherApps ? 4096 : 2048 }
+    /// The built-in engine's longest prompt (D42, D47): 4,096 tokens while other apps' text
+    /// is on, so its section fits, 2,048 otherwise.
+    var contextSize: Int { useOtherApps ? 4096 : 2048 }
 
-    /// The built-in engine's KV cache (D47): q8_0 (half of f16's memory), two prompts held at
-    /// once so a new header prefills in the background while the old one serves, and a few
-    /// prompts saved in memory for fields the user comes back to. From 16 GB each prompt gets
-    /// its whole context; under 16 GB the two share 4,096 cells (today's KV memory) and no
-    /// prompt is saved under 12 GB.
+    /// The built-in engine's KV cache (D47): two prompts held at once, so a new header
+    /// prefills in the background while the old one serves, and a few prompts saved in memory
+    /// for fields the user comes back to (none under 12 GB). While other apps' text is on the
+    /// cache is q8_0, half of f16's memory for the longer context (about 8 ms more per
+    /// suggestion on short prompts), otherwise f16 as before. Under 16 GB both prompts share
+    /// one context's cells, the KV memory of 2,048 f16 tokens either way; from 16 GB each
+    /// gets its own.
     var engineCache: [String: Any] {
         let gb = AppSettings.memoryGB
-        return ["kv_type": "q8_0", "slots": 2,
-                "kv_cells": gb >= 16 ? 2 * contextSize : 4096,
+        return ["kv_type": useOtherApps ? "q8_0" : "f16", "slots": 2,
+                "kv_cells": gb >= 16 ? 2 * contextSize : contextSize,
                 "saved_mb": gb >= 16 ? 384 : gb >= 12 ? 128 : 0]
     }
 

@@ -174,8 +174,9 @@ never while paused.
   KV cache (`kv_unified`), with the tokens it holds. `sync(tokens)` picks the slot (`place`),
   keeps the longest common prefix with its tokens, removes the rest (`clear_kv_cache_seq`),
   and prefills only the tail; the last prompt token is always re-decoded so its logits are
-  fresh. The KV cache is q8_0 by default (`EngineConfig::kv_type`; f16 before Phase D), with
-  flash attention as llama.cpp decides (on with Metal: it was already on before Phase D).
+  fresh. The KV cache is f16 by default and q8_0 when asked (`EngineConfig::kv_type`; the
+  macOS shell asks while other apps' text is on), with flash attention as llama.cpp decides
+  (on with Metal: it was already on before Phase D).
 - **Choosing a slot** (`place`, D47): a slot whose prompt the request extends or cuts back
   a little (it keeps three quarters, or loses at most 256 tokens) is used in place;
   otherwise the least recently used slot other than the serving one is taken: its prompt
@@ -484,7 +485,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 **CoreConfig** (`ft_engine_new`): `model_path`, `n_ctx` (2048: the longest prompt plus 64),
 `n_gpu_layers` (999), `n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`
 (`local`|`llama-server`|`openai`|`shell`), `backend_url`, `backend_model`, `backend_api_key`,
-and the built-in engine's KV cache (D47): `kv_type` (`q8_0`; or `f16`), `slots` (2),
+and the built-in engine's KV cache (D47): `kv_type` (`f16`; or `q8_0`), `slots` (2),
 `kv_cells` (0: `n_ctx` per slot), `saved_mb` (0), `flash_attn` (absent: llama.cpp decides).
 
 **Settings** (`ft_engine_configure`): `enabled`, `paused` (false), `length_words` (4), `stop_at_sentence_end`,
