@@ -31,6 +31,20 @@
 //!       rounding, which shows how much of a mismatch rate is noise rather than rollback.
 //!   ft-replay MODEL --corpus CORPUS.jsonl --token-cost
 //!       tokenizer cost: characters per token and tokens per word of the corpus text.
+//!   ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --context-mode none|focused|other|both
+//!       screen context per document from its `screen` (text of the focused window around the
+//!       field) and `context` (text from another app's window) fields: `focused` sends
+//!       `screen`, `other` sends `context`, `both` sends `context` then `screen` (the focused
+//!       window's text nearest the field, as the shell orders it). For now this goes through
+//!       screen_context, so its 1,500-character cap applies. Default `none`.
+//!   ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --ctx-bench [--n-ctx N] [--fill F] [--type N]
+//!       long-context cost: per document, a prompt whose screen section holds other text,
+//!       then the document's `context` and `screen`, filled to F of the window (default 0.9);
+//!       the first suggestion from an empty cache (prefill + generation), then the next N
+//!       keystrokes (default 40) reusing the cache; this process's resident memory and
+//!       footprint after loading and at the end. Run one process per n_ctx (peak footprint
+//!       is per process).
+//!   --n-ctx N: the context size in tokens for every mode (default 2048, as in the app).
 //!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
 //!       types with those custom instructions (corpus apps such as "Mail" stand in for their
 //!       bundle IDs); without either, with none.
@@ -63,6 +77,8 @@ struct Stats {
     accepted_chars: usize,
     shown: usize,
     model_ms: Vec<f64>,
+    /// The first model suggestion of each replay: it pays for prefilling the whole header.
+    first_ms: Vec<f64>,
     prefills: Vec<f64>,
     sources: BTreeMap<&'static str, usize>,
 }
@@ -75,6 +91,7 @@ impl Stats {
         self.accepted_chars += o.accepted_chars;
         self.shown += o.shown;
         self.model_ms.extend(&o.model_ms);
+        self.first_ms.extend(&o.first_ms);
         self.prefills.extend(&o.prefills);
         for (k, v) in &o.sources {
             *self.sources.entry(k).or_default() += v;
@@ -83,16 +100,68 @@ impl Stats {
 
     fn print(&self, label: &str) {
         println!(
-            "{label}: {} chars, keystrokes saved {:.1}%, chars/accept {:.2}, accepts {}, model p50 {:.0} ms p90 {:.0} ms, sources {:?}",
+            "{label}: {} chars, keystrokes saved {:.1}%, chars/accept {:.2}, accepts {}, model p50 {:.0} ms p90 {:.0} ms, first p50 {:.0} ms p90 {:.0} ms, sources {:?}",
             self.chars,
             100.0 * (1.0 - self.keystrokes as f64 / self.chars.max(1) as f64),
             if self.accepts > 0 { self.accepted_chars as f64 / self.accepts as f64 } else { 0.0 },
             self.accepts,
             pct(&self.model_ms, 0.5),
             pct(&self.model_ms, 0.9),
+            pct(&self.first_ms, 0.5),
+            pct(&self.first_ms, 0.9),
             self.sources
         );
     }
+}
+
+/// `--n-ctx N`, or the app's context size.
+fn n_ctx_arg() -> u32 {
+    let args: Vec<String> = std::env::args().collect();
+    args.iter()
+        .position(|a| a == "--n-ctx")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(EngineConfig::default().n_ctx)
+}
+
+/// The engine configuration for the modes that drive the engine directly.
+fn engine_config(model: &str) -> EngineConfig {
+    EngineConfig {
+        model_path: model.to_string(),
+        n_ctx: n_ctx_arg(),
+        n_gpu_layers: if std::env::args().any(|a| a == "--cpu") { 0 } else { EngineConfig::default().n_gpu_layers },
+        ..EngineConfig::default()
+    }
+}
+
+/// This process's resident size, physical footprint and peak footprint in bytes. The
+/// footprint is what Activity Monitor shows as Memory: dirty memory, Metal buffers
+/// included, but not the clean file-backed pages of the memory-mapped model, which the
+/// resident size does count.
+#[cfg(target_os = "macos")]
+fn memory() -> (u64, u64, u64) {
+    extern "C" {
+        fn proc_pid_rusage(pid: i32, flavor: i32, buffer: *mut u64) -> i32;
+    }
+    // struct rusage_info_v4 (RUSAGE_INFO_V4 = 4) as 64-bit words after the 16-byte UUID:
+    // ri_resident_size is word 8, ri_phys_footprint 9, ri_lifetime_max_phys_footprint 30.
+    let mut words = [0u64; 64];
+    // SAFETY: the buffer is larger than rusage_info_v4 (37 words).
+    let ok = unsafe { proc_pid_rusage(std::process::id() as i32, 4, words.as_mut_ptr()) } == 0;
+    if ok {
+        (words[8], words[9], words[30])
+    } else {
+        (0, 0, 0)
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn memory() -> (u64, u64, u64) {
+    (0, 0, 0)
+}
+
+fn mb(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 struct Replayer {
@@ -149,6 +218,7 @@ impl Replayer {
                 backend_model: arg("--remote-model").unwrap_or_default(),
                 // --cpu: no Metal offload (CI runners may have no usable GPU).
                 n_gpu_layers: if std::env::args().any(|a| a == "--cpu") { 0 } else { CoreConfig::default().n_gpu_layers },
+                n_ctx: n_ctx_arg(),
                 ..CoreConfig::default()
             },
             Box::new(move |ev: &Event| {
@@ -211,6 +281,9 @@ impl Replayer {
                             break;
                         }
                         if source == "model" {
+                            if st.model_ms.is_empty() {
+                                st.first_ms.push(ms.unwrap_or(0.0));
+                            }
                             st.model_ms.push(ms.unwrap_or(0.0));
                             st.prefills.push(prefilled.unwrap_or(0) as f64);
                         }
@@ -312,7 +385,7 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
         })
         .collect();
     // llama.cpp's backend can be initialised once at a time, so the two passes run in turn.
-    let cfg = EngineConfig { model_path: model.to_string(), ..EngineConfig::default() };
+    let cfg = engine_config(model);
     let opts = GenOptions::default();
     let never = || false;
     let run = |reset: bool, n_batch: u32| {
@@ -380,7 +453,7 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
 }
 
 fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
-    let mut e = Engine::load(&EngineConfig { model_path: model.to_string(), ..EngineConfig::default() }).expect("load model");
+    let mut e = Engine::load(&engine_config(model)).expect("load model");
     let opts = GenOptions { max_words: 3, ..GenOptions::default() };
     let never = || false;
     let (mut n, mut right, mut empty, mut ms) = (0usize, 0usize, 0usize, Vec::new());
@@ -445,7 +518,7 @@ fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
 /// How many tokens the model's vocabulary spends on the corpus text: scripts it encodes
 /// poorly (Devanagari in a mostly-Latin BPE) cost more decode steps per word.
 fn token_cost(model: &str, docs: &[Doc]) {
-    let e = Engine::load(&EngineConfig { model_path: model.to_string(), ..EngineConfig::default() }).expect("load model");
+    let e = Engine::load(&engine_config(model)).expect("load model");
     let bos = e.tokenize("").len();
     let (mut chars, mut words, mut tokens) = (0usize, 0usize, 0usize);
     for d in docs {
@@ -461,12 +534,121 @@ fn token_cost(model: &str, docs: &[Doc]) {
     );
 }
 
+/// What a long screen section costs: the first suggestion with the whole prompt to prefill,
+/// the keystrokes after it, and memory, at one context size (`--n-ctx`).
+fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
+    let (rss0, foot0, _) = memory();
+    let cfg = engine_config(model);
+    let mut e = Engine::load(&cfg).expect("load model");
+    let (rss_load, foot_load, _) = memory();
+    let target = ((cfg.n_ctx as f64 * fill) as usize).min(cfg.n_ctx as usize - 64 - type_chars - 8);
+    // Other text to fill the window with: every document's context and text, repeated.
+    let pool: String = docs.iter().map(|d| format!("{}\n{}\n", d.context, d.text)).collect::<Vec<_>>().join("\n");
+    let opts = GenOptions::default();
+    let never = || false;
+    let (mut prompt_tokens, mut first, mut prefill, mut tok_s, mut keys, mut decode) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (k, d) in docs.iter().enumerate() {
+        let app = app_of(&d.header);
+        let chars: Vec<char> = d.text.chars().collect();
+        let start = 40.min(chars.len());
+        let prompt_for = |filler: &str, typed: &str| {
+            let mut p = context::build(
+                &ContextInput {
+                    app_name: &app,
+                    window_title: "",
+                    url: "",
+                    instructions: "",
+                    writer: "",
+                    screen_context: "",
+                    examples: &[],
+                    text_before: typed,
+                },
+                1600,
+            );
+            // The header's screen section without its 1,500-character cap.
+            let screen: Vec<&str> = [filler, d.context.as_str(), d.screen.as_str()]
+                .iter()
+                .flat_map(|t| t.lines())
+                .map(str::trim)
+                .filter(|l| !l.is_empty() && !l.starts_with('['))
+                .collect();
+            p.prefix = format!("[Text visible on screen]\n{}\n[End of screen text]\n\n{}", screen.join("\n"), p.prefix);
+            p
+        };
+        // Filler length for `target` tokens, from a different place in the pool per document.
+        let rotated: String = pool.chars().cycle().skip(k * 997).take(cfg.n_ctx as usize * 8).collect();
+        let typed0: String = chars[..start].iter().collect();
+        let count = |n: usize| {
+            let filler: String = rotated.chars().take(n).collect();
+            e.tokenize(&prompt_for(&filler, &typed0).prefix).len()
+        };
+        let base = count(0);
+        let want = target.saturating_sub(base);
+        let mut n = want * 4;
+        for _ in 0..8 {
+            let t = count(n).saturating_sub(base);
+            if t <= want && t + 24 >= want {
+                break;
+            }
+            n = (n as f64 * want as f64 / t.max(1) as f64 * 0.995) as usize;
+        }
+        let filler: String = rotated.chars().take(n).collect();
+        e.reset();
+        let c = e.complete(&prompt_for(&filler, &typed0), &opts, &never).expect("complete");
+        prompt_tokens.push(c.prompt_tokens as f64);
+        first.push(c.total_ms);
+        prefill.push(c.prefill_ms);
+        tok_s.push(c.prefilled_tokens as f64 / (c.prefill_ms / 1000.0).max(1e-6));
+        if c.generated_tokens > 0 {
+            decode.push((c.total_ms - c.prefill_ms) / c.generated_tokens as f64);
+        }
+        for i in start..(start + type_chars).min(chars.len()) {
+            let typed: String = chars[..=i].iter().collect();
+            let c = e.complete(&prompt_for(&filler, &typed), &opts, &never).expect("complete");
+            keys.push(c.total_ms);
+        }
+    }
+    let (rss_end, foot_end, peak) = memory();
+    println!(
+        "ctx-bench n_ctx {}: {} docs, prompt p50 {:.0} tokens, first suggestion p50 {:.0} ms p90 {:.0} ms, prefill p50 {:.0} ms p90 {:.0} ms ({:.0} tok/s), keystrokes p50 {:.0} ms p90 {:.0} ms, decode {:.1} ms/token",
+        cfg.n_ctx,
+        docs.len(),
+        pct(&prompt_tokens, 0.5),
+        pct(&first, 0.5),
+        pct(&first, 0.9),
+        pct(&prefill, 0.5),
+        pct(&prefill, 0.9),
+        pct(&tok_s, 0.5),
+        pct(&keys, 0.5),
+        pct(&keys, 0.9),
+        pct(&decode, 0.5)
+    );
+    println!(
+        "memory n_ctx {}: before load resident {:.0} MB footprint {:.0} MB; loaded resident {:.0} MB footprint {:.0} MB; end resident {:.0} MB footprint {:.0} MB; peak footprint {:.0} MB",
+        cfg.n_ctx,
+        mb(rss0),
+        mb(foot0),
+        mb(rss_load),
+        mb(foot_load),
+        mb(rss_end),
+        mb(foot_end),
+        mb(peak)
+    );
+}
+
 #[derive(serde::Deserialize, Clone)]
 struct Doc {
     id: String,
     #[serde(default)]
     header: String,
     text: String,
+    /// Text of another app's window the writer is looking at (eval/corpus-multiwindow.jsonl).
+    #[serde(default)]
+    context: String,
+    /// Text of the focused window around the field.
+    #[serde(default)]
+    screen: String,
 }
 
 /// Bundle IDs of the corpus's named apps, for per-app instructions.
@@ -537,6 +719,11 @@ fn main() {
         if has("--token-cost") {
             return token_cost(&model, &docs);
         }
+        if has("--ctx-bench") {
+            let fill = flag("--fill").and_then(|s| s.parse().ok()).unwrap_or(0.9);
+            let type_chars = flag("--type").and_then(|s| s.parse().ok()).unwrap_or(40);
+            return ctx_bench(&model, &docs, fill, type_chars);
+        }
         if has("--check-cache") {
             let n_docs = flag("--docs").and_then(|s| s.parse().ok()).unwrap_or(6);
             let n_chars = flag("--chars").and_then(|s| s.parse().ok()).unwrap_or(250);
@@ -545,11 +732,20 @@ fn main() {
         }
         let mut r = Replayer::new(&model, settings.clone(), has("-v"));
         r.think = Duration::from_millis(flag("--think").and_then(|s| s.parse().ok()).unwrap_or(0));
+        let context_mode = flag("--context-mode").unwrap_or_else(|| "none".into());
+        let screen_for = |d: &Doc| match context_mode.as_str() {
+            "none" => String::new(),
+            "focused" => d.screen.clone(),
+            "other" => d.context.clone(),
+            "both" => format!("{}\n\n{}", d.context, d.screen),
+            m => panic!("--context-mode {m}: expected none, focused, other or both"),
+        };
         let snap_for = |i: usize, d: &Doc| Snapshot {
             field_key: 1000 + i as u64,
             bundle_id: app_of(&d.header),
             app_name: app_of(&d.header),
             role: "AXTextArea".into(),
+            screen_context: screen_for(d),
             ..Snapshot::default()
         };
         if has("--personal-loo") {

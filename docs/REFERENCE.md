@@ -61,6 +61,10 @@ away right after recognition and the text is only kept in memory.
 - It needs the Screen Recording permission (asked once by `Foretype.app`; toggle under **Use
   Screen Context** in the menu). Without the permission everything else still works.
 - Capture is skipped for secure fields, secure input, and apps where suggestions are off.
+- Only the focused window is read, on whichever display it is, at that display's
+  resolution. Other apps' windows (a document or a web page beside the email) are not read
+  yet; that is planned as a separate, opt-in setting (`docs/ROADMAP.md`, "Cross-app
+  context").
 - It refreshes when a new field gets focus and after a 1.5 s typing pause at most every 15 s,
   never per keystroke, because new screen text changes the prompt header and costs a full
   prefill. The new header is prefilled in the background as soon as OCR finishes.

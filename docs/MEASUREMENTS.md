@@ -764,6 +764,144 @@ don't depend on timing.
   tokens per Devanagari word against 1.64 for Hinglish (नहीं 5 tokens, "nahi" 2), and a
   suggestion is limited in words; gemma-4-E2B spends 1.31 (`llama-tokenize`).
 
+## Cross-app context baseline (2026-10-23)
+
+Phase A of the cross-app context plan (`docs/ROADMAP.md`, D42), before any reading of other
+apps is built: what text from another app's window is worth, and what a longer context
+costs. `scripts/bench-context.sh` at c9763a9 on `feat/context-baseline`, one run after
+another with no other `ft-replay` on the GPU (the script checks), on AC power, every
+catalog model (Qwen3 files from the Phase 0 folder, sha256 equal to the catalog's; nothing
+downloaded).
+
+### Keystrokes saved with another app's text
+
+`eval/corpus-multiwindow.jsonl` (21 documents, 9,783 characters; `eval/README.md`), built-in
+engine, Metal, n_ctx 2048, 4 words, greedy, prefetch on, instant simulated user, no
+instructions. The context goes in as screen text (`--context-mode`): *focused* is the
+focused window's own text (the email being answered, the chat so far; 24–252 characters),
+*other* the other app's (272–687 characters), *both* the other app's then the focused
+window's, under today's 1,500-character cap. *First* is each document's first model
+suggestion, which prefills the whole header.
+
+| Model | None | Focused | Other | Both | Chars per Tab, none → both | Model p50 / p90, none → both | First p50 / p90: none, focused, both |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Qwen3-0.6B Q8_0 | 34.7% | 38.3% | 56.8% | **58.4%** | 3.59 → 4.63 | 54 / 90 → 53 / 84 ms | 40 / 64, 55 / 82, 88 / 111 ms |
+| Qwen3-1.7B Q4_K_M (default) | 38.7% | 41.6% | 59.5% | **60.9%** | 3.75 → 4.73 | 86 / 140 → 79 / 122 ms | 77 / 114, 103 / 140, 201 / 227 ms |
+| Gemma 4 E2B Q4_K_M | 40.7% | 43.7% | 59.1% | **60.9%** | 3.77 → 4.72 | 120 / 192 → 118 / 193 ms | 90 / 120, 147 / 234, 300 / 324 ms |
+| Qwen3-4B Q4_K_M | 40.7% | 44.8% | 61.0% | **62.5%** | 3.85 → 4.80 | 155 / 242 → 187 / 304 ms | 86 / 171, 201 / 272, 398 / 497 ms |
+
+- The other app's text is worth about 20 points on every model (focused → both: +20.1,
+  +19.3, +17.2, +17.7), five times what the focused window adds on this corpus. With it the
+  smallest model (58.4%) beats the largest without it (44.8%).
+- The gain is in the words that come from the other window (figures, dates, names, steps):
+  characters per Tab rise by about one, and the model is called less (1.7B: 2,749 → 1,320
+  calls) because more of the text is typed through.
+- Per-keystroke latency doesn't change at this size (the context sits in the cached
+  prefix); the first suggestion does, by the prefill of 110–290 more tokens (median 150,
+  Qwen3 tokenizer; 1.7B: 77 → 201 ms p50). In the app the shell prefills a new header as soon as OCR finishes (`warm`),
+  so typing usually doesn't wait for it.
+- Limits: a best case, like the chat-reply sample of Phase 1+: every document was written
+  to quote its other window, the context is clean text (OCR would add noise; Accessibility
+  text would be close to this), and it is exactly the right window, so relevance ranking
+  (Phase C) has nothing to get wrong yet. One pass per cell; earlier corpora repeated
+  within about 0.3 points.
+
+### Longer context: latency and memory (`ft-replay --ctx-bench`)
+
+One process per model and n_ctx. For each of the 21 documents, a prompt whose screen
+section holds other corpus text, then the document's `context` and `screen`, filled to 90%
+of the window (prompt p50 1,835 / 3,671 / 7,336 tokens); 40 characters of the reply typed
+before the first suggestion, from an empty cache; then the next 40 keystrokes reusing the
+cache. Memory is this process's (`proc_pid_rusage`): *resident* counts the memory-mapped
+model pages it touched, *footprint* (Activity Monitor's Memory) is dirty memory: KV cache,
+compute buffers, Metal allocations.
+
+| Model | n_ctx | First suggestion p50 / p90 | Prompt ÷ first | Keystrokes p50 / p90 | Resident, loaded | Footprint, loaded / peak |
+|---|---:|---:|---:|---:|---:|---:|
+| Qwen3-0.6B | 2048 | 646 / 683 ms | 2,840 tok/s | 53 / 100 ms | 968 MB | 386 / 416 MB |
+| | 4096 | 1,521 / 1,554 ms | 2,410 tok/s | 64 / 115 ms | 1,192 MB | 610 / 644 MB |
+| | 8192 | 4,109 / 4,154 ms | 1,790 tok/s | 91 / 161 ms | 1,640 MB | 1,058 / 1,100 MB |
+| Qwen3-1.7B | 2048 | 1,544 / 1,557 ms | 1,190 tok/s | 75 / 136 ms | 1,415 MB | 386 / 429 MB |
+| | 4096 | 3,398 / 3,437 ms | 1,080 tok/s | 87 / 157 ms | 1,637 MB | 609 / 656 MB |
+| | 8192 | 7,612 / 7,777 ms | 960 tok/s | 109 / 190 ms | 2,086 MB | 1,058 / 1,113 MB |
+| Gemma 4 E2B | 2048 | 2,193 / 2,306 ms | 840 tok/s | 112 / 193 ms | 3,297 MB | 264 / 335 MB |
+| | 4096 | 4,631 / 5,211 ms | 790 tok/s | 122 / 281 ms | 3,403 MB | 315 / 381 MB |
+| | 8192 | 9,463 / 10,037 ms | 780 tok/s | 112 / 199 ms | 3,487 MB | 387 / 470 MB |
+| Qwen3-4B | 2048 | 3,965 / 4,372 ms | 460 tok/s | 156 / 304 ms | 2,734 MB | 449 / 506 MB |
+| | 4096 | 8,614 / 9,628 ms | 430 tok/s | 172 / 317 ms | 3,016 MB | 742 / 803 MB |
+| | 8192 | 19,936 / 20,350 ms | 370 tok/s | 206 / 343 ms | 3,455 MB | 1,303 / 1,374 MB |
+
+- **A full window is far too slow to wait for.** The first suggestion after a context change
+  takes 0.6–20 s with a full window; prefill slows as the prompt grows (attention is
+  quadratic without flash attention: 1.7B 1,190 → 960 tok/s). The header this corpus fills
+  (up to 1,450 characters of screen text, at most 290 tokens) costs 90–400 ms (*First*
+  above). A bigger context section is
+  only usable with the prefill off the typing path (Phase D: prefill in the background on a
+  second sequence, keep KV states per context) and a token budget well under the window.
+- **Typing against a long context gets slower too**, because every decode step attends to
+  the whole cache: keystroke p50 from 2048 to 8192 rises 72% on Qwen3-0.6B, 45% on 1.7B and
+  32% on 4B. Gemma 4 E2B stays flat (112 ms): most of its layers use a 512-token sliding
+  window, so only its few global layers see the whole context.
+- **Memory grows with n_ctx exactly as the f16 KV cache predicts**: 112 KB per token for
+  Qwen3-0.6B and 1.7B (28 layers × 8 KV heads × 128 × K and V × 2 bytes), so +224 MB at
+  4096 and +672 MB at 8192 over 2048; 144 KB per token for Qwen3-4B (36 layers): +293 and
+  +854 MB. Gemma 4 E2B grows only 51 and 123 MB (about 25 KB per token). A q8_0 KV cache
+  (Phase D) would halve the growth.
+- **The 8 GB question.** An 8 GB Mac gets Qwen3-0.6B by default and may choose Qwen3-1.7B;
+  Gemma 4 E2B and Qwen3-4B need 16 GB (`models/catalog.json`). Engine memory for those two
+  (resident, which includes the mapped weights; the Swift shell and OCR come on top):
+
+  | n_ctx | Qwen3-0.6B | Qwen3-1.7B | Context it holds (about 4 characters per token, minus the body) |
+  |---:|---:|---:|---|
+  | 2048 (today) | 0.97 GB | 1.42 GB | ~1,500 characters of screen text (today's cap) plus the body |
+  | 4096 | 1.19 GB (+0.22) | 1.64 GB (+0.22) | ~8,000 characters more |
+  | 8192 | 1.64 GB (+0.67) | 2.09 GB (+0.67) | ~24,000 characters more |
+
+  At 4096 the feature costs an 8 GB Mac about 0.22 GB more than today (0.11 GB with a q8_0
+  KV cache); at 8192, 0.67 GB (0.34 GB). The pool's text itself is small (10 minutes of
+  windows: tens of kilobytes). OCR of more windows costs CPU and energy, not much memory.
+  Decided (D42): 8 GB Macs get the feature with Accessibility text only, a 512-token
+  other-app section and n_ctx kept at 2048, so no extra KV memory; with a q8_0 KV cache
+  (Phase D) n_ctx 4096 would cost what 2048 costs today.
+- `prefill_ms` as the engine reports it stops when the last batch is submitted: llama.cpp
+  runs that batch on the GPU asynchronously and waits for it at the first logits read, so
+  its time shows up as generation (first suggestion minus prefill: 4B at 2048, 741 ms). The
+  engine's 300 ms generation deadline therefore starts before a cold prefill has finished
+  and can cut the first suggestion after a long prefill short (1.7B at 2048 and 8192: the
+  generation phase ran into the deadline). The table uses the first suggestion's total time
+  for that reason. Phase D: call `LlamaContext::synchronize()` at the end of the prefill.
+- The app itself, measured on 2026-10-22 (*Pause and power*), was 3.3–3.4 GB resident with
+  Gemma 4 E2B, in line with this table's 3.3 GB for the engine alone.
+
+```bash
+scripts/bench-context.sh            # every installed catalog model, n_ctx 2048 4096 8192
+R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/Models"
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 4096
+```
+
+### A second display above the main one (by log and screenshot)
+
+The developer's Mac: the built-in Retina display (1512×982 points, 2x) is the main one, a
+BenQ GW2490 (1920×1080, 1x) is arranged above it (global y −1080 to 0). Qwen3-1.7B, with
+`FORETYPE_ONLY_APPS`, on `feat/context-baseline`; `--geometry-selftest` converts both
+displays' global frames to exactly their `NSScreen` frames. The log line
+`show=… at X,Y` is the panel's frame as AppKit placed it.
+
+| Check | Result |
+|---|---|
+| TextEdit on the BenQ (`e2e-textedit.sh`, `WINDOW_BOUNDS=100,-900,1000,-450`) | 60 of 60 suggestions inline, the panel's origin equal to the caret's every time (caret 865,−674 → panel at 865,−674); Tab, accept-all, Esc and Option+Tab as on the main display |
+| Screen context of that window | Before: the window was captured at 2x. After it moved to the BenQ, the capture found the window by its frame at focus time and took TextEdit's empty Untitled window on the main display instead (81 characters of toolbar and ruler); right after, the model suggested `[End of screen t…`, echoing the header's marker. After the fixes: the moved window at 1x, 900×450 px |
+| Chrome composer on the BenQ (`e2e-inline-caret.sh ce`, `WINDOW_POS=100,-950`, pixel caret) | Caret found by its blink in 176 ms at 1x (width scale 1.00), then by single captures in 39–59 ms; 199 suggestions inline over three segments (wrap 109, new line 72, list 29; the run stopped there when the keyboard or mouse was used); screen context 1000×600 px at 1x |
+| Mirror card on the BenQ | Above the field: panel at 157,−791, field top −762. The old rule (y < 0 → below) would have put it under the field |
+
+In one of the two runs with the new window matching, the moved window was missing from
+ScreenCaptureKit's list at the moment of capture and the fallback still took the nearest
+window; with a field known, the capture now skips instead. Not checked by eye: a
+full-screen app on the BenQ with this branch (the full-screen capture of D43 was checked
+in WhatsApp Web, next section), a window across both
+displays (covered by the self-test's display matching), and switching Spaces.
+
 ## WhatsApp Web in full-screen Chrome (2026-10-23)
 
 Report: in WhatsApp Web the suggestion never showed after the caret, only in a card

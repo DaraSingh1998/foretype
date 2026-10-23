@@ -43,6 +43,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | OCR + row assembly | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
 | Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
+| Screen geometry across displays (global and Cocoa coordinates, displays left of, above and below the primary, mixed 1x/2x scales, cards at a display's top edge) | `mac/.build/release/Foretype --geometry-selftest` | nothing (made-up layouts; no second display) |
 | About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
 | Pause and power rules (decisions, Resume Anyway, migration, saved pause) | `mac/.build/release/Foretype --pause-selftest` | nothing (a defaults suite of its own) |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
@@ -101,9 +102,13 @@ $R "$M" --corpus eval/corpus.jsonl --instructions notes.json            # other 
 swiftc -O tools/spell-map/main.swift mac/Sources/Foretype/Speller.swift -o build/spell-map
 build/spell-map eval/corpus.jsonl > build/spell-map.json                # the app's spell verdicts
 $R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo gate + autocorrect
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --context-mode both      # other app's text + focused window (none|focused|other|both)
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 8192 # long-context latency and memory, one n_ctx per process
+scripts/bench-context.sh                                                # both, for every installed model and n_ctx 2048/4096/8192
 ```
 
-Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`,
+Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`, `--n-ctx N`
+(context size, default 2048 as in the app),
 `--remote-model NAME` (OpenAI-compatible). `FORETYPE_DEBUG=1` prints per-request prefill
 and generation timings.
 
@@ -112,7 +117,8 @@ so its numbers compare with the older ones in `docs/MEASUREMENTS.md`; the app it
 with the defaults (`core/data/default-instructions.json`). With per-app notes, the corpus
 apps (`Mail`, `Slack`, `Teams`, `Messages`, `Notes`, `a document`) stand in for their bundle IDs.
 
-Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, and
+Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, the
+first suggestion of each document p50/p90 (it prefills the whole header), and
 how many keystrokes were served by `model`, `typeThrough`, `cache`, `details` or `policy`.
 With `--details`, the simulated user takes a fill other than a name only if all of it is
 what comes next (one Tab inserts all of it).
@@ -213,7 +219,10 @@ aborts after 2 s.
   `build/e2e/result.txt` and `build/e2e/foretype.log`. Expected document tail:
   `My suggestion is that we do the first part Thanks again for the notes, Let me\t know\t`
   with the 1.7B model (greedy decoding is deterministic). `FORETYPE_INSERTION=paste`
-  repeats it through paste insertion.
+  repeats it through paste insertion. `WINDOW_BOUNDS=LEFT,TOP,RIGHT,BOTTOM` (global points)
+  moves the document window, e.g. `100,-900,1000,-450` onto a display above the main one;
+  the log's `show=inline at X,Y` should equal `caret=… X,Y`. The screenshots use TextEdit's
+  `window 1`, which can be the empty Untitled window TextEdit opens at launch; trust the log.
 - `e2e-terminal.sh`: opens a Terminal window from a `.command` file running `tee` (nothing
   reaches a shell; every entered line lands in `build/e2e-terminal/typed-lines.txt`).
   Checks: no suggestion on an ordinary line, the force hotkey (current line only), agent
@@ -272,7 +281,7 @@ or `N frames of WxH px at Sx, P px changed, bars a/b/c/d/e (all/thin/filled/clea
 with the first sizes in points: how many changed-pixel bars survived each filter (a caret
 needs exactly one at the end; typing during the captures leaves many, a caret that never
 blinks none). `capture: APP window N only through its display (full screen)` marks a window
-that is captured through its display (D42); `rev N pixel caret moved the suggestion: show=...`
+that is captured through its display (D43); `rev N pixel caret moved the suggestion: show=...`
 when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's own logs.
 
 ## macOS permissions and signing (TCC)
@@ -331,7 +340,7 @@ when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps lla
   history key when personalization is on in the binary's defaults domain. The binary blocks
   in `Keychain.get` until someone answers. Run development binaries with
   `FORETYPE_ABOUT_YOU='{}'` (empty details, the store untouched), as `e2e-inline-caret.sh`
-  does, and never type the password into a prompt a test raised.
+  and `e2e-textedit.sh` do, and never type the password into a prompt a test raised.
 - On macOS 27, system-wide `AXFocusedApplication` always fails (`cannotComplete`); the
   tracker uses `NSWorkspace.frontmostApplication` and `AXUIElementCreateApplication(pid)`.
 

@@ -489,7 +489,7 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   overlay are never in it), converts it to bytes and drops the image. `WindowCapture` makes
   the capture: a desktop-independent window filter, or for a window in full screen (which
   that filter can't capture: error -3811) its display with only that window included,
-  remembered per window (D42). Two detectors share a
+  remembered per window (D43). Two detectors share a
   bar finder (column runs of set pixels merged into bars ≤ 3.5 pt wide, ≥ 3× as tall as
   wide, ≥ 75% filled, clear columns either side):
   - *blink*: captures every 120 ms for up to 1.3 s and keeps each pixel's colour range;
@@ -531,8 +531,7 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   before the field's right edge in the host font, gray; when not even the first word fits
   (the line is about to wrap), the first word runs past the edge. Without a caret rect (AX
   gave none and the pixel locator has no position yet) it shows a "mirror card"
-  (⇥ suggestion) above the field, or below it when above would leave the top of the field's
-  display (on a display arranged above the main one every y is negative). `advance` shifts the ghost after an accept until the host reports the new
+  (⇥ suggestion) above the field, or below it when above would leave the field's display. `advance` shifts the ghost after an accept until the host reports the new
   caret. Mid-line suggestions show as a card just under the caret (inline ghost text would
   overlap the rest of the line); `showHint` shows a tip card for 8 s without turning on the
   key tap.
@@ -571,12 +570,26 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   context is off while saving energy. Per-app pauses (`snooze`) end at a time or, with
   `Date.distantFuture`, when the app's last process quits.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
-  every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
+  every 15 s: `SCShareableContent` → the focused window (the app's window holding the
+  field's centre, `ScreenGeometry.windowIndex`; none if no window does) →
   `WindowCapture` (as the pixel caret, so full-screen windows work) → Vision `.accurate` OCR → lines grouped into rows,
   rows inside the field dropped, rows nearest the field kept (rows above first, budget
   1,400 characters) in reading order. The new text is prefilled with `warm` right away.
   Skipped for secure input, secure fields and apps where suggestions are off. The image is
-  discarded after OCR.
+  discarded after OCR. The capture scale is the window's own display's
+  (`SCContentFilter.pointPixelScale`), so a window on a 1x display isn't captured at 2x.
+- **`ScreenGeometry.swift`**: the two coordinate spaces as pure functions. Global (Quartz)
+  coordinates have their origin at the primary display's top-left with y down; AX
+  positions, `CGDisplayBounds` and ScreenCaptureKit's `SCWindow.frame` use them. Cocoa
+  coordinates (`NSScreen`, `NSWindow`) have it at the primary's bottom-left with y up. A
+  display left of or above the primary has negative global x or y. `cocoaRect(fromGlobal:)`
+  flips around the primary's height (the ghost panel's frame), `displayIndex(for:in:)` is
+  the display showing most of a rect (or the nearest), `scale(for:in:)` its backing scale,
+  `cardY` puts a card above a field unless that leaves the field's display, and
+  `windowIndex` picks the window holding a field (the tracker reads a window's frame on
+  focus, and again only when the field's frame changes, so it can lag a move). Never
+  compare a global rect with an `NSScreen` frame. `--geometry-selftest` checks them on
+  made-up layouts (displays left, above, below and right of the primary, 1x and 2x).
 - **`Hotkeys.swift`**: Carbon `RegisterEventHotKey`: Ctrl + key above Tab forces
   suggestions on the current line; Ctrl+Opt+Cmd + key above Tab pauses the app for 5
   minutes. Both are ignored while paused.
@@ -698,6 +711,34 @@ shell), catalog model names and licenses, emoji shortcodes, Keychain item labels
 data), Google Docs' and Chrome's own setting names in the tip cards.
 `scripts/check-localization.py` checks that every key in the code has a translation with
 the same placeholders.
+
+## Cross-app context: hook points for Phase B
+
+The collector of `docs/ROADMAP.md` ("Cross-app context", D42) reads windows of apps other
+than the focused one. Where it must plug in:
+
+- **Which apps may be read.** `AppSettings.onlyAppsAllow(pid:bundleId:)` is today's gate
+  for the focused app (`FocusTracker` never reads or primes an app it rejects, and
+  `Controller.screenContextAllowed` checks it before OCR). The collector must call it for
+  every candidate window's owner (`SCWindow.owningApplication` pid and bundle ID, or the AX
+  application's pid) *before* reading any text, by AX or OCR, so that with
+  `FORETYPE_ONLY_APPS` set a development build reads nothing outside the listed apps,
+  including as context. The core's `only_apps` can't do this: it only filters snapshots by
+  bundle ID (and is empty when the list holds a pid), and context text would reach it
+  already read. A test that needs a source app lists it too
+  (`FORETYPE_ONLY_APPS=com.apple.mail,com.microsoft.Word`).
+- In the same place: the never-read list (password managers by default), the user's
+  per-app opt-outs and disabled apps, secure input (`IsSecureEventInputEnabled`) and
+  Foretype's own windows; the feature's setting; the backend (no reading at all for
+  `llama-server` and `openai`); and the Mac's memory (under 12 GB, Accessibility text only,
+  never OCR of other windows; the core keeps the section to 512 tokens there, D42).
+- **Coordinates.** Windows on every display come from `SCShareableContent` in global
+  coordinates; use `ScreenGeometry` for anything that meets `NSScreen` or `NSWindow`.
+  `onScreenWindowsOnly` lists each display's current Space only, so windows on other Spaces
+  (and minimized ones) are invisible: the recently-viewed pool has to keep what was read
+  while they were on screen.
+- **Lifetime.** `ScreenContextProvider.reset()` (pause) is where the pool is cleared too,
+  along with screen lock and sleep (`SessionMonitor`).
 
 ## Data and privacy
 

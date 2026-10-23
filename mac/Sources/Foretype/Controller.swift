@@ -329,7 +329,8 @@ final class Controller {
                 let lineLength = snap.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last?.utf16.count ?? 0
                 let field = snap.frame.map { " field=\(Int($0.minY))+\(Int($0.height))" } ?? ""
                 let font = snap.font.map { " font=\($0.fontName) \(String(format: "%g", $0.pointSize))" } ?? ""
-                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field)\(font) show=\(panel.mode) -> \(what)")
+                let at = panel.globalFrame.map { " at \(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? ""
+                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field)\(font) show=\(panel.mode)\(at) -> \(what)")
             }
         case let .status(state, detail):
             Log.debug("engine \(state): \(detail)")

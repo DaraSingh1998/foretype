@@ -56,9 +56,14 @@ final class GhostPanel {
 
     var isVisible: Bool { panel.isVisible }
 
+    /// Where the panel is on screen, in global coordinates (as AppKit placed it), for the
+    /// debug log; nil while hidden.
+    var globalFrame: CGRect? {
+        panel.isVisible ? ScreenGeometry.globalRect(fromCocoa: panel.frame, primaryHeight: ScreenGeometry.primaryHeight()) : nil
+    }
+
     private static func cocoaRect(fromAX r: CGRect) -> CGRect {
-        let primaryHeight = NSScreen.screens.first?.frame.height ?? 0
-        return CGRect(x: r.minX, y: primaryHeight - r.maxY, width: r.width, height: r.height)
+        ScreenGeometry.cocoaRect(fromGlobal: r, primaryHeight: ScreenGeometry.primaryHeight())
     }
 
     private static func attributed(_ text: String, font: NSFont, card: Bool, tag: String? = nil) -> NSAttributedString {
@@ -137,8 +142,11 @@ final class GhostPanel {
         let size = attr.size()
         let w = ceil(size.width) + view.padding.width * 2
         let h = ceil(size.height) + view.padding.height * 2
-        var axRect = CGRect(x: anchorRect.minX, y: anchorRect.minY - h - 4, width: w, height: h)
-        if axRect.minY < GhostPanel.displayTop(anchorRect) { axRect.origin.y = anchorRect.maxY + 4 }
+        // Above the field unless that leaves its display (which may be above the primary,
+        // where every y is negative).
+        let display = ScreenGeometry.display(for: anchorRect, in: displayBounds())
+        let axRect = CGRect(x: anchorRect.minX, y: ScreenGeometry.cardY(nextTo: anchorRect, height: h, gap: 4, display: display),
+                            width: w, height: h)
         view.card = true
         view.text = attr
         anchor = nil
@@ -155,7 +163,9 @@ final class GhostPanel {
         let w = ceil(size.width) + view.padding.width * 2
         let h = ceil(size.height) + view.padding.height * 2
         var axRect = CGRect(x: rect.minX, y: rect.minY - h - 4, width: w, height: h)
-        if axRect.minY < GhostPanel.displayTop(rect) { axRect.origin.y = rect.minY + 8 }
+        if let display = ScreenGeometry.display(for: rect, in: displayBounds()), axRect.minY < display.minY {
+            axRect.origin.y = rect.minY + 8
+        }
         view.card = true
         view.text = attr
         anchor = nil
@@ -166,14 +176,6 @@ final class GhostPanel {
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
             if let self, self.hintGeneration == gen { self.hide() }
         }
-    }
-
-    /// The top of the display showing `rect`, in AX coordinates: negative for a display
-    /// arranged above the main one, so "above the screen" is not "y < 0".
-    private static func displayTop(_ rect: CGRect) -> CGFloat {
-        let displays = displayBounds()
-        let centre = CGPoint(x: rect.midX, y: rect.midY)
-        return (displays.first { $0.contains(centre) } ?? displays.first { $0.intersects(rect) })?.minY ?? 0
     }
 
     /// Bumped by every show, so an expiring hint never hides a newer suggestion.

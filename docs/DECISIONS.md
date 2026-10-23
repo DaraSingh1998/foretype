@@ -539,7 +539,74 @@ doesn't read as Hinglish; until a field has two listed words, unlisted spellings
 judged by the checker. A typo the user kept once in a field isn't offered a fix again there.
 The list is maintained by hand.
 
-## D42. Full-screen windows are captured through their display (2026-10-23)
+## D42. Context from other apps: opt-in, kept 10 minutes in memory, never for a server (user decisions, 2026-10-23)
+
+**Decision.** Foretype will read text from apps other than the one being typed in (a
+document, slides or a web page open beside the email being written) and from every
+display, built in five phases (`docs/ROADMAP.md`, "Cross-app context"). The user decided:
+- **Opt-in, with a setting of its own**, separate from Use Screen Context, which keeps
+  reading only the focused window as today (D13).
+- **Recently viewed windows are kept 10 minutes**, in memory only, and forgotten on pause,
+  screen lock and sleep (the same events that pause Foretype, D39). Nothing is written to
+  disk.
+- **The default never-read list is password managers only.** Users can add any app; the
+  existing per-app "suggestions off" and secure-input rules still apply on top.
+- **Off entirely with a remote or bring-your-own server backend** (llama-server,
+  OpenAI-compatible): text from other apps is only ever given to the on-device model.
+- **8 GB Macs get it with a small budget** (decided after Phase A: "yes, allow 8 GB Macs
+  with small budget"). On Macs under 12 GB of memory (the catalog's light tier,
+  `models::recommended_tier`):
+  - **Accessibility text only**: other apps' windows are never OCR'd there. The focused
+    window's OCR (Use Screen Context) is unchanged.
+  - **An other-app section of at most 512 tokens** (about 2,000 English characters),
+    against a provisional 2,048 tokens on 16 GB and up.
+  - **n_ctx stays 2048 with the f16 KV cache**, so no more KV memory than today.
+  - Once Phase D brings the q8_0 KV cache, n_ctx 4096 costs the KV memory 2048 costs today
+    (about 224 MB on Qwen3-0.6B and 1.7B); the section may then grow to 1,024 tokens if
+    Phase C shows that more passages help.
+
+**Why.** People write about what is on their other screen: figures from a spreadsheet,
+dates from a slide, steps from a help page. The focused window's OCR (D13) can't see it.
+Reading every app's text is more than people expect from an autocomplete, so it must be
+asked for, separately from the focused-window feature they may already have on. Ten
+minutes covers reading something and then switching to write about it, without building a
+record of everything seen; memory-only and clearing on lock or sleep keep it from
+outliving the session. Password managers show secrets by design, the one category that
+never helps a suggestion; anything else sensitive (banking, health, chats) is the user's
+call, and listing it by default would guess wrong for many people. Foretype's promise is
+on-device: the focused window's text already reaches a server the user configured, but
+other apps' text would send far more than the user is typing to anyone.
+Phase A measured the gain on a corpus written to quote another app's window: +17 to +20
+points of keystrokes saved on every model (Qwen3-1.7B 41.6% → 60.9%), a best case.
+The 8 GB numbers come from Phase A (`docs/MEASUREMENTS.md`, "Cross-app context baseline").
+The KV cache takes 112 KB per token on the two models an 8 GB Mac runs, so every 2,048
+tokens of window cost 0.22 GB (f16) or 0.11 GB (q8_0); keeping n_ctx at 2048 makes the
+feature free in KV memory. Today's prompt reaches about 1,100 tokens of English at most
+(1,500 characters of screen text, a 1,600-character body, two 280-character examples, 400
+characters of notes), so 512 more fit under the 1,984 the engine allows (n_ctx − 64) with
+about 370 to spare. 512 tokens prefill in about 0.2 s on Qwen3-0.6B and 0.45 s on 1.7B
+(2,840 and 1,190 tokens/s measured), short enough to finish in the background between
+switching windows and typing, and a cache of about 1,600 tokens types no slower than Phase
+A's full 2,048-token window (53 and 75 ms p50). The corpus's other-app texts are 111–286
+tokens, so 512 holds one window whole or the best passages of two. Accessibility text needs
+no Vision run per window (145–360 ms each, Phase 1+) and no Screen Recording for other
+apps.
+The 16 GB budget (n_ctx 4096, 2,048 tokens) is provisional for Phase C to tune: +0.22 GB
+of KV on Qwen3-0.6B and 1.7B (f16), +0.29 GB on 4B, +0.05 GB on Gemma 4 E2B, and 0.7–4.5 s
+of background prefill depending on the model. On every Mac the budget is counted in tokens,
+not characters, and the other-app section is trimmed first when a prompt would overflow:
+Devanagari costs Qwen3 about one token per character, so Hindi screen text alone can come
+near the window.
+**Cost.** A longer prompt header: every change to it costs a full prefill (D13; Phase A:
+1.5 s for a full 2,048-token window on Qwen3-1.7B, 7.6 s for 8,192), and the bigger context
+needs a bigger KV cache (+0.22 GB at 4,096 tokens, +0.67 GB at 8,192 for the models 8 GB
+Macs use), so Phase D (background prefill, KV state cache, quantized KV,
+flash attention, cheaper OCR) is part of the plan, not an extra. A document closed nine
+minutes ago can still shape a suggestion. The password-manager list is kept by hand
+(bundle IDs). People using a server backend don't get the feature. On 8 GB Macs, apps that
+expose no text through Accessibility contribute nothing, and 512 tokens hold about a page.
+
+## D43. Full-screen windows are captured through their display (2026-10-23)
 
 **Decision.** `WindowCapture` (pixel caret and screen context) captures a window with
 `SCContentFilter(desktopIndependentWindow:)` first. When that returns nothing it captures
