@@ -122,21 +122,27 @@ enum PreferencesSelfTest {
             print("panes written to \(dir)")
         }
 
-        // A locked writing history and locked details: their notes and Try Again still fit.
+        // A locked writing history (key unreadable, or a key that opens none of the file) and
+        // locked details: their notes and Try Again still fit.
         host.settings.historyLocked = true
         host.aboutYouLocked = true
-        for (i, pane) in prefs.panes.enumerated() where pane is PersonalizationPane || pane is AboutYouPane {
-            pane.refresh()
-            tabs.selectedTabViewItemIndex = i
-            tabs.fit(animated: false)
-            let name = pane.title ?? "?"
-            print(String(format: "%@ (locked): %.0f pt", name, pane.contentHeight))
-            check(inside(screen) && !pane.scrolls, "\(name) (locked): scrolls on a 13-inch MacBook Air")
-            if let dir {
-                let path = "\(dir)/\(i + 1)-\(name.replacingOccurrences(of: " ", with: "-"))-locked.png"
-                check((try? pane.png(dark: false)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+        for mismatch in [false, true] {
+            host.settings.historyKeyMismatch = mismatch
+            let state = mismatch ? "locked, other key" : "locked"
+            for (i, pane) in prefs.panes.enumerated() where pane is PersonalizationPane || (!mismatch && pane is AboutYouPane) {
+                pane.refresh()
+                tabs.selectedTabViewItemIndex = i
+                tabs.fit(animated: false)
+                let name = pane.title ?? "?"
+                print(String(format: "%@ (%@): %.0f pt", name, state, pane.contentHeight))
+                check(inside(screen) && !pane.scrolls, "\(name) (\(state)): scrolls on a 13-inch MacBook Air")
+                if let dir {
+                    let path = "\(dir)/\(i + 1)-\(name.replacingOccurrences(of: " ", with: "-"))-\(mismatch ? "locked-key" : "locked").png"
+                    check((try? pane.png(dark: false)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+                }
             }
         }
+        host.settings.historyKeyMismatch = false
         host.settings.historyLocked = false
         host.aboutYouLocked = false
         print(failures == 0 ? "settings self-test passed" : "settings self-test: \(failures) failed")

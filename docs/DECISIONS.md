@@ -658,3 +658,24 @@ run and the server fields say the saved key can't be read; the fields are never 
 and only a key the user types is written (in place), so neither a failed read nor an empty
 field can blank or delete it. The fields remember the read for the run, so a denied prompt
 doesn't come back on every refresh of the Settings window.
+
+## D46. The core never writes to a history its key can't open (2026-10-23)
+
+**Decision.** `History::open` counts the whole frames in the file and the ones that decrypt.
+Frames but none that open, or a file that exists but can't be read, make the history
+**locked**: no records, and `append` and compaction fail without touching the file. The
+state is reported as `"locked"` in `ft_engine_history_stats`; the Mac shell shows it as a
+locked history with its own note ("the key in your Keychain doesn't open your writing
+history"). Only clearing the history (the user's Delete) removes the file and unlocks it
+under the same key. One undecryptable frame among good ones is still damage: skipped, and
+dropped at the next compaction.
+**Why.** Before, a wrong key read 0 records but kept appending frames sealed under itself to
+the same file, and the first compaction rewrote the file from those alone, destroying every
+frame the right key could have opened. D45 stops the shell from making a wrong key after a
+failed Keychain read, but a key can still be wrong (a Keychain item restored from elsewhere,
+a history file copied from another Mac, a future bug), and the core is the last place that
+can refuse. A history that can't learn for a while is cheap; one rewritten without its old
+frames can't be recovered.
+**Cost.** A history whose key is truly gone stays locked until the user deletes it. A file
+that was written under two keys (by builds before this fix) opens with either one, and the
+next compaction under that key still drops the other key's frames.

@@ -112,6 +112,7 @@
 "Foretype needs a key in your Keychain to store your writing history encrypted." = "आपका लेखन इतिहास एंक्रिप्टेड रूप में सहेजने के लिए Foretype को आपके कीचेन में एक कुंजी चाहिए।";
 "Writing history is locked" = "लेखन इतिहास लॉक है";
 "Foretype couldn't read its key from the Keychain. Nothing is learned until it can, and your history is kept as it is. Try again later, or delete the history to start a new one." = "Foretype कीचेन से इसकी कुंजी नहीं पढ़ सका। जब तक वह इसे पढ़ नहीं पाता, कुछ नहीं सीखा जाएगा और आपका इतिहास जैसा है वैसा ही रहेगा। बाद में दोबारा कोशिश करें, या नया इतिहास शुरू करने के लिए इसे डिलीट करें।";
+"The key in your Keychain doesn't open your writing history. Nothing is learned, and the history is kept as it is in case its key comes back. Delete it to start a new one." = "आपके कीचेन की कुंजी से आपका लेखन इतिहास नहीं खुलता। कुछ नहीं सीखा जाएगा, और इतिहास जैसा है वैसा ही रखा जाएगा, ताकि उसकी कुंजी वापस मिलने पर वह फिर खुल सके। नया इतिहास शुरू करने के लिए इसे डिलीट करें।";
 "Try Again" = "दोबारा कोशिश करें";
 "Choose text files or folders with your own writing" = "अपने लेखन वाली टेक्स्ट फ़ाइलें या फ़ोल्डर चुनें";
 "Import failed" = "इंपोर्ट विफल हुआ";

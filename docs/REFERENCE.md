@@ -91,7 +91,10 @@ written to refer to the visible messages, so treat this as a best case.
   keychain is locked, or the key is missing while a history file exists), it never makes a
   new key over your history. Learning stays off for that run and nothing is recorded or
   deleted; the Personalization menu and Settings say "Writing history is locked", with
-  **Try Again**. Deleting the history and trying again starts a new one.
+  **Try Again**. Deleting the history and trying again starts a new one. The same happens
+  when the key in your Keychain opens none of the history file (a Keychain restored from
+  elsewhere, a file copied from another Mac): Foretype never writes to it or compacts it,
+  so the right key can still read it all, and **Delete Writing History…** starts a new one.
 - **How it is used:** no fine-tuning. Words you use often (at least twice, ignoring very
   common English words) get a small logit boost: whole-word tokens at a word start, and
   completions towards your words once you have typed their first letters. Up to two short

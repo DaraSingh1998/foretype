@@ -24,6 +24,12 @@ the release notes are taken from it.
   exactly as it is unless you type a new one (an empty field never deletes it). After a
   denied or cancelled prompt, refreshing Settings no longer asks the Keychain again, and a
   new key the Keychain refuses to store now says so instead of failing silently.
+- A writing history that doesn't open with the key in your Keychain is no longer written
+  to. Before, Foretype read nothing from it but kept adding to the same file, and its next
+  clean-up rewrote the file without the old entries, so the right key could never read them
+  again. Now such a history is locked and kept exactly as it is: nothing is learned or
+  imported, and the Personalization menu and Settings say "Writing history is locked" with
+  a note that the key doesn't open it. Delete Writing History… starts a new one.
 
 ### Settings fit the screen (2026-10-23)
 - Settings ▸ General had grown taller than a MacBook screen: the update switches and Check
