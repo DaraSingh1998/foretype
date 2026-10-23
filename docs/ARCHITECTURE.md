@@ -163,9 +163,10 @@ never while paused.
   first word may differ from greedy's). Recurrent models stay greedy.
 - **Greedy decoding** with stops: newline; the next word would exceed `max_words`; a
   sentence end before a new word (`stop_at_sentence_end`); end-of-generation token; a
-  deadline (`deadline_ms`, default 300 ms, counted from the end of prefill); token budget
-  `max_words * 3 + 8 + fragment length`. A word cut off by the budget or the deadline is
-  dropped.
+  deadline (`deadline_ms`, default 300 ms, counted from the end of prefill: `sync` waits
+  for the GPU to finish the prompt's last batch, which llama.cpp runs asynchronously);
+  token budget `max_words * 3 + 8 + fragment length`. A word cut off by the budget or the
+  deadline is dropped.
 - **Personal bias** (`set_vocabulary`, `personal_strength` logits at full weight):
   at a word start, boosts the single token of `" word"` for the user's whole-word tokens;
   while a word is in progress (typed or generated), boosts the next token of the user's
