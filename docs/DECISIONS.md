@@ -538,3 +538,42 @@ are also English (main, me, par, the, hum, sun, mat) are left off the list so th
 doesn't read as Hinglish; until a field has two listed words, unlisted spellings are still
 judged by the checker. A typo the user kept once in a field isn't offered a fix again there.
 The list is maintained by hand.
+
+## D42. Context from other apps: opt-in, kept 10 minutes in memory, never for a server (user decisions, 2026-10-23)
+
+**Decision.** Foretype will read text from apps other than the one being typed in (a
+document, slides or a web page open beside the email being written) and from every
+display, built in five phases (`docs/ROADMAP.md`, "Cross-app context"). The user decided:
+- **Opt-in, with a setting of its own**, separate from Use Screen Context, which keeps
+  reading only the focused window as today (D13).
+- **Recently viewed windows are kept 10 minutes**, in memory only, and forgotten on pause,
+  screen lock and sleep (the same events that pause Foretype, D39). Nothing is written to
+  disk.
+- **The default never-read list is password managers only.** Users can add any app; the
+  existing per-app "suggestions off" and secure-input rules still apply on top.
+- **Off entirely with a remote or bring-your-own server backend** (llama-server,
+  OpenAI-compatible): text from other apps is only ever given to the on-device model.
+- **Still open: whether 8 GB Macs get it.** Phase A measured memory at n_ctx 2048, 4096 and
+  8192 for every catalog model (`docs/MEASUREMENTS.md`, "Cross-app context baseline") so
+  the user can decide.
+
+**Why.** People write about what is on their other screen: figures from a spreadsheet,
+dates from a slide, steps from a help page. The focused window's OCR (D13) can't see it.
+Reading every app's text is more than people expect from an autocomplete, so it must be
+asked for, separately from the focused-window feature they may already have on. Ten
+minutes covers reading something and then switching to write about it, without building a
+record of everything seen; memory-only and clearing on lock or sleep keep it from
+outliving the session. Password managers show secrets by design, the one category that
+never helps a suggestion; anything else sensitive (banking, health, chats) is the user's
+call, and listing it by default would guess wrong for many people. Foretype's promise is
+on-device: the focused window's text already reaches a server the user configured, but
+other apps' text would send far more than the user is typing to anyone.
+Phase A measured the gain on a corpus written to quote another app's window: +17 to +20
+points of keystrokes saved on every model (Qwen3-1.7B 41.6% → 60.9%), a best case.
+**Cost.** A longer prompt header: every change to it costs a full prefill (D13; Phase A:
+1.5 s for a full 2,048-token window on Qwen3-1.7B, 7.6 s for 8,192), and the bigger context
+needs a bigger KV cache (+0.22 GB at 4,096 tokens, +0.67 GB at 8,192 for the models 8 GB
+Macs use), so Phase D (background prefill, KV state cache, quantized KV,
+flash attention, cheaper OCR) is part of the plan, not an extra. A document closed nine
+minutes ago can still shape a suggestion. The password-manager list is kept by hand
+(bundle IDs). People using a server backend don't get the feature.

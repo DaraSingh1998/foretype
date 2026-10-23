@@ -43,6 +43,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | OCR + row assembly | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
 | Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
+| Screen geometry across displays (global and Cocoa coordinates, displays left of, above and below the primary, mixed 1x/2x scales, cards at a display's top edge) | `mac/.build/release/Foretype --geometry-selftest` | nothing (made-up layouts; no second display) |
 | About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
 | Pause and power rules (decisions, Resume Anyway, migration, saved pause) | `mac/.build/release/Foretype --pause-selftest` | nothing (a defaults suite of its own) |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
@@ -101,9 +102,13 @@ $R "$M" --corpus eval/corpus.jsonl --instructions notes.json            # other 
 swiftc -O tools/spell-map/main.swift mac/Sources/Foretype/Speller.swift -o build/spell-map
 build/spell-map eval/corpus.jsonl > build/spell-map.json                # the app's spell verdicts
 $R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo gate + autocorrect
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --context-mode both      # other app's text + focused window (none|focused|other|both)
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 8192 # long-context latency and memory, one n_ctx per process
+scripts/bench-context.sh                                                # both, for every installed model and n_ctx 2048/4096/8192
 ```
 
-Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`,
+Other flags: `--words N` (suggestion length), `--no-prefetch`, `--no-examples`, `--app NAME`, `--n-ctx N`
+(context size, default 2048 as in the app),
 `--remote-model NAME` (OpenAI-compatible). `FORETYPE_DEBUG=1` prints per-request prefill
 and generation timings.
 
@@ -112,7 +117,8 @@ so its numbers compare with the older ones in `docs/MEASUREMENTS.md`; the app it
 with the defaults (`core/data/default-instructions.json`). With per-app notes, the corpus
 apps (`Mail`, `Slack`, `Teams`, `Messages`, `Notes`, `a document`) stand in for their bundle IDs.
 
-Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, and
+Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, the
+first suggestion of each document p50/p90 (it prefills the whole header), and
 how many keystrokes were served by `model`, `typeThrough`, `cache`, `details` or `policy`.
 With `--details`, the simulated user takes a fill other than a name only if all of it is
 what comes next (one Tab inserts all of it).

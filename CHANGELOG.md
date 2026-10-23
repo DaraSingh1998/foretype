@@ -5,6 +5,28 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Several displays (2026-10-23)
+- Screen context now captures a window at its own display's resolution. A window on a
+  display above or below the main one, or on a standard external display next to a Retina
+  one, could be captured at the wrong scale: larger than needed (slower text recognition) or
+  smaller (text read less reliably), because the window's position was compared with the
+  displays' in two different coordinate systems.
+- The suggestion card above a field (in apps that report no caret position) and the tip
+  cards went below the field whenever the field was on a display above the main one, and a
+  card for a field at the top of a display below the main one could appear on the main
+  display. Both now stay on the field's display.
+- `Foretype --geometry-selftest` checks the coordinate conversions on made-up layouts with
+  displays left of, above, below and right of the main one, at 1x and 2x.
+
+### Measuring context from other apps (2026-10-23)
+- `eval/corpus-multiwindow.jsonl`: 21 replies and notes written while another app shows
+  what they quote (a budget in Word, a launch plan in Keynote, a pricing page, a quote in
+  Preview). `ft-replay --context-mode none|focused|other|both` replays them with no screen
+  text, the focused window's, the other app's or both; `--ctx-bench` measures the first
+  suggestion, prefill, typing latency and memory with a full context window, and `--n-ctx`
+  sets its size. `scripts/bench-context.sh` runs it all for every installed model. The
+  baseline is in `docs/MEASUREMENTS.md`; the plan is in `docs/ROADMAP.md` (D42).
+
 ## 0.1.3 (2026-10-23)
 
 ### Ghost text at the right size (2026-10-22)

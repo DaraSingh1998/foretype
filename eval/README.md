@@ -35,6 +35,30 @@ English (only the app name reaches the prompt):
 Characters are Unicode scalars, so a Devanagari consonant, a vowel sign and a virama each
 count as one keystroke, as they do on the InScript keyboard.
 
+## Context from other apps
+
+`corpus-multiwindow.jsonl` (written for this evaluation on 2026-10-23, self-written, may be
+used without restriction; fictional people, companies, figures and booking codes): 21
+replies, chat messages, notes, a cover letter and a review, 1,799 words, 9,783 characters,
+each written while another app shows what it quotes. Besides `id`, `register`, `header` and
+`text`, each line has:
+
+- `context`: the other app's text (272–687 characters): a budget review and meeting notes in
+  Word, a launch plan and an agenda as slides, regional sales and an estimate as
+  spreadsheets, a pricing page, a help-centre article, a recipe, a booking confirmation, a
+  news story, a GitHub issue, a job posting, release notes and an HR policy in a browser, a
+  lease, a supplier quote and a school letter in Preview. `context_app` and
+  `context_title` name the app and window.
+- `screen`: the focused window's own text around the field (24–252 characters): the email
+  being answered, the chat so far, a note list, a review form.
+
+The `text` repeats figures, dates, names and steps from `context` (and answers `screen`), so
+the gap between `--context-mode focused` and `both` is what reading the other app is worth
+at best. Every item's `context` plus `screen` fits the 1,500-character screen budget.
+
+    core/target/release/ft-replay MODEL.gguf --corpus eval/corpus-multiwindow.jsonl --context-mode both
+    scripts/bench-context.sh
+
 `details.json`: the user's own details (Settings ▸ About You) for `ft-replay --details`, by
 document id: the three self-written documents that end with a signature get their signer
 (fictional), `*` gives every other document one more fictional person. Example values only
