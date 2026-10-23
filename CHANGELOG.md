@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.3 (2026-10-23)
+
 ### Ghost text at the right size (2026-10-22)
 - In a short or narrow window, ghost text could be drawn several times too big (about 60 pt
   next to 20 pt text in TextEdit): when the last 24 characters before the caret crossed a

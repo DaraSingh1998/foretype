@@ -1,6 +1,6 @@
 [package]
 name = "foretype-core"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 description = "Portable inline-autocomplete engine: context building, llama.cpp inference with prefix-cache reuse and token healing, suggestion session state."
