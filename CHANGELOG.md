@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.4 (2026-10-23)
+
 ### Whole first suggestions after a long context (2026-10-23)
 - The first suggestion after a lot of new text (a long screen context, a long document
   before the caret) often stopped after one word: its 300 ms time limit started while the
