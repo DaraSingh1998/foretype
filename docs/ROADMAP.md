@@ -15,10 +15,9 @@ from Mac MVP to Linux"), adjusted as the work went.
 
 Since Phase 4: the pixel caret locator (D31, `feat/pixel-caret`); pause and power-aware
 pausing (D39, `feat/pause`); a waiting update shown in the menu and Settings (D40); text
-from other apps, opt-in (D42, D44, `feat/context-pool`; Phase D and E of the plan below are
-still to do).
+from other apps, opt-in (D42, D44, D47, D48; the cross-app context plan below is done).
 
-## Cross-app context (planned 2026-10-23)
+## Cross-app context (planned 2026-10-23, done 2026-10-24)
 
 Suggestions that use what is open in other apps (a Word document, slides or a web page
 beside the email being written) and on every display, without slowing typing down. The
@@ -33,7 +32,7 @@ minutes in memory only, password managers never read by default, off for server 
 | B. Context collector | Done (`feat/context-pool`): `ContextPool.swift`, Settings ▸ Context, `--context-selftest`, `scripts/e2e-context.sh` (D44) | Text of other apps' windows on every display: Accessibility text first (no Screen Recording needed, exact), OCR of the window as the fallback; a recently-viewed pool (10 minutes, memory only, cleared on pause, lock and sleep); the never-read list (password managers), per-app opt-out, FORETYPE_ONLY_APPS, secure input; off for server backends; its own setting. On Macs under 12 GB, Accessibility text only: no OCR of other windows (D42) |
 | C. Relevance and prompt | Done (`feat/context-pool`): `core/src/others.rs`, `ft_engine_set_context`, `ft-replay --context-mode other` and `both` with `--distractors`, `--other-recent`, `--other-tokens` (D44) | Rank the pool's passages against the text being written (BM25, in the core), a prompt section of its own (labelled by app and window, after the focused window's text, before the body) within a token budget (D42: 512 tokens at n_ctx 2048 on Macs under 12 GB; provisionally 2,048 at n_ctx 4096 on 16 GB and up, to tune on the corpus), counted in tokens and trimmed first when a prompt would overflow, and `ft_engine_set_context` so the shell sends context separately from each keystroke's snapshot; measure on the multi-window corpus |
 | D. Performance | Done (`feat/context-perf`, D47): two KV slots with background prefill and the old header served meanwhile, saved contexts, q8_0 KV while other apps' text is on, OCR time budget; `ft-replay --switch-bench`, `--chunk-bench`, `--check-cache --fields`, `Foretype --ocr-bench` | Keep a bigger header off the typing path: prefill a changed context on a second KV sequence in the background and switch when ready (double buffering); cache KV states per context (`llama_state_seq_*`); q8_0 KV cache and flash attention (memory and long-context decode; with q8_0, n_ctx 4096 on an 8 GB Mac costs today's KV memory, and its section may grow to 1,024 tokens if Phase C shows it helps); cheaper OCR (`.fast` level, only changed regions, fewer refreshes); re-run `scripts/bench-context.sh` against the Phase A numbers |
-| E. UX and docs | Planned | The setting, the never-read list and a "what Foretype sees" view in Settings; onboarding text; README, REFERENCE and privacy notes; what 8 GB Macs get (no OCR of other windows, a smaller budget) explained in Settings |
+| E. UX and docs | Done (`feat/context-ux`, D48): What Foretype Sees (Settings ▸ Context: the windows in memory and the last prompt's passages against the budget, Never Read This App, Forget All Now; `ft_engine_context_report`, `--context-view-selftest`, `scripts/e2e-context-view.sh`), the setting's limits explained in Settings ▸ Context (under 12 GB, server backends, nothing read yet), an optional mention in the setup window, README, REFERENCE and ARCHITECTURE | The setting, the never-read list and a "what Foretype sees" view in Settings; onboarding text; README, REFERENCE and privacy notes; what 8 GB Macs get (no OCR of other windows, a smaller budget) explained in Settings |
 
 What Phase A found (details in `docs/MEASUREMENTS.md`, "Cross-app context baseline"):
 - The other app's text is worth it: +17 to +20 points of keystrokes saved on every model

@@ -114,5 +114,6 @@ downloading any model** (name, size, source).
 | `FORETYPE_TEXT_MARKERS` | `1` reads web fields through text markers even when ranges work (testing) |
 | `FORETYPE_CARET` | `pixel` or `ax`: forces the pixel caret locator on or off for every app (testing) |
 | `FORETYPE_UPDATE_CHECK_NOW`, `FORETYPE_UPDATE_IDLE` | Release builds: `1` runs a background update check at launch; seconds of user idleness before a downloaded update installs (default 300) (`scripts/sparkle-local-test.sh`) |
+| `FORETYPE_CONTEXT_REPORT` | A file: once the engine runs, What Foretype Sees opens without taking focus and every 2 s the app writes what it shows (passages as their first 60 characters) and `<file>.png` (`scripts/e2e-context-view.sh`) |
 | `FORETYPE_UPDATE_REPORT` | A file: at launch and whenever the waiting update changes, the app writes what its menu, icon, Settings ▸ General and windows show (and `<file>.png`, the General pane); SIGUSR1 chooses the menu's update line (`scripts/sparkle-local-test.sh`) |
 | Build: `FORETYPE_SIGN_IDENTITY` (`-` forces ad hoc), `FORETYPE_SIGN_KEYCHAIN`, `FORETYPE_OUT`, `FORETYPE_SPARKLE`, `FORETYPE_FEED_URL`, `FORETYPE_SPARKLE_PUBLIC_KEY`, `FORETYPE_SPARKLE_KEY_FILE`, `FORETYPE_DOWNLOAD_BASE`, `FORETYPE_NOTARY_PROFILE`, `FORETYPE_VERSION`, `FORETYPE_BUILD` | See `RELEASING.md` and the script headers |

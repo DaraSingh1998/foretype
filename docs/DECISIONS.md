@@ -794,3 +794,44 @@ MB of saved contexts; without other apps' text the second f16 slot adds 224 MB. 
 contexts duplicate the other-apps section they share (llama.cpp saves whole sequences).
 Recurrent and hybrid models (none in the catalog) keep one slot and still make the next
 keystroke wait. Switching the setting now reloads the model on Macs under 16 GB too.
+
+## D48. What Foretype sees: shown from memory, the last prompt by reference, setup only mentions the setting (2026-10-24)
+
+**Decision.** Phase E of the cross-app context plan (D42):
+- **A window that shows what is held** (Settings ▸ Context ▸ What Foretype Sees…): the pool's
+  windows (on screen or viewed how long ago, display, Accessibility or OCR, size) and the
+  passages the core put into the last prompt served, with their estimated tokens against
+  the budget. It reads only what is already in memory, every second while open; nothing is
+  read or captured for it. Each window has **Never Read This App**, which adds its app to
+  the never-read list (its windows leave the pool at once, as with Add an App…), and
+  **Forget All Now** empties the pool, which makes the core drop every prompt and saved
+  context holding its text (D47). The setting stays on: windows on screen are read again
+  at the next switch or typing pause.
+- **The core reports the last prompt by reference.** After each request served the worker
+  notes the section's passage ids, its estimated tokens, the time and whether it was left
+  out to fit the context (not when the previous header served while the new one
+  prefilled). `ft_engine_context_report` looks the ids up in the pool when asked: a passage
+  whose window has left the pool is counted, never shown, and an emptied pool drops the
+  record. Tokens are the core's estimate (`estimate_tokens`), the unit the budget is in.
+- **Settings ▸ Context says what limits the setting**: under 12 GB, Accessibility only (no
+  OCR) and the smaller budget; with a server backend the checkbox is disabled (the stored
+  value is kept for when the model is on the Mac again) with why; with the setting on and
+  nothing read yet, what to do.
+- **Setup mentions it, off, and only links to Settings ▸ Context.** It never turns it on.
+
+**Why.** Reading other windows is the most sensitive thing Foretype does; people should be
+able to check exactly what it holds and what reached the model, and act on it from the same
+place, without the check itself reading anything new. Keeping ids rather than a copy of the
+section means the report holds no text of its own: forgetting a window or the pool forgets
+it in the report too. The estimate is what the selection budgets with, so the numbers add
+up; the real tokenizer comes to about 0.93 of it (D44), and counting with it would mean
+tokenizing on the engine thread for a display. A server never gets the text (D42), so a
+checkbox that could be ticked but does nothing would mislead. The setup window is where
+people decide what Foretype may read, so the option belongs there, but an opt-in feature
+stays opt-in (D42).
+
+**Cost.** The viewer's numbers are estimates (labelled "about"). A passage is identified by
+its window and its text, so one whose text changed since the prompt (the window was read
+again) counts as gone, though its window is still listed. Forget All Now also drops saved
+contexts that held no other apps' text (D47's reset is all or nothing). Recording the report
+takes one more lock of the pool per request.

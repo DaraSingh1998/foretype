@@ -59,7 +59,8 @@ itself.
   conversation.
 - **Quotes what's open beside it (opt-in).** With Use Text from Other Apps on, suggestions
   can pick up figures, dates and names from a document, spreadsheet, slides or web page
-  open in another window, on any display.
+  open in another window, on any display. Settings ▸ Context ▸ What Foretype Sees shows
+  exactly what it has read and what your last suggestion used.
 - **Sounds like you (opt-in).** Learn From My Writing picks up the words and phrasing you
   use. Your history is encrypted on your Mac, and one click deletes it.
 - **Fills in your details.** Add them once in Settings ▸ About You (or from your Contacts
@@ -80,11 +81,17 @@ itself.
   your own, it talks to that server too.
 - Screen text is read with on-device OCR; the image is thrown away at once and the text is
   kept only in memory.
-- Text from other apps' windows is read only if you turn it on (off by default). It stays in
-  memory, at most 10 minutes after you last saw a window, is forgotten whenever Foretype
-  pauses, the screen locks or the Mac sleeps, and is never sent to a server, even one you
-  connected. Password managers are never read (you can add any app to that list), nor apps
-  where you turned Foretype off, private browsing windows or password fields.
+- Text from other apps' windows is read only if you turn it on (off by default; setup only
+  mentions it). Foretype reads the windows on your screens, and those you looked at in the
+  last 10 minutes, through Accessibility; on Macs with 12 GB or more it can also read a
+  window with on-device OCR, discarding the image at once. Macs under 12 GB use
+  Accessibility only, and less of the text. It stays in memory, at most 10 minutes after
+  you last saw a window, is forgotten whenever Foretype pauses, the screen locks or the Mac
+  sleeps, and is never sent to a server, even one you connected (the setting is then
+  unavailable). Password managers are never read (you can add any app to that list), nor
+  apps where you turned Foretype off, private browsing windows or password fields. **What
+  Foretype Sees** (Settings ▸ Context) lists every window held and the passages your last
+  suggestion used, from memory only, with Never Read This App and Forget All Now.
 - Your writing history (off until you turn it on) and the details you enter in About You
   are stored encrypted with a key in your Keychain, and can be deleted at any time.
 - Statistics are numbers only ("Saved 1,234 keystrokes today"), never the text or the app.

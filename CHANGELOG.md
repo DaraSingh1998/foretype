@@ -5,6 +5,21 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### See what Foretype reads from other apps (2026-10-24)
+- New in Settings ▸ Context: **What Foretype Sees…** opens a window that shows, live, the
+  other apps' windows Foretype has in memory (on screen or viewed how long ago, on which
+  display, read through Accessibility or OCR, how much text) and the passages your last
+  suggestion used, with about how many tokens of the budget they took. Each window has
+  **Never Read This App**, and **Forget All Now** forgets every window and the model's
+  saved contexts at once. It shows only what is already in memory: nothing is read for it,
+  and nothing leaves your Mac.
+- Settings ▸ Context now says what limits Use Text from Other Apps on your Mac: under 12 GB
+  of memory, other windows are read through Accessibility only (never with OCR) and less of
+  their text is used; with a server making suggestions the setting is unavailable, and
+  why. With the setting on and nothing read yet, it says what to do.
+- The setup window mentions Use Text from Other Apps (optional, off) with a button to
+  Settings ▸ Context; it never turns it on.
+
 ## 0.1.6 (2026-10-23)
 
 ### Text from other apps no longer holds up typing (2026-10-23)

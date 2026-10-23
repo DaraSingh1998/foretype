@@ -337,6 +337,14 @@ per passage for windows on screen. At most 600 passages.
   parentheses), windows in the order they first came into the pool, passages in document
   order with a "…" line between ones that aren't adjacent, a blank line at the end.
   `Prompt::others` is its length.
+- **Report** (`ft_engine_context_report`, the shell's "What Foretype sees" window): after
+  each request served, the worker notes the served prompt's section as passage ids
+  (`OtherApps::ids_of`, from the sections rendered lately), its estimated tokens, the time
+  and whether it was left out to fit the context (`record_served`; not when it ran with the
+  previous header while the new one prefills, D47). No text is copied: `Core::context_report`
+  looks the ids up in the pool when asked (`OtherApps::report`), so a passage whose window
+  left the pool is only counted (`gone`), and an emptied pool drops the record. The budget
+  shown is the last selection's (`OtherApps::budget`), else the setting's.
 
 ### Your details (`details.rs`)
 
@@ -476,6 +484,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_configure(engine, settings_json)` | Replace settings |
 | `ft_engine_set_details(engine, details_json)` | The user's own details (below); returns false if the JSON doesn't parse |
 | `ft_engine_set_context(engine, context_json)` | Other apps' text (below), sent only when the pool changes; `{"passages": []}` clears it; ignored with a server backend; false if the JSON doesn't parse |
+| `ft_engine_context_report(engine)` | Read only: what the core holds of other apps' text and what the last prompt took from it (below), for "What Foretype sees" |
 | `ft_engine_set_completer(engine, callback, ctx)` | Completer for the `shell` backend (request JSON in, malloc'd text out) |
 | `ft_engine_compat_rule(engine, bundle_id)` | Rule JSON for an app |
 | `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization; stats are `{"records","words","locked"}` (`locked`: the key opens none of the file, kept read-only) |
@@ -502,6 +511,16 @@ and the built-in engine's KV cache (D47): `kv_type` (`f16`; or `q8_0`), `slots` 
 "url_host" (the host only, never the URL), "text", "captured_at" (seconds since 1970: when a
 window not on screen was last seen), "visible" (on screen now, any display), "display" (the
 shell's index, informational)}]}`.
+
+**Context report** (`ft_engine_context_report`): `{"server", "windows", "passages", "budget",
+"changes", "last"}`. `server`: a server backend, so nothing is held; `windows`/`passages`:
+the pool's size; `budget`: the section's budget in estimated tokens; `changes`: how often the
+section changed; `last`: null before the first request served since the pool was last
+emptied, else `{"at" (seconds since 1970), "tokens" (the section's estimate), "left_out"
+(the prompt ran without it to fit the context), "gone" (passages whose window has left the
+pool since: counted, never shown), "passages": [{"label" (the window's header line), "app",
+"bundle_id", "ordinal" (its place in the window's text), "tokens", "text"}]}` in the
+section's order. Tokens are the core's estimate, the budget's own unit.
 
 **Snapshot** (`submit`/`warm`): `revision`, `field_key`, `bundle_id`, `app_name`,
 `window_title`, `url`, `role`, `subrole`, `role_description`, `description` (label or
@@ -739,6 +758,21 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   is sent (`onChange`) only when its signature (texts, titles, visibility, a recent
   window's last-seen time) changed. `configure` turns it on or off (off clears it and sends
   an empty pool) and drops windows of apps the gate now rejects. Nothing is written to disk.
+  `entries` is the list last sent (for the viewer); `Controller.forgetContext` (Forget All
+  Now) is `reset()`, whose empty pool makes the core forget its slots and saved contexts.
+  Each change posts `ContextPool.changed` on the main thread (Settings ▸ Context's status).
+- **`ContextViewer.swift`**: "What Foretype sees" (Settings ▸ Context ▸ What Foretype
+  Sees…), from memory only: `ContextSight` gathers the state (off, server, paused, not
+  running, on), `ContextPool.entries` and `EngineBridge.contextReport()`
+  (`ft_engine_context_report`) and words every line (pure; the self-test reads it).
+  `ContextViewerController` shows the windows (app and title, on screen or viewed how long
+  ago, display, Accessibility or OCR, characters; Never Read This App adds the app to the
+  never-read list through the host) and the last prompt's passages (window, estimated
+  tokens, the first three lines) with their total against the budget, and Forget All Now.
+  A one-second timer reads what is in memory while it is open; rows are rebuilt only when
+  one would read differently. `--context-view-selftest [DIR]` renders it on made-up data in
+  every state; `FORETYPE_CONTEXT_REPORT=<file>` opens it without taking focus and writes
+  what it shows every 2 s (testing).
 - **`ScreenGeometry.swift`**: the two coordinate spaces as pure functions. Global (Quartz)
   coordinates have their origin at the primary display's top-left with y down; AX
   positions, `CGDisplayBounds` and ScreenCaptureKit's `SCWindow.frame` use them. Cocoa
@@ -843,12 +877,16 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   (`PreferencesTabController.fit`). `AppList` is the bordered, self-sizing list of apps
   with a Remove button each (Apps; Context's never-read list). Context holds screen context
   and text from other apps (`setUseOtherApps`, which restarts the built-in engine when its
-  context size changes, and `addNeverReadApp`). It changes settings through
+  context size changes, and `addNeverReadApp`), a note when this Mac (under 12 GB) or a
+  server backend limits it (the checkbox is disabled with a server), what is in memory
+  (`PreferencesHost.contextSight`) with What Foretype Sees…, and what to do when it is on
+  but nothing has been read yet. It changes settings through
   `PreferencesHost`, which `AppDelegate` implements with the menu's own code paths
   (`Controller.applySettings`, `startEngine`/`replaceEngine` for model and server changes).
   The menu calls `refresh()` after its own changes so both stay in step.
 - **`OnboardingWindow.swift`**, **`InstructionsWindow.swift`**, **`AppDelegate.swift`**:
-  setup checklist (Accessibility, Screen Recording, model), custom instructions, the
+  setup checklist (Accessibility, Screen Recording, model, and an optional mention of text
+  from other apps that only links to Settings ▸ Context: setup never turns it on), custom instructions, the
   menu-bar menu (keystrokes saved today, why and until when it is paused, Pause ▸ or
   Resume / Resume Anyway, length and sentence end, per-app toggle and Pause in *app* ▸,
   screen context, text from other apps, personalization, instructions, model with sizes on disk and Delete a
@@ -941,7 +979,7 @@ Text from other apps (`docs/ROADMAP.md`, "Cross-app context", D42, D44) is read 
 |---|---|
 | Text of the focused field | In memory; into the prompt. Never logged unless `FORETYPE_DEBUG` (suggestions only) |
 | Screen text (OCR) | In memory per field; image discarded immediately |
-| Other apps' text (opt-in) | In memory only (at most 12 windows, each 10 minutes after it was last seen), forgotten on pause, lock, sleep and when the setting goes off; into the prompt of an on-device model only, never a server's; OCR images discarded at once; never logged except passage beginnings in `FORETYPE_DEBUG` builds' core lines |
+| Other apps' text (opt-in) | In memory only (at most 12 windows, each 10 minutes after it was last seen), forgotten on pause, lock, sleep, when the setting goes off and with Forget All Now; into the prompt of an on-device model only, never a server's; OCR images discarded at once; shown only in What Foretype Sees (from memory); never logged except passage beginnings in `FORETYPE_DEBUG` builds' core lines |
 | Writing history (opt-in) | `history.bin`, encrypted, key in the Keychain; deleted from the menu |
 | Your details (About You) | `about-you.bin`, encrypted, key in the Keychain; in the core's memory for fills; in the prompt only with the writer line on and a local model; never logged: debug logs name a fill's detail, not its value, and both the core (`UserDetails::redact`) and the shell (`Log.mask`) print every run of 4+ letters or digits of a value as `***` in other logged text, since a model suggestion can echo a detail from the document; Clear All deletes file and key |
 | Contacts | Your own card, read once when you click Fill from My Card |

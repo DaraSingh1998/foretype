@@ -80,7 +80,8 @@ written to refer to the visible messages, so treat this as a best case.
 With **Use text from other apps** (Settings ▸ Context, or the menu; off by default),
 suggestions can quote what other windows show: a document, slides, a spreadsheet or a web
 page beside the email you are writing, on any display, and windows you looked at in the
-last 10 minutes (decisions D42 and D44).
+last 10 minutes (decisions D42, D44 and D48). The setup window mentions it, off, with a
+link to Settings ▸ Context; nothing but you turns it on.
 
 - **What is read.** Windows on screen on every display (the current Space of each), counted
   as visible when at least a quarter of them is uncovered, and the window you just switched
@@ -106,7 +107,11 @@ last 10 minutes (decisions D42 and D44).
   secure fields, and nothing at all while secure input is on. Apps that are off only by
   default (spreadsheets, code editors, terminals) are read: a sheet is what an email quotes.
 - **Never with a server**: with a llama-server or OpenAI-compatible backend nothing is read,
-  and the core ignores any text it is sent. The Apple on-device model gets it.
+  and the core ignores any text it is sent; Settings ▸ Context then shows the setting
+  unavailable, with why. The Apple on-device model gets it.
+- **Macs under 12 GB** read other windows through Accessibility only, never with OCR, and
+  give it the 512-token budget (as every Mac under 16 GB) and no saved contexts; Settings ▸
+  Context says so.
 - **In the prompt.** The core cuts each window's text into passages of about 300
   characters and, for each prompt, ranks them against what you are writing (BM25 over the
   text before the caret, the last 300 characters counting double, plus the focused window's
@@ -122,6 +127,18 @@ last 10 minutes (decisions D42 and D44).
   the previous text (never text from a window that has left the pool).
 - On the multi-window corpus it saves as much typing as pasting the other window into the
   screen context did (`docs/MEASUREMENTS.md`, "Cross-app context: the real section").
+- **What Foretype sees** (Settings ▸ Context ▸ What Foretype Sees…) shows what is in memory
+  now, updating every second while open: each window (app and title, on screen or viewed
+  how long ago, which display, read through Accessibility or OCR, how many characters),
+  with **Never Read This App** to add its app to the never-read list (its windows go at
+  once); and the passages the last prompt took (window, estimated tokens, the first lines)
+  with their total against the budget, or why there were none (nothing matched, left out
+  to fit the context, the window has gone). **Forget All Now** forgets every window and the
+  prompts and saved contexts holding their text; windows still on screen are read again at
+  the next window switch or typing pause while the setting is on. Nothing is read or
+  captured for the view, and nothing leaves the Mac. Under the setting, Settings ▸ Context
+  says how many windows are in memory, or, when it is on and nothing has been read yet,
+  what to do (open a document beside the field, then click into the field).
 
 ### Personalization (opt-in)
 
@@ -259,8 +276,9 @@ shows every setting in eight tabs; changes apply at once, the same way as from t
   Low Power Mode), the version and the update switches with Check Now.
 - **Typing**: length (2, 4, 7 or 10 words), stop at the end of a sentence, the typing aids
   (emoji, autocorrect, typo gate, mid-line) and the keys.
-- **Context**: screen context, with the Screen Recording status; text from other apps,
-  with the never-read list (Add an App…, Remove, Restore Defaults).
+- **Context**: screen context, with the Screen Recording status; text from other apps, with
+  its limits on this Mac or backend, what is in memory and What Foretype Sees…, and the
+  never-read list (Add an App…, Remove, Restore Defaults).
 - **Personalization**: custom instructions, learn from my writing, strength, what was
   learned, import, delete history.
 - **About You**: your own details for exact fills, the writer line, fill from Contacts.
@@ -563,7 +581,10 @@ Settings… and setup. Option-click the icon to pause or resume.
   Accessibility text) and by `--context-selftest` (the pool's rules, fast OCR of a rendered
   window); reading browsers through text markers, Word, Keynote, Preview and Electron apps,
   and the OCR fallback on a live window are untested, as is the Settings ▸ Context never-read
-  list beyond rendering.
+  list beyond rendering. What Foretype Sees was checked live once (TextEdit, a window read
+  through Accessibility and its passage in the last prompt) and on made-up data by
+  `--context-view-selftest`; Never Read This App and Forget All Now are covered by that
+  self-test and the core's unit tests, not by a live click.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by
   replays against a local llama-server.
