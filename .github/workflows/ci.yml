@@ -32,6 +32,7 @@ jobs:
           mac/.build/release/Foretype --ocr-selftest
           mac/.build/release/Foretype --stats-selftest
           mac/.build/release/Foretype --geometry-selftest
+          mac/.build/release/Foretype --settings-selftest
 
       - name: Cache eval model
         uses: actions/cache@v4

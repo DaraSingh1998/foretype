@@ -642,8 +642,13 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   files with their allocated size, totals its disk use, and deletes only GGUF or `.part`
   files directly inside it. Progress reaches the UI in 0.5% steps.
 - **`PreferencesWindow.swift`**: the Settings window, an `NSTabViewController` in toolbar
-  style that sizes the window to each pane (General, Personalization, About You, Apps,
-  Model, Statistics; programmatic `NSStackView`/`NSGridView` layout). It changes settings through
+  style that sizes the window to each pane (General, Typing, Context, Personalization, About
+  You, Apps, Model, Statistics; programmatic `NSStackView`/`NSGridView` layout). Each pane's
+  rows sit in a scroll view: the window is as tall as the rows, capped at the visible frame
+  of its screen (below the menu bar, above the Dock), and kept inside that frame when the
+  tab changes or the window moves to another display; a capped pane scrolls
+  (`PreferencesTabController.fit`). `AppList` is the bordered, self-sizing list of apps
+  with a Remove button each (Apps). It changes settings through
   `PreferencesHost`, which `AppDelegate` implements with the menu's own code paths
   (`Controller.applySettings`, `startEngine`/`replaceEngine` for model and server changes).
   The menu calls `refresh()` after its own changes so both stay in step.

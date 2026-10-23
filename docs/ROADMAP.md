@@ -140,7 +140,8 @@ are kept for if that changes; the core stays portable.
 - Insertion overrides exist but every app still defaults to keystrokes.
 - Checked by eye on 2026-10-20: ghost-text placement in TextEdit and in a Chrome textarea
   (the fixture page), the setup window, the menu, the Custom Instructions window, live
-  screen capture (development build), the Settings window's five tabs with model delete,
+  screen capture (development build), the Settings window's tabs (five then, eight since
+  2026-10-23, each fitting a 13-inch MacBook Air) with model delete,
   app remove, statistics reset and download pause/resume. Not yet: the overlay in Safari,
   Mail and Notes, the bundled app's own Screen Recording grant, Cmd-, and the editing keys
   in Foretype's windows (they need real keystrokes).

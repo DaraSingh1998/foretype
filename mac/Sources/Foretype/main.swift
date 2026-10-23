@@ -15,6 +15,11 @@ if CommandLine.arguments.contains("--stats-selftest") {
 if CommandLine.arguments.contains("--geometry-selftest") {
     exit(ScreenGeometry.selfTest() ? 0 : 1)
 }
+// --settings-selftest [DIR]: the Settings window on made-up screens; DIR gets a PNG per pane.
+if let i = CommandLine.arguments.firstIndex(of: "--settings-selftest") {
+    let next = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
+    exit(PreferencesSelfTest.run(dir: next.flatMap { $0.hasPrefix("-") ? nil : $0 }) ? 0 : 1)
+}
 if CommandLine.arguments.contains("--pause-selftest") {
     exit(PauseState.selfTest() ? 0 : 1)
 }

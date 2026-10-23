@@ -5,6 +5,16 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Settings fit the screen (2026-10-23)
+- Settings ▸ General had grown taller than a MacBook screen: the update switches and Check
+  Now ran behind the Dock and couldn't be reached. Its settings are now in three tabs:
+  **General** (open at login, pause, the power rules, version and updates), **Typing**
+  (length, stop at the end of a sentence, emoji, spelling fixes, mid-line, the keys) and
+  **Context** (screen context). Custom instructions moved to **Personalization**.
+- The Settings window never grows past the screen it is on: a tab taller than the space
+  between the menu bar and the Dock scrolls, and the window stays on screen when you switch
+  tabs or move it to another display. The Apps list is as tall as the apps in it.
+
 ## 0.1.4 (2026-10-23)
 
 ### Whole first suggestions after a long context (2026-10-23)

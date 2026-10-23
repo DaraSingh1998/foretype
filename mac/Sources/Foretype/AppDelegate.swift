@@ -778,27 +778,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         var lines = menu.items.map { "menu: " + ($0.isSeparatorItem ? "---" : $0.title) }
         lines.append("icon: " + (MenuBarIcon.image(MenuBarIcon.state, badge: MenuBarIcon.badge).accessibilityDescription ?? ""))
         let pane = GeneralPane(title: L("General"), host: self)
-        let view = pane.view
-        view.appearance = NSAppearance(named: .aqua)
-        view.layoutSubtreeIfNeeded()
-        view.setFrameSize(view.fittingSize)
+        let png = pane.png()
         lines.append("settings: " + pane.versionText)
         lines += NSApp.windows.filter(\.isVisible).map {
             "window: \($0.title) (\($0.windowController.map { String(describing: type(of: $0)) } ?? "-"))"
         }
         try? (lines.joined(separator: "\n") + "\n").write(toFile: path, atomically: true, encoding: .utf8)
-        if let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-            view.cacheDisplay(in: view.bounds, to: rep)
-            let image = NSImage(size: view.bounds.size, flipped: false) { r in
-                NSColor.white.setFill()
-                r.fill()
-                rep.draw(in: r)
-                return true
-            }
-            if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
-                try? png.write(to: URL(fileURLWithPath: path + ".png"))
-            }
-        }
+        try? png?.write(to: URL(fileURLWithPath: path + ".png"))
     }
 
     /// Bring-your-own server: llama-server (best: grammar-based token healing) or any
