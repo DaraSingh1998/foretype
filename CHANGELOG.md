@@ -18,6 +18,12 @@ the release notes are taken from it.
   details, with Try Again; Clear All still deletes them.
 - Keychain writes update the item in place instead of deleting it and adding it again, so
   a write that fails can't leave no key at all.
+- The server API key gets the same care. A Keychain read that fails no longer counts as
+  "no key": the engine goes without a key for that run, the server fields say "Saved API
+  key can't be read; type to replace" instead of "optional", and the saved key is left
+  exactly as it is unless you type a new one (an empty field never deletes it). After a
+  denied or cancelled prompt, refreshing Settings no longer asks the Keychain again, and a
+  new key the Keychain refuses to store now says so instead of failing silently.
 
 ### Settings fit the screen (2026-10-23)
 - Settings ▸ General had grown taller than a MacBook screen: the update switches and Check

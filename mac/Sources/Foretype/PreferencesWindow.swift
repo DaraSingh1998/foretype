@@ -1078,7 +1078,12 @@ final class ModelPane: PreferencesPane, NSTextFieldDelegate {
         url.stringValue = s.backendURL
         modelName.stringValue = s.backendModel
         apiKey.stringValue = ""
-        apiKey.placeholderString = s.backendAPIKey.isEmpty ? L("optional") : L("saved; type to replace")
+        // Never pre-filled: an empty field keeps the saved key, even one that can't be read.
+        switch s.serverKeyState {
+        case .none: apiKey.placeholderString = L("optional")
+        case .saved: apiKey.placeholderString = L("saved; type to replace")
+        case .unreadable: apiKey.placeholderString = L("can't be read; type to replace")
+        }
         serverEdited = false
         enableServerFields()
     }

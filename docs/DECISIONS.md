@@ -652,3 +652,9 @@ one prompt per run, then only when the user asks.
 Mac without the item) stays locked until the user deletes the history; the note says so.
 A details file that decrypts to nothing with a readable key is still treated as empty and
 overwritten on the next save (the key wasn't the problem there).
+**Server API key.** The same rule holds for the server backend's API key, which has no
+file to protect but is the user's secret: a failed read gives the engine no key for that
+run and the server fields say the saved key can't be read; the fields are never pre-filled
+and only a key the user types is written (in place), so neither a failed read nor an empty
+field can blank or delete it. The fields remember the read for the run, so a denied prompt
+doesn't come back on every refresh of the Settings window.

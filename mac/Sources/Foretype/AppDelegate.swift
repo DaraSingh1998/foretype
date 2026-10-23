@@ -193,7 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             config["backend"] = settings.backend
             config["backend_url"] = settings.backendURL
             config["backend_model"] = settings.backendModel
-            config["backend_api_key"] = settings.backendAPIKey
+            // A key that can't be read: none for this run, the saved one left as it is.
+            config["backend_api_key"] = settings.readServerKey()
             label = settings.backendURL
             loadedModelPath = nil
         }
@@ -826,7 +827,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let model = NSTextField(string: settings.backendModel)
         model.placeholderString = L("model name (OpenAI-compatible only)")
         let key = NSSecureTextField(string: "")
-        key.placeholderString = settings.backendAPIKey.isEmpty ? L("API key (optional)") : L("API key saved; type to replace")
+        // Never pre-filled: an empty field keeps the saved key, even one that can't be read.
+        switch settings.serverKeyState {
+        case .none: key.placeholderString = L("API key (optional)")
+        case .saved: key.placeholderString = L("API key saved; type to replace")
+        case .unreadable: key.placeholderString = L("Saved API key can't be read; type to replace")
+        }
         let stack = NSStackView(views: [kind, url, model, key])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -1152,8 +1158,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         settings.backend = backend
         settings.backendURL = url.trimmingCharacters(in: .whitespaces)
         settings.backendModel = model.trimmingCharacters(in: .whitespaces)
-        if let apiKey, !apiKey.isEmpty { settings.backendAPIKey = apiKey }
+        let saved = settings.saveServerKey(typed: apiKey)
         startEngine()
         preferences?.refresh()
+        if saved == .failed {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = L("Couldn't save the API key")
+            alert.informativeText = L("The Keychain didn't accept it, so the saved key, if any, is unchanged. Try again later.")
+            alert.runModal()
+        }
     }
 }

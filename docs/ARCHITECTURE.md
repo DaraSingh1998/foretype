@@ -631,7 +631,10 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
   useScreenContext, personalize, strength, backend, backendURL, backendModel, modelPath,
   onboarded; `historyLocked` is for the run only, and `learning`, personalize and not
-  locked, is what the core gets as `personalize`), `ModelLocator`.
+  locked, is what the core gets as `personalize`; `keychain`, the login one or an in-memory
+  one in the self-tests; `readServerKey()` gives the engine the server API key and
+  `serverKeyState` what the server fields say about it, remembered for the run;
+  `saveServerKey(typed:)`), `ModelLocator`.
 - **`Keychain.swift`**: `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
   `about-you-key`, `backend-api-key`). `get` returns `.found`, `.notFound`
   (errSecItemNotFound only) or `.failed(status)` (denied, cancelled, locked keychain, a
@@ -643,7 +646,12 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   failed read never replaces the key (D45). At engine start a locked history sets
   `historyLocked`: no history path or key goes to the core, it gets `personalize: false`, and
   the Keychain isn't asked again that run until the user chooses Try Again
-  (`AppDelegate.retryHistory`). `--keychain-selftest` checks the rules against an in-memory
+  (`AppDelegate.retryHistory`). `ServerKey` (the server API key): `read` returns the key
+  and a state, `.none`, `.saved` or `.unreadable` (a failed read, or not text), and the
+  engine gets "" for that run when there is no key or it can't be read; the server dialog
+  and Settings ▸ Model never pre-fill the key, say which state it is in, and `save(typed:)`
+  writes only a key the user typed (in place), so an empty field never deletes it and a
+  failed read never blanks it. `--keychain-selftest` checks the rules against an in-memory
   backend and a temporary folder, never the real items or files.
 - **`Stats.swift`**: `UsageStats`, the words-saved counts: per accept, kind (Tab or
   accept-all), words, characters and keystrokes saved (characters minus the one accept key

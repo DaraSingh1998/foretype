@@ -96,6 +96,9 @@
 "model name (OpenAI-compatible only)" = "मॉडल का नाम (केवल OpenAI-संगत)";
 "API key (optional)" = "API कुंजी (वैकल्पिक)";
 "API key saved; type to replace" = "API कुंजी सहेजी गई है; बदलने के लिए टाइप करें";
+"Saved API key can't be read; type to replace" = "सहेजी गई API कुंजी पढ़ी नहीं जा सकी; बदलने के लिए टाइप करें";
+"Couldn't save the API key" = "API कुंजी सहेजी नहीं जा सकी";
+"The Keychain didn't accept it, so the saved key, if any, is unchanged. Try again later." = "कीचेन ने इसे स्वीकार नहीं किया, इसलिए सहेजी गई कुंजी (अगर कोई है) नहीं बदली। बाद में दोबारा कोशिश करें।";
 "Where should suggestions come from?" = "सुझाव कहाँ से आएँ?";
 "A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers work too, but complete words you have started less well (about half the typing saved). Apple's on-device model needs no download but takes about 0.7 s per suggestion. The API key is stored in your Keychain." = "llama-server बिल्टइन इंजन जैसे ही सुझाव देता है। OpenAI-संगत सर्वर भी काम करते हैं, लेकिन आपके शुरू किए गए शब्दों को उतनी अच्छी तरह पूरा नहीं करते (टाइपिंग की बचत लगभग आधी रह जाती है)। Apple के ऑन-डिवाइस मॉडल को डाउनलोड की ज़रूरत नहीं है, लेकिन हर सुझाव में लगभग 0.7 सेकंड लगते हैं। API कुंजी आपके कीचेन में सहेजी जाती है।";
 "Save" = "सहेजें";
@@ -312,6 +315,7 @@
 "API key:" = "API कुंजी:";
 "optional" = "वैकल्पिक";
 "saved; type to replace" = "सहेजी गई; बदलने के लिए टाइप करें";
+"can't be read; type to replace" = "पढ़ी नहीं जा सकी; बदलने के लिए टाइप करें";
 "A llama-server gives the same suggestions as the built-in engine. OpenAI-compatible servers (Ollama, LM Studio, a cloud provider) complete words you have started less well, about half the typing saved. The API key is kept in your Keychain." = "llama-server बिल्टइन इंजन जैसे ही सुझाव देता है। OpenAI-संगत सर्वर (Ollama, LM Studio, कोई क्लाउड प्रदाता) आपके शुरू किए गए शब्दों को उतनी अच्छी तरह पूरा नहीं करते; टाइपिंग की बचत लगभग आधी रह जाती है। API कुंजी आपके कीचेन में रखी जाती है।";
 "Apply" = "लागू करें";
 

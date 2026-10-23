@@ -348,7 +348,11 @@ paused download, or quitting, deletes what it had downloaded.
   over HTTP against 79 ms in-process;
 - any OpenAI-compatible completions endpoint (Ollama, LM Studio, a cloud provider): works,
   but with no grammar it completes half-typed words less well (20% saved on the same text).
-  An API key, if any, is kept in the Keychain;
+  An API key, if any, is kept in the Keychain. The field is never filled in: leave it
+  empty to keep the saved key, type a new one to replace it. If the Keychain won't give the
+  key (a denied or cancelled prompt, a locked keychain), the field says "Saved API key
+  can't be read", the server is asked without a key until the next start, and the saved
+  key stays as it is;
 - Apple's on-device model (macOS 26+ with Apple Intelligence): nothing to download, but
   about 0.5 s per suggestion and no token healing beyond filtering.
 

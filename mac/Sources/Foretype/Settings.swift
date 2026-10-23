@@ -144,10 +144,37 @@ final class AppSettings {
         set { d.set(newValue, forKey: "backendModel") }
     }
 
-    /// API key for a server backend, kept in the Keychain (only read when a server is used).
-    var backendAPIKey: String {
-        get { Keychain.login.get("backend-api-key").data.flatMap { String(data: $0, encoding: .utf8) } ?? "" }
-        set { Keychain.login.set("backend-api-key", newValue.data(using: .utf8), label: "Foretype server API key") }
+    /// Where the server API key is kept: the login Keychain, or an in-memory one in the
+    /// self-tests.
+    var keychain = Keychain.login
+
+    /// What the server fields say about the saved API key, from the last read this run (nil:
+    /// not read yet). Refreshing the Settings window uses it instead of asking the Keychain
+    /// again, so a denied or cancelled prompt doesn't come back on every refresh.
+    private var serverKeyRead: ServerKey.State?
+
+    /// The server API key for the engine: one Keychain read, "" when there is none or it
+    /// can't be read (that run goes without; the saved key is left alone).
+    func readServerKey() -> String {
+        let (key, state) = ServerKey.read(keychain)
+        serverKeyRead = state
+        if state == .unreadable { Log.debug("server API key: Keychain read failed, none sent this run") }
+        return key
+    }
+
+    /// What the server fields say about the saved key: as last read, or read now.
+    var serverKeyState: ServerKey.State {
+        if let s = serverKeyRead { return s }
+        _ = readServerKey()
+        return serverKeyRead ?? .unreadable
+    }
+
+    /// Saves the key typed in a server form (`ServerKey.save`): nothing typed keeps the
+    /// saved key as it is, even one that couldn't be read.
+    func saveServerKey(typed: String?) -> ServerKey.SaveResult {
+        let result = ServerKey.save(typed: typed, keychain)
+        if result == .saved { serverKeyRead = .saved }
+        return result
     }
 
     var onboarded: Bool {

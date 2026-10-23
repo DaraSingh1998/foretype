@@ -145,9 +145,14 @@ enum PreferencesSelfTest {
 }
 
 /// The Settings window's host for the self-test: the real settings and models folder, read
-/// only; in-memory statistics and pause; does nothing when a control asks.
+/// only; in-memory statistics, pause and Keychain (the server API key is never read); does
+/// nothing when a control asks.
 private final class StandInHost: PreferencesHost {
-    let settings = AppSettings()
+    let settings: AppSettings = {
+        let s = AppSettings()
+        s.keychain = Keychain(backend: KeychainSelfTest.Memory())
+        return s
+    }()
     let models = ModelManager()
     let stats = UsageStats(storage: .init(load: { nil }, save: { _ in }))
     let pause: PauseState

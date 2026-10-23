@@ -141,6 +141,53 @@ enum HistoryStore {
     }
 }
 
+/// The API key for a server backend (llama-server or OpenAI-compatible), kept in the
+/// Keychain. A read that fails is not "no key": the engine goes without one for that run,
+/// the server fields say the saved key couldn't be read, and the item stays as it is until
+/// the user types a new key. Nothing here ever deletes it.
+enum ServerKey {
+    static let account = "backend-api-key"
+
+    /// What the server fields say about the saved key (never the key itself).
+    enum State: Equatable {
+        case none
+        case saved
+        /// Denied, cancelled, a locked keychain, or not text: the item may well exist.
+        case unreadable
+    }
+
+    /// One Keychain read: the key to give the engine ("" when there is none or it can't be
+    /// read) and what the server fields should say.
+    static func read(_ keychain: Keychain = .login) -> (key: String, state: State) {
+        switch keychain.get(account) {
+        case let .found(data):
+            guard let key = String(data: data, encoding: .utf8) else { return ("", .unreadable) }
+            return (key, key.isEmpty ? .none : .saved)
+        case .notFound:
+            return ("", .none)
+        case .failed:
+            return ("", .unreadable)
+        }
+    }
+
+    enum SaveResult: Equatable {
+        /// Nothing typed: the saved key, read or not, was left alone (no Keychain call).
+        case kept
+        case saved
+        /// The Keychain refused the write; the saved key, if any, is unchanged.
+        case failed
+    }
+
+    /// Stores what the user typed in a server form. An empty (or blank) field keeps the saved
+    /// key; anything else replaces it in place (`Keychain.set`), so a refused write leaves the
+    /// old one.
+    static func save(typed: String?, _ keychain: Keychain = .login) -> SaveResult {
+        let key = (typed ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return .kept }
+        return keychain.set(account, Data(key.utf8), label: "Foretype server API key") ? .saved : .failed
+    }
+}
+
 // MARK: - Self-test
 
 /// `Foretype --keychain-selftest`: the key rules against an in-memory Keychain and files in
@@ -289,6 +336,7 @@ enum KeychainSelfTest {
         check(HistoryStore.key(k, file: history) == .unavailable && !m.calls.contains("delete"), "key can't be stored: unavailable")
 
         aboutYou(dir: dir, check: check)
+        serverKey(refusals: refusals, check: check)
         print(ok ? "keychain self-test passed" : "keychain self-test failed")
         return ok
     }
@@ -340,5 +388,63 @@ enum KeychainSelfTest {
         m.items[AboutYouStore.account] = key
         expect(AboutYouStore.delete(k, url: url) && m.items.isEmpty && !FileManager.default.fileExists(atPath: url.path),
                "about you: clear deletes the file and the key")
+    }
+
+    /// The server API key: a failed read never blanks, deletes or replaces it.
+    private static func serverKey(refusals: [(OSStatus, String)], check expect: (Bool, String) -> Void) {
+        let old = Data("sk-old".utf8)
+        func fresh(_ item: Data? = old) -> (Memory, AppSettings) {
+            let m = Memory()
+            m.items[ServerKey.account] = item
+            let s = AppSettings()
+            s.keychain = Keychain(backend: m)
+            return (m, s)
+        }
+
+        // Reads: the key, none, or unreadable (never "none" for a failure).
+        var (m, s) = fresh()
+        expect(ServerKey.read(s.keychain) == ("sk-old", .saved), "server key: reads back")
+        (m, s) = fresh(nil)
+        expect(ServerKey.read(s.keychain) == ("", .none), "server key: missing item reads as none")
+        (m, s) = fresh(Data([0xff, 0xfe]))
+        expect(ServerKey.read(s.keychain) == ("", .unreadable) && m.writes.isEmpty, "server key: item that isn't text is unreadable, kept")
+
+        for (status, what) in refusals {
+            // The engine gets no key for this run; the item stays.
+            (m, s) = fresh()
+            m.readStatus = status
+            expect(s.readServerKey() == "" && s.serverKeyState == .unreadable, "server key: \(what): engine gets none, fields say unreadable")
+            // Refreshing the server fields doesn't ask the Keychain again.
+            let reads = m.calls.count
+            _ = s.serverKeyState
+            _ = s.serverKeyState
+            expect(m.calls.count == reads, "server key: \(what): refreshes don't read again")
+            // The form starts empty; saving it as it is (the dialog's Save, Settings' Apply)
+            // makes no Keychain call at all.
+            m.calls = []
+            for typed in [nil, "", "  ", "\n"] as [String?] {
+                expect(s.saveServerKey(typed: typed) == .kept, "server key: \(what): empty field \(typed?.debugDescription ?? "nil") keeps the key")
+            }
+            expect(m.calls.isEmpty && m.items[ServerKey.account] == old, "server key: \(what): nothing written, key untouched")
+            // A typed key replaces it in place, even while it can't be read.
+            expect(s.saveServerKey(typed: " sk-new ") == .saved && m.writes == ["update"], "server key: \(what): typed key updates in place")
+            expect(m.items[ServerKey.account] == Data("sk-new".utf8) && s.serverKeyState == .saved, "server key: \(what): typed key stored, trimmed")
+            // A refused write keeps the old key.
+            (m, s) = fresh()
+            m.readStatus = status
+            m.writeStatus = status
+            expect(s.saveServerKey(typed: "sk-new") == .failed && !m.calls.contains("delete") && !m.calls.contains("add"),
+                   "server key: \(what): refused write neither deletes nor adds")
+            expect(m.items[ServerKey.account] == old, "server key: \(what): refused write keeps the old key")
+        }
+
+        // The Settings window reads once, then uses what it read.
+        (m, s) = fresh()
+        expect(s.serverKeyState == .saved && s.serverKeyState == .saved && m.calls == ["copy"], "server key: fields read the Keychain once")
+        // No key yet: the first typed key adds the item; an empty field adds nothing.
+        (m, s) = fresh(nil)
+        expect(s.saveServerKey(typed: "") == .kept && m.calls.isEmpty, "server key: no key, empty field: nothing written")
+        expect(s.saveServerKey(typed: "sk-1") == .saved && m.writes == ["update", "add"] && s.readServerKey() == "sk-1",
+               "server key: first typed key added")
     }
 }
