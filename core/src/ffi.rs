@@ -216,7 +216,9 @@ pub unsafe extern "C" fn ft_string_free(s: *mut c_char) {
     }
 }
 
-/// Personalization history size as `{"records": n, "words": n}`.
+/// Personalization history size as `{"records": n, "words": n, "locked": bool}`. `locked`:
+/// the file is there but its key opens none of it (or it can't be read); it is kept as it
+/// is, nothing is recorded or imported, and only clearing it unlocks it.
 ///
 /// # Safety
 /// `engine` must be live.
@@ -224,7 +226,7 @@ pub unsafe extern "C" fn ft_string_free(s: *mut c_char) {
 pub unsafe extern "C" fn ft_engine_history_stats(engine: *mut FtEngine) -> *mut c_char {
     let Some(e) = engine.as_ref() else { return ptr::null_mut() };
     let (records, words) = e.core.history_stats();
-    to_c(serde_json::json!({ "records": records, "words": words }).to_string())
+    to_c(serde_json::json!({ "records": records, "words": words, "locked": e.core.history_locked() }).to_string())
 }
 
 /// Deletes the personalization history (file included). Returns false on failure.

@@ -118,10 +118,18 @@ final class EngineBridge {
     }
 
     func historyStats() -> (records: Int, words: Int) {
-        guard let handle, let raw = ft_engine_history_stats(handle) else { return (0, 0) }
+        let o = historyStatsJSON()
+        return (o["records"] as? Int ?? 0, o["words"] as? Int ?? 0)
+    }
+
+    /// The history file is there but its key opens none of it (or it can't be read): the
+    /// core keeps it as it is and records nothing until it is deleted.
+    var historyKeyMismatch: Bool { historyStatsJSON()["locked"] as? Bool ?? false }
+
+    private func historyStatsJSON() -> [String: Any] {
+        guard let handle, let raw = ft_engine_history_stats(handle) else { return [:] }
         defer { ft_string_free(raw) }
-        let o = (try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Int]) ?? [:]
-        return (o["records"] ?? 0, o["words"] ?? 0)
+        return (try? JSONSerialization.jsonObject(with: Data(String(cString: raw).utf8)) as? [String: Any]) ?? [:]
     }
 
     /// Adds earlier writing as `(app, text)` records; returns how many were kept (texts under

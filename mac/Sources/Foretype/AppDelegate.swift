@@ -36,11 +36,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     /// Settings ▸ About You. Read from its encrypted file only if one exists, so the Keychain
     /// is never touched for users who haven't entered anything. FORETYPE_ABOUT_YOU (testing)
     /// replaces it and keeps the store untouched.
-    private(set) var aboutYou = AboutYou.fromEnvironment() ?? (AboutYouStore.exists ? AboutYouStore.load() : AboutYou()) {
+    private(set) var aboutYou = AboutYou() {
         didSet { Log.mask(aboutYou.logMasks) }
     }
     private let aboutYouFromEnvironment = AboutYou.fromEnvironment() != nil
+    /// The details file exists but its key couldn't be read: nothing is saved over it until
+    /// the user tries again (`retryAboutYou`) or clears the details.
+    private(set) var aboutYouLocked = false
     private var aboutYouSave: DispatchWorkItem?
+
+    override init() {
+        super.init()
+        if let details = AboutYou.fromEnvironment() {
+            aboutYou = details
+        } else if AboutYouStore.exists {
+            if let details = AboutYouStore.load() { aboutYou = details } else { aboutYouLocked = true }
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.mask(aboutYou.logMasks)
@@ -186,13 +198,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             config["backend"] = settings.backend
             config["backend_url"] = settings.backendURL
             config["backend_model"] = settings.backendModel
-            config["backend_api_key"] = settings.backendAPIKey
+            // A key that can't be read: none for this run, the saved one left as it is.
+            config["backend_api_key"] = settings.readServerKey()
             label = settings.backendURL
             loadedModelPath = nil
         }
-        if settings.personalize, let key = HistoryStore.keyHex() {
-            config["history_path"] = HistoryStore.path
-            config["history_key_hex"] = key
+        // A locked history (its key unreadable) stays off for this run: no new key, nothing
+        // opened or recorded, no second Keychain prompt until the user tries again.
+        if settings.personalize, !settings.historyLocked {
+            switch HistoryStore.key() {
+            case let .ready(key):
+                config["history_path"] = HistoryStore.path
+                config["history_key_hex"] = key
+            case .locked, .unavailable:
+                settings.historyLocked = true
+                config["settings"] = Controller.coreSettings(settings, paused: pause.isPaused, saveEnergy: saveEnergy)
+            }
         }
         let json = String(data: try! JSONSerialization.data(withJSONObject: config), encoding: .utf8)!
         guard let engine = EngineBridge(configJSON: json) else {
@@ -201,6 +222,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             return
         }
         if settings.backend == "apple" { engine.setCompleter(AppleModel.complete) }
+        // The key opens none of the history file (D46): the core keeps it as it is; lock it
+        // here too so the menu and Settings say so (the controller sends `learning` below).
+        if settings.learning, engine.historyKeyMismatch {
+            settings.historyLocked = true
+            settings.historyKeyMismatch = true
+        }
         // One system prompt, and only from the bundled app: a bare dev binary started from a
         // terminal would make macOS ask on behalf of the terminal.
         if settings.useScreenContext, Bundle.main.bundleIdentifier != nil,
@@ -533,7 +560,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
                 item.state = settings.personalizeStrength == i ? .on : .off
                 pm.addItem(item)
             }
-            if let stats = controller?.engine.historyStats() {
+            if settings.historyLocked {
+                let locked = NSMenuItem(title: L("Writing history is locked"), action: nil, keyEquivalent: "")
+                locked.isEnabled = false
+                pm.addItem(locked)
+                let retry = NSMenuItem(title: L("Try Again"), action: #selector(retryHistoryMenu), keyEquivalent: "")
+                retry.target = self
+                pm.addItem(retry)
+            } else if let stats = controller?.engine.historyStats() {
                 let info = NSMenuItem(title: L("%1$@, %2$@ learned", LCount(stats.records, "%@ texts", one: "%@ text"),
                                                     LCount(stats.words, "%@ words", one: "%@ word")),
                                       action: nil, keyEquivalent: "")
@@ -542,7 +576,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             }
         }
         pm.addItem(.separator())
-        let imp = NSMenuItem(title: L("Import Writing\u{2026}"), action: settings.personalize ? #selector(importWritingMenu) : nil, keyEquivalent: "")
+        let imp = NSMenuItem(title: L("Import Writing\u{2026}"), action: settings.learning ? #selector(importWritingMenu) : nil, keyEquivalent: "")
         imp.target = self
         pm.addItem(imp)
         let del = NSMenuItem(title: L("Delete Writing History\u{2026}"), action: #selector(deleteHistory), keyEquivalent: "")
@@ -814,7 +848,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let model = NSTextField(string: settings.backendModel)
         model.placeholderString = L("model name (OpenAI-compatible only)")
         let key = NSSecureTextField(string: "")
-        key.placeholderString = settings.backendAPIKey.isEmpty ? L("API key (optional)") : L("API key saved; type to replace")
+        // Never pre-filled: an empty field keeps the saved key, even one that can't be read.
+        switch settings.serverKeyState {
+        case .none: key.placeholderString = L("API key (optional)")
+        case .saved: key.placeholderString = L("API key saved; type to replace")
+        case .unreadable: key.placeholderString = L("Saved API key can't be read; type to replace")
+        }
         let stack = NSStackView(views: [kind, url, model, key])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -854,6 +893,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     @objc private func deleteHistory() {
         confirmDeleteHistory()
     }
+
+    @objc private func retryHistoryMenu() { retryHistory() }
 
     @objc private func openInstructionsMenu() {
         openInstructions()
@@ -916,7 +957,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     func setPersonalize(_ on: Bool) {
         if on, !settings.personalize {
-            guard let key = HistoryStore.keyHex() else {
+            let key: String
+            switch HistoryStore.key() {
+            case let .ready(k):
+                key = k
+            case .locked:
+                showHistoryLocked()
+                return
+            case .unavailable:
                 NSApp.activate(ignoringOtherApps: true)
                 let alert = NSAlert()
                 alert.messageText = L("Couldn't create the encryption key")
@@ -928,7 +976,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             controller?.engine.openHistory(path: HistoryStore.path, keyHex: key)
         }
         settings.personalize = on
+        settings.historyKeyMismatch = on && controller?.engine.historyKeyMismatch == true
+        settings.historyLocked = settings.historyKeyMismatch
         settingsChanged()
+        if settings.historyKeyMismatch { showHistoryLocked() }
+    }
+
+    /// Reads the history's key again (the Keychain may ask) and, if it is there now, opens
+    /// the history and starts learning.
+    func retryHistory() {
+        guard settings.personalize, settings.historyLocked else { return }
+        guard case let .ready(key) = HistoryStore.key() else {
+            showHistoryLocked()
+            return
+        }
+        controller?.engine.openHistory(path: HistoryStore.path, keyHex: key)
+        settings.historyKeyMismatch = controller?.engine.historyKeyMismatch == true
+        settings.historyLocked = settings.historyKeyMismatch
+        settingsChanged()
+        if settings.historyLocked { showHistoryLocked() }
+    }
+
+    private func showHistoryLocked() {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = L("Writing history is locked")
+        alert.informativeText = settings.historyLockedNote
+        alert.runModal()
+        preferences?.refresh()
     }
 
     func historyStats() -> (records: Int, words: Int)? {
@@ -987,8 +1062,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         alert.addButton(withTitle: L("Delete"))
         alert.addButton(withTitle: L("Cancel"))
         if alert.runModal() == .alertFirstButtonReturn {
-            if controller?.engine.clearHistory() != true {
+            // A locked history isn't open in the engine: remove its file here.
+            if controller?.engine.clearHistory() != true || settings.historyLocked {
                 try? FileManager.default.removeItem(atPath: HistoryStore.path)
+            }
+            // Its key was readable, only the file wasn't its: with the file gone, start over.
+            if settings.historyKeyMismatch {
+                settings.historyKeyMismatch = false
+                retryHistory()
             }
         }
         preferences?.refresh()
@@ -996,7 +1077,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     /// Applies at once; the encrypted file is written half a second after the last change.
     func setAboutYou(_ details: AboutYou) {
-        guard details != aboutYou else { return }
+        guard details != aboutYou, !aboutYouLocked else { return }
         aboutYou = details
         controller?.detailsJSON = details.coreJSON()
         aboutYouSave?.cancel()
@@ -1004,7 +1085,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         let item = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.aboutYouSave = nil
-            if !AboutYouStore.save(self.aboutYou) {
+            if AboutYouStore.save(self.aboutYou) != .saved {
                 NSApp.activate(ignoringOtherApps: true)
                 let alert = NSAlert()
                 alert.messageText = L("Couldn't save your details")
@@ -1029,8 +1110,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             aboutYouSave = nil
             aboutYou = AboutYou()
             if !aboutYouFromEnvironment { AboutYouStore.delete() }
+            aboutYouLocked = false
             controller?.detailsJSON = aboutYou.coreJSON()
         }
+        preferences?.refresh()
+    }
+
+    /// Reads the details' key again (the Keychain may ask) and, if it is there now, loads them.
+    func retryAboutYou() {
+        guard aboutYouLocked else { return }
+        guard let details = AboutYouStore.load() else {
+            NSSound.beep()
+            return
+        }
+        aboutYouLocked = false
+        aboutYou = details
+        controller?.detailsJSON = details.coreJSON()
         preferences?.refresh()
     }
 
@@ -1118,8 +1213,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         settings.backend = backend
         settings.backendURL = url.trimmingCharacters(in: .whitespaces)
         settings.backendModel = model.trimmingCharacters(in: .whitespaces)
-        if let apiKey, !apiKey.isEmpty { settings.backendAPIKey = apiKey }
+        let saved = settings.saveServerKey(typed: apiKey)
         startEngine()
         preferences?.refresh()
+        if saved == .failed {
+            NSApp.activate(ignoringOtherApps: true)
+            let alert = NSAlert()
+            alert.messageText = L("Couldn't save the API key")
+            alert.informativeText = L("The Keychain didn't accept it, so the saved key, if any, is unchanged. Try again later.")
+            alert.runModal()
+        }
     }
 }

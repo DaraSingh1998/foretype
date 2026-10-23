@@ -369,9 +369,18 @@ The file is compiled into the core (`include_str!`).
   the text typed since focus (after the common prefix with `start`) is recorded when it is
   at least 20 characters. Fields the gate rejects are never tracked.
 - **History file**: frames of `u32 LE length | 12-byte nonce | ChaCha20-Poly1305
-  ciphertext of the JSON record {ts, app, text}`. Frames that fail to decrypt are skipped.
-  At most 3,000 records (compacted atomically). The 256-bit key is supplied by the shell
-  (hex) and never stored by the core. Without a key, history is memory-only.
+  ciphertext of the JSON record {ts, app, text}`. A frame that fails to decrypt among ones
+  that open (damage) is skipped. At most 3,000 records (compacted atomically). The 256-bit
+  key is supplied by the shell (hex) and never stored by the core. Without a key, history is
+  memory-only.
+- **Locked history** (D46): when the file has whole frames and none of them opens with the
+  key (a wrong key), or the file exists but can't be read, `History::open` returns it
+  *locked*: no records, and `append` and compaction return an error without touching the
+  file, so a wrong key can never append under itself or compact the real frames away.
+  `Core::history_locked` and `"locked"` in `ft_engine_history_stats` report it; recording
+  and `import_history` add nothing (the profile too). `clear` still deletes the file (the
+  user's call) and leaves the history unlocked and writable under the same key. A missing
+  or empty file, or one with only a torn partial frame, opens normally.
 - **Profile**: words of 4+ characters with no digits, minus a list of very common English
   words; counted case-insensitively, most recent spelling kept. The bias uses words seen at
   least twice (top 3,000), weighted `ln(1+count)/ln(1+max)`.
@@ -419,7 +428,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_set_context(engine, context_json)` | Other apps' text (below), sent only when the pool changes; `{"passages": []}` clears it; ignored with a server backend; false if the JSON doesn't parse |
 | `ft_engine_set_completer(engine, callback, ctx)` | Completer for the `shell` backend (request JSON in, malloc'd text out) |
 | `ft_engine_compat_rule(engine, bundle_id)` | Rule JSON for an app |
-| `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization |
+| `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization; stats are `{"records","words","locked"}` (`locked`: the key opens none of the file, kept read-only) |
 | `ft_model_catalog(ram_gb)` | Model list (no engine needed) |
 | `ft_default_instructions()` | The custom instructions a fresh install starts with, `{"global", "apps": {bundle: note}}` (`core/data/default-instructions.json`; no engine needed) |
 
@@ -713,8 +722,11 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   switch (on by default), per-detail switches; `coreJSON()` sends switched-off details empty),
   `AboutYouStore` (`~/Library/Application Support/Foretype/about-you.bin`: the JSON sealed
   with CryptoKit ChaCha20-Poly1305, mode 0600; 256-bit key in the Keychain account
-  `about-you-key`, created on the first save, read at launch only if the file exists;
-  emptying every field or Clear All deletes both), `MeCard` (Contacts' "me" card, read only
+  `about-you-key`, created on the first save only when the Keychain has none and there is
+  no file, read at launch only if the file exists; a file whose key can't be read loads as
+  locked (`load` returns nil, `save` returns `.locked`): `AppDelegate.aboutYouLocked`
+  disables the pane's fields and shows a note with Try Again (`retryAboutYou`); emptying
+  every field or Clear All deletes both), `MeCard` (Contacts' "me" card, read only
   when the user clicks Fill from My Card; hidden in a bare binary, which has no Contacts
   usage string). `AppDelegate` keeps the details in memory, sends them to the engine at
   once (`Controller.detailsJSON`, again after an engine swap) and saves 0.5 s after the last
@@ -725,9 +737,33 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   password managers until changed), personalize, strength, backend, backendURL,
   backendModel, modelPath, onboarded; `otherAppsTokens` and `contextSize` from the Mac's
   memory: 512 tokens and n_ctx 2048 under 16 GB, 2,048 and n_ctx 4096 from 16 GB while
-  other apps' text is on; `AppDelegate` restarts the built-in engine when that changes), `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
-  `backend-api-key`), `HistoryStore` (`~/Library/Application Support/Foretype/history.bin`),
-  `ModelLocator`.
+  other apps' text is on; `AppDelegate` restarts the built-in engine when that changes;
+  `historyLocked` and `historyKeyMismatch` are for the run only, and
+  `learning`, personalize and not locked, is what the core gets as `personalize`;
+  `keychain`, the login one or an in-memory one in the self-tests; `readServerKey()` gives
+  the engine the server API key and `serverKeyState` what the server fields say about it,
+  remembered for the run; `saveServerKey(typed:)`), `ModelLocator`.
+- **`Keychain.swift`**: `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
+  `about-you-key`, `backend-api-key`). `get` returns `.found`, `.notFound`
+  (errSecItemNotFound only) or `.failed(status)` (denied, cancelled, locked keychain, a
+  changed signature...); `set` updates the item in place and adds it only when there is
+  none, never delete-then-add. The Security calls sit behind `KeychainBackend`
+  (`Keychain.login` in the app). `HistoryStore` (`~/Library/Application
+  Support/Foretype/history.bin`): `key()` returns `.ready(hex)`, `.locked` or `.unavailable`
+  and makes a new key only on `.notFound` with no history file (or an empty one), so a
+  failed read never replaces the key (D45). At engine start a locked history sets
+  `historyLocked`: no history path or key goes to the core, it gets `personalize: false`, and
+  the Keychain isn't asked again that run until the user chooses Try Again
+  (`AppDelegate.retryHistory`). A key that is read but opens none of the file (the core's
+  `"locked"`, `EngineBridge.historyKeyMismatch`, checked after each open) sets
+  `historyKeyMismatch` and `historyLocked` with their own note; deleting the history then
+  reopens it under the same key. `ServerKey` (the server API key): `read` returns the key
+  and a state, `.none`, `.saved` or `.unreadable` (a failed read, or not text), and the
+  engine gets "" for that run when there is no key or it can't be read; the server dialog
+  and Settings ▸ Model never pre-fill the key, say which state it is in, and `save(typed:)`
+  writes only a key the user typed (in place), so an empty field never deletes it and a
+  failed read never blanks it. `--keychain-selftest` checks the rules against an in-memory
+  backend and a temporary folder, never the real items or files.
 - **`Stats.swift`**: `UsageStats`, the words-saved counts: per accept, kind (Tab or
   accept-all), words, characters and keystrokes saved (characters minus the one accept key
   press). Totals plus one bucket per local day for the last 30 days, as one JSON value in

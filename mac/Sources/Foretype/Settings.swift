@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// User settings persisted in UserDefaults and mirrored into the core as JSON.
 final class AppSettings {
@@ -151,6 +150,25 @@ final class AppSettings {
         set { d.set(newValue, forKey: "personalize") }
     }
 
+    /// For this run only, never saved: personalization is on but the history's key couldn't
+    /// be read from the Keychain (`HistoryStore.Key.locked`), or `historyKeyMismatch`, so
+    /// nothing is learned or opened until the user tries again.
+    var historyLocked = false
+
+    /// For this run only: the key was read but opens none of the history file, which the core
+    /// then keeps as it is (D46). Comes with `historyLocked`; deleting the history ends it.
+    var historyKeyMismatch = false
+
+    /// Why the history is locked, for the alert and the Personalization pane.
+    var historyLockedNote: String {
+        historyKeyMismatch
+            ? L("The key in your Keychain doesn't open your writing history. Nothing is learned, and the history is kept as it is in case its key comes back. Delete it to start a new one.")
+            : L("Foretype couldn't read its key from the Keychain. Nothing is learned until it can, and your history is kept as it is. Try again later, or delete the history to start a new one.")
+    }
+
+    /// Personalization as the core sees it: on, and its history open.
+    var learning: Bool { personalize && !historyLocked }
+
     /// 0 gentle, 1 balanced, 2 strong.
     var personalizeStrength: Int {
         get { d.object(forKey: "personalizeStrength") as? Int ?? 1 }
@@ -173,10 +191,37 @@ final class AppSettings {
         set { d.set(newValue, forKey: "backendModel") }
     }
 
-    /// API key for a server backend, kept in the Keychain (only read when a server is used).
-    var backendAPIKey: String {
-        get { Keychain.get("backend-api-key").flatMap { String(data: $0, encoding: .utf8) } ?? "" }
-        set { Keychain.set("backend-api-key", newValue.data(using: .utf8), label: "Foretype server API key") }
+    /// Where the server API key is kept: the login Keychain, or an in-memory one in the
+    /// self-tests.
+    var keychain = Keychain.login
+
+    /// What the server fields say about the saved API key, from the last read this run (nil:
+    /// not read yet). Refreshing the Settings window uses it instead of asking the Keychain
+    /// again, so a denied or cancelled prompt doesn't come back on every refresh.
+    private var serverKeyRead: ServerKey.State?
+
+    /// The server API key for the engine: one Keychain read, "" when there is none or it
+    /// can't be read (that run goes without; the saved key is left alone).
+    func readServerKey() -> String {
+        let (key, state) = ServerKey.read(keychain)
+        serverKeyRead = state
+        if state == .unreadable { Log.debug("server API key: Keychain read failed, none sent this run") }
+        return key
+    }
+
+    /// What the server fields say about the saved key: as last read, or read now.
+    var serverKeyState: ServerKey.State {
+        if let s = serverKeyRead { return s }
+        _ = readServerKey()
+        return serverKeyRead ?? .unreadable
+    }
+
+    /// Saves the key typed in a server form (`ServerKey.save`): nothing typed keeps the
+    /// saved key as it is, even one that couldn't be read.
+    func saveServerKey(typed: String?) -> ServerKey.SaveResult {
+        let result = ServerKey.save(typed: typed, keychain)
+        if result == .saved { serverKeyRead = .saved }
+        return result
     }
 
     var onboarded: Bool {
@@ -232,58 +277,13 @@ final class AppSettings {
          // The core filters by bundle ID and can't express a pid entry; then the tracker, which
          // never reads an app this list rejects, is the only filter.
          "only_apps": onlyApps.contains { pid_t($0) != nil } ? [] : onlyApps,
-         "personalize": personalize, "personalize_strength": personalizeStrength,
+         "personalize": learning, "personalize_strength": personalizeStrength,
          "emoji": emoji, "autocorrect": autocorrect, "typo_gate": typoGate, "mid_line": midLine,
          "other_apps_tokens": AppSettings.otherAppsTokens]
     }
 
     func coreJSON() -> String {
         String(data: try! JSONSerialization.data(withJSONObject: coreDict), encoding: .utf8)!
-    }
-}
-
-/// Generic-password items for this app in the login Keychain.
-enum Keychain {
-    private static let service = "dev.foretype.Foretype"
-
-    static func get(_ account: String) -> Data? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account, kSecReturnData as String: true]
-        var out: CFTypeRef?
-        return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
-    }
-
-    @discardableResult
-    static func set(_ account: String, _ data: Data?, label: String) -> Bool {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account]
-        SecItemDelete(q as CFDictionary)
-        guard let data, !data.isEmpty else { return true }
-        var add = q
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        add[kSecAttrLabel as String] = label
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
-    }
-}
-
-/// The personalization history's location and its encryption key, kept in the Keychain.
-/// The key is only created or read when personalization is on.
-enum HistoryStore {
-    static var path: String {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Foretype/history.bin").path
-    }
-
-    /// The 256-bit key as hex, created on first use.
-    static func keyHex() -> String? {
-        if let data = Keychain.get("history-key"), data.count == 32 {
-            return data.map { String(format: "%02x", $0) }.joined()
-        }
-        var key = Data(count: 32)
-        let ok = key.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) } == errSecSuccess
-        guard ok, Keychain.set("history-key", key, label: "Foretype writing history key") else { return nil }
-        return key.map { String(format: "%02x", $0) }.joined()
     }
 }
 

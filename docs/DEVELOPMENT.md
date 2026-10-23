@@ -45,6 +45,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
 | Screen geometry across displays (global and Cocoa coordinates, displays left of, above and below the primary, mixed 1x/2x scales, cards at a display's top edge) | `mac/.build/release/Foretype --geometry-selftest` | nothing (made-up layouts; no second display) |
 | About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
+| Keychain keys (not found vs denied, cancelled, locked or transient errors; a new key only with no item and no file; update in place, never delete-then-add; About You locked load and save; the server API key: a failed read sends no key, keeps the item and isn't repeated by refreshes, an empty field writes nothing, a typed key updates in place) | `mac/.build/release/Foretype --keychain-selftest` | nothing (an in-memory Keychain and a temporary folder; never the real items, history or details) |
 | Pause and power rules (decisions, Resume Anyway, migration, saved pause) | `mac/.build/release/Foretype --pause-selftest` | nothing (a defaults suite of its own) |
 | Other apps' text pool (10-minute expiry, the 12-window cap, what is sent and when, the never-read and FORETYPE_ONLY_APPS gates, capture-forbidding and private windows, covered windows) | `mac/.build/release/Foretype --context-selftest` | nothing (made-up windows) |
 | Settings window layout (every pane fits a 13-inch MacBook Air; a tall pane scrolls in a window kept on screen, also on a display above; every tab in the toolbar); `DIR` gets a PNG of each pane, light and dark | `mac/.build/release/Foretype --settings-selftest [DIR]`; Hindi: `build/Foretype.app/Contents/MacOS/Foretype --settings-selftest DIR -AppleLanguages '(hi)'` | nothing (reads the settings, never writes them; the window is never shown) |
@@ -350,7 +351,9 @@ when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps lla
   created makes macOS ask for the login password: the item's access list names only the app
   that made it. On launch that's the About You key when `about-you.bin` exists, and the
   history key when personalization is on in the binary's defaults domain. The binary blocks
-  in `Keychain.get` until someone answers. Run development binaries with
+  in `Keychain.get` until someone answers. Deny (or Cancel) is safe: the history or the
+  details are locked for that run and their key and file are left alone (D45); before
+  that fix a denial replaced the key and lost the data. Run development binaries with
   `FORETYPE_ABOUT_YOU='{}'` (empty details, the store untouched), as `e2e-inline-caret.sh`
   and `e2e-textedit.sh` do, and never type the password into a prompt a test raised. The
   bundled dev build shares the installed app's defaults, so with personalization on there it

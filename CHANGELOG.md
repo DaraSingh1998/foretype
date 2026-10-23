@@ -29,6 +29,32 @@ the release notes are taken from it.
   the default model saves 61% of keystrokes with it and 42% without (screen context on).
 - Suggestions no longer echo the prompt's own section markers (`[End of screen t…`).
 
+### A Keychain that says no no longer costs your writing history (2026-10-23)
+- Data safety: when Foretype couldn't read the key of your writing history from the
+  Keychain (you clicked Deny on a Keychain prompt, the keychain was locked, or the app's
+  signature had changed), it took that as "no key yet", made a new one and replaced the old
+  key, so the history written until then could never be read again. The same could happen
+  to your About You details. Now a new key is made only when the Keychain has none and
+  there is no history or details file it could open. Any other failed read leaves the key
+  and the file alone: the history (or the details) is **locked** for that run, nothing is
+  learned, opened or deleted, and the Personalization menu and Settings say "Writing
+  history is locked" with **Try Again**. Settings ▸ About You shows the same for your
+  details, with Try Again; Clear All still deletes them.
+- Keychain writes update the item in place instead of deleting it and adding it again, so
+  a write that fails can't leave no key at all.
+- The server API key gets the same care. A Keychain read that fails no longer counts as
+  "no key": the engine goes without a key for that run, the server fields say "Saved API
+  key can't be read; type to replace" instead of "optional", and the saved key is left
+  exactly as it is unless you type a new one (an empty field never deletes it). After a
+  denied or cancelled prompt, refreshing Settings no longer asks the Keychain again, and a
+  new key the Keychain refuses to store now says so instead of failing silently.
+- A writing history that doesn't open with the key in your Keychain is no longer written
+  to. Before, Foretype read nothing from it but kept adding to the same file, and its next
+  clean-up rewrote the file without the old entries, so the right key could never read them
+  again. Now such a history is locked and kept exactly as it is: nothing is learned or
+  imported, and the Personalization menu and Settings say "Writing history is locked" with
+  a note that the key doesn't open it. Delete Writing History… starts a new one.
+
 ### Settings fit the screen (2026-10-23)
 - Settings ▸ General had grown taller than a MacBook screen: the update switches and Check
   Now ran behind the Dock and couldn't be reached. Its settings are now in three tabs:

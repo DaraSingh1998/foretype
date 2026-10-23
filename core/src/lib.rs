@@ -445,6 +445,12 @@ impl Core {
         (self.shared.history.lock().unwrap().records().len(), self.shared.profile.lock().unwrap().word_count())
     }
 
+    /// The history file is there but its key opens none of it (or it can't be read): it is
+    /// kept as it is and nothing is recorded until it is cleared.
+    pub fn history_locked(&self) -> bool {
+        self.shared.history.lock().unwrap().is_locked()
+    }
+
     /// Switches to the encrypted history file at `path` (personalization turned on at
     /// runtime). Returns false if the key is not 64 hex characters.
     pub fn open_history(&self, path: &str, key_hex: &str) -> bool {
@@ -477,8 +483,8 @@ impl Core {
                 if text.trim().chars().count() < MIN_RECORD_CHARS {
                     continue;
                 }
-                p.add_text(&text);
                 h.append(Record::now(&app, text.trim()))?;
+                p.add_text(&text);
                 n += 1;
             }
         }
@@ -1275,6 +1281,41 @@ mod tests {
         c.submit(snap(7, "ok thanks"));
         c.submit(snap(8, ""));
         assert_eq!(c.history_stats().0, 1);
+    }
+
+    #[test]
+    fn a_history_its_key_cant_open_stays_as_it_is() {
+        let path = std::env::temp_dir().join(format!("foretype-test-{}-core-locked.bin", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let mut h = History::open(&path, &[1u8; 32]);
+        h.append(Record::now("com.apple.mail", "Written under the key that was lost.")).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let c = Core::new(
+            CoreConfig {
+                model_path: "/nonexistent.gguf".into(),
+                history_path: path.to_string_lossy().into(),
+                history_key_hex: "02".repeat(32),
+                ..CoreConfig::default()
+            },
+            Box::new(|_| {}),
+        );
+        c.configure(Settings { personalize: true, ..Settings::default() });
+        assert!(c.history_locked());
+        assert!(c.import_history(vec![("".into(), "An imported paragraph that is long enough.".into())]).is_err());
+        c.submit(snap(1, "Re:"));
+        accept_here(&c);
+        c.submit(snap(1, "Re: a reply typed while the history is locked."));
+        c.submit(snap(2, ""));
+        assert_eq!(c.history_stats(), (0, 0), "nothing recorded or learned");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+
+        c.clear_history().unwrap();
+        assert!(!c.history_locked());
+        assert!(!path.exists());
+        c.import_history(vec![("".into(), "A paragraph for the new history file.".into())]).unwrap();
+        assert_eq!(c.history_stats().0, 1);
+        let _ = std::fs::remove_file(&path);
     }
 
     fn core_with_events() -> (Core, std::sync::mpsc::Receiver<Event>) {

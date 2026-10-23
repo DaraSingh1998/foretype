@@ -50,7 +50,8 @@ bool ft_engine_set_context(FtEngine *engine, const char *context_json);
 /// Installs the completer used when the config's backend is "shell".
 void ft_engine_set_completer(FtEngine *engine, FtCompleteCallback callback, void *ctx);
 
-/// Personalization: {"records": n, "words": n}; delete the history; import [{"app","text"}].
+/// Personalization: {"records": n, "words": n, "locked": bool} (locked: the file's key opens
+/// none of it, so it is kept read-only until deleted); delete the history; import [{"app","text"}].
 char *ft_engine_history_stats(FtEngine *engine);
 bool ft_engine_clear_history(FtEngine *engine);
 int64_t ft_engine_import_history(FtEngine *engine, const char *items_json);

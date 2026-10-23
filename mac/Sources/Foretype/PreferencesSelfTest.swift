@@ -121,15 +121,44 @@ enum PreferencesSelfTest {
             }
             print("panes written to \(dir)")
         }
+
+        // A locked writing history (key unreadable, or a key that opens none of the file) and
+        // locked details: their notes and Try Again still fit.
+        host.settings.historyLocked = true
+        host.aboutYouLocked = true
+        for mismatch in [false, true] {
+            host.settings.historyKeyMismatch = mismatch
+            let state = mismatch ? "locked, other key" : "locked"
+            for (i, pane) in prefs.panes.enumerated() where pane is PersonalizationPane || (!mismatch && pane is AboutYouPane) {
+                pane.refresh()
+                tabs.selectedTabViewItemIndex = i
+                tabs.fit(animated: false)
+                let name = pane.title ?? "?"
+                print(String(format: "%@ (%@): %.0f pt", name, state, pane.contentHeight))
+                check(inside(screen) && !pane.scrolls, "\(name) (\(state)): scrolls on a 13-inch MacBook Air")
+                if let dir {
+                    let path = "\(dir)/\(i + 1)-\(name.replacingOccurrences(of: " ", with: "-"))-\(mismatch ? "locked-key" : "locked").png"
+                    check((try? pane.png(dark: false)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+                }
+            }
+        }
+        host.settings.historyKeyMismatch = false
+        host.settings.historyLocked = false
+        host.aboutYouLocked = false
         print(failures == 0 ? "settings self-test passed" : "settings self-test: \(failures) failed")
         return failures == 0
     }
 }
 
 /// The Settings window's host for the self-test: the real settings and models folder, read
-/// only; in-memory statistics and pause; does nothing when a control asks.
+/// only; in-memory statistics, pause and Keychain (the server API key is never read); does
+/// nothing when a control asks.
 private final class StandInHost: PreferencesHost {
-    let settings = AppSettings()
+    let settings: AppSettings = {
+        let s = AppSettings()
+        s.keychain = Keychain(backend: KeychainSelfTest.Memory())
+        return s
+    }()
     let models = ModelManager()
     let stats = UsageStats(storage: .init(load: { nil }, save: { _ in }))
     let pause: PauseState
@@ -143,6 +172,7 @@ private final class StandInHost: PreferencesHost {
 
     var engineStatus: String { "ready \u{2014} Qwen3-1.7B-Base.Q4_K_M.gguf" }
     var aboutYou: AboutYou { AboutYou() }
+    var aboutYouLocked = false
     var updates: UpdateController? { nil }
     var pauseDescription: String? { nil }
     var powerState: PowerState {
@@ -153,6 +183,7 @@ private final class StandInHost: PreferencesHost {
 
     func settingsChanged() {}
     func setPersonalize(_ on: Bool) {}
+    func retryHistory() {}
     func historyStats() -> (records: Int, words: Int)? { nil }
     func confirmDeleteHistory() {}
     func openInstructions() {}
@@ -166,6 +197,7 @@ private final class StandInHost: PreferencesHost {
     func addAppException() {}
     func setAboutYou(_ details: AboutYou) {}
     func confirmClearAboutYou() {}
+    func retryAboutYou() {}
     func pauseSuggestions(until: Date?) {}
     func resumeSuggestions() {}
     func powerSettingsChanged() {}

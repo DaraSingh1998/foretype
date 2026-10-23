@@ -684,3 +684,52 @@ until Phase D moves it off the typing path. Accessibility text is what apps choo
 expose: Electron apps without their accessibility tree, canvas-drawn documents and Google
 Docs without screen-reader support give nothing, and on 8 GB Macs there is no OCR to fall
 back on.
+
+## D45. A failed Keychain read never replaces a key (2026-10-23)
+
+**Decision.** `Keychain.get` tells errSecItemNotFound apart from every other failure. The
+writing history's key and the About You key are created only when the Keychain has no item
+*and* there is no file (or an empty one) the key could have opened. Any other result (the
+user denied or cancelled a prompt, the keychain is locked, interaction isn't allowed, the
+app's signature changed, a malformed item, or a file without its key) locks that store for
+the run: nothing is recorded, opened, saved or deleted, and the user gets a non-blocking
+note with Try Again (the Personalization menu and pane, the About You pane). `Keychain.set`
+updates the item in place and adds one only when there is none.
+**Why.** Before, any failed read counted as "no key yet": a new key was made and written
+with delete-then-add, so one click on Deny (or a rebuild that changed the dev build's
+signature) made the existing history and details unreadable for good. The file is the
+user's data; the key is the only way to read it. Not being able to learn for a while is
+cheap, losing months of writing is not. Delete-then-add also left no key at all whenever
+the add failed. A locked store doesn't ask the Keychain again on every engine restart:
+one prompt per run, then only when the user asks.
+**Cost.** A history file whose key really is gone (deleted by hand in Keychain Access, a new
+Mac without the item) stays locked until the user deletes the history; the note says so.
+A details file that decrypts to nothing with a readable key is still treated as empty and
+overwritten on the next save (the key wasn't the problem there).
+**Server API key.** The same rule holds for the server backend's API key, which has no
+file to protect but is the user's secret: a failed read gives the engine no key for that
+run and the server fields say the saved key can't be read; the fields are never pre-filled
+and only a key the user types is written (in place), so neither a failed read nor an empty
+field can blank or delete it. The fields remember the read for the run, so a denied prompt
+doesn't come back on every refresh of the Settings window.
+
+## D46. The core never writes to a history its key can't open (2026-10-23)
+
+**Decision.** `History::open` counts the whole frames in the file and the ones that decrypt.
+Frames but none that open, or a file that exists but can't be read, make the history
+**locked**: no records, and `append` and compaction fail without touching the file. The
+state is reported as `"locked"` in `ft_engine_history_stats`; the Mac shell shows it as a
+locked history with its own note ("the key in your Keychain doesn't open your writing
+history"). Only clearing the history (the user's Delete) removes the file and unlocks it
+under the same key. One undecryptable frame among good ones is still damage: skipped, and
+dropped at the next compaction.
+**Why.** Before, a wrong key read 0 records but kept appending frames sealed under itself to
+the same file, and the first compaction rewrote the file from those alone, destroying every
+frame the right key could have opened. D45 stops the shell from making a wrong key after a
+failed Keychain read, but a key can still be wrong (a Keychain item restored from elsewhere,
+a history file copied from another Mac, a future bug), and the core is the last place that
+can refuse. A history that can't learn for a while is cheap; one rewritten without its old
+frames can't be recovered.
+**Cost.** A history whose key is truly gone stays locked until the user deletes it. A file
+that was written under two keys (by builds before this fix) opens with either one, and the
+next compaction under that key still drops the other key's frames.
