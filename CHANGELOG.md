@@ -5,6 +5,20 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Full-screen windows and displays above the main one (2026-10-23)
+- In a window in full screen (its own Space), such as WhatsApp Web in full-screen Chrome,
+  suggestions showed in a card (⇥ …) instead of after the caret. macOS refuses to capture a
+  full-screen window on its own, so where the app gives no caret position Foretype never
+  found the caret. Such a window is now captured through its display with only that window
+  in the picture: in WhatsApp Web every suggestion is drawn inline. Screen context reads
+  full-screen windows the same way.
+- On a display arranged above the main one, the card above the field and the tip card were
+  drawn below the line: everything there has a negative y, which read as off the top of
+  the screen. The check now uses the top of the display the field is on.
+- `FORETYPE_DEBUG` says why a blink search found no caret (no capture, or what changed
+  between frames); `scripts/e2e-inline-caret.sh` takes `WINDOW_POS` to open its window on
+  another display.
+
 ## 0.1.3 (2026-10-23)
 
 ### Ghost text at the right size (2026-10-22)

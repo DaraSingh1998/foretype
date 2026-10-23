@@ -89,29 +89,25 @@ final class ScreenContextProvider {
                 window = candidates.max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
             }
             guard let window else { return }
-            let scale = NSScreen.screens.first { $0.frame.intersects(window.frame) }?.backingScaleFactor ?? 2
-            let config = SCStreamConfiguration()
-            config.width = Int(window.frame.width * scale)
-            config.height = Int(window.frame.height * scale)
-            config.showsCursor = false
-            let filter = SCContentFilter(desktopIndependentWindow: window)
-            let t0 = Date()
-            SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { image, error in
-                guard let image else {
-                    Log.debug("screen: capture failed: \(error?.localizedDescription ?? "?")")
+            let displays = content.displays
+            self.queue.async {
+                let t0 = Date()
+                // A full-screen window is captured through its display (WindowCapture).
+                guard let shot = WindowCapture.image(of: window, rect: window.frame, displays: displays) else {
+                    Log.debug("screen: capture failed")
                     return
                 }
-                self.queue.async {
-                    let field = target.fieldFrame.map { $0.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY) }
-                    let text = ScreenContextProvider.recognize(image, windowSize: window.frame.size, field: field)
-                    self.lock.lock()
-                    self.texts[target.fieldKey] = text
-                    if self.texts.count > 32 { self.texts.removeValue(forKey: self.texts.keys.first!) }
-                    self.lock.unlock()
-                    Log.debug(String(format: "screen: %d chars from %@ in %.0f ms", text.count,
-                                     window.owningApplication?.applicationName ?? "?", Date().timeIntervalSince(t0) * 1000))
-                    self.onUpdate?(target.fieldKey, text)
-                }
+                // The shot can be clipped to its display, so measure from what it covers.
+                let size = CGSize(width: CGFloat(shot.image.width) / shot.scale, height: CGFloat(shot.image.height) / shot.scale)
+                let field = target.fieldFrame.map { $0.offsetBy(dx: -shot.origin.x, dy: -shot.origin.y) }
+                let text = ScreenContextProvider.recognize(shot.image, windowSize: size, field: field)
+                self.lock.lock()
+                self.texts[target.fieldKey] = text
+                if self.texts.count > 32 { self.texts.removeValue(forKey: self.texts.keys.first!) }
+                self.lock.unlock()
+                Log.debug(String(format: "screen: %d chars from %@ in %.0f ms", text.count,
+                                 window.owningApplication?.applicationName ?? "?", Date().timeIntervalSince(t0) * 1000))
+                self.onUpdate?(target.fieldKey, text)
             }
         }
     }

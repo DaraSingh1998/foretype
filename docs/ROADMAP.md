@@ -112,7 +112,8 @@ are kept for if that changes; the core stays portable.
   the first keystroke); later fields, new lines and wraps are found while typing with one
   capture (D37). A caret that never blinks is never found; between checks the ghost follows
   a font guess (about 1 pt off over a line without the host font). Measured in TextEdit
-  against its AX caret and in a Chrome chat-composer fixture (`docs/MEASUREMENTS.md`).
+  against its AX caret, in a Chrome chat-composer fixture, in the Claude app and in WhatsApp
+  Web in full-screen Chrome on a display above the main one (`docs/MEASUREMENTS.md`).
 - About You fills only at the end of a line, from English cue phrases, and only when what
   was typed is the start of the stored value exactly as written (case aside).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in

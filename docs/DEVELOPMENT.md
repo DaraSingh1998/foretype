@@ -224,7 +224,9 @@ aborts after 2 s.
   suggestion (normally 2–3 s, see `docs/MEASUREMENTS.md`), screenshots the window region
   to `build/e2e-chrome/1-fresh.png`, then clears `AXEnhancedUserInterface` from outside and
   checks that Foretype primes again.
-- `e2e-inline-caret.sh [ce|textarea]`: sends no keystrokes. A throwaway-profile Chrome opens
+- `e2e-inline-caret.sh [ce|textarea]` (`WINDOW_POS=X,Y` opens the window there, in
+  screen points from the main display's top left, e.g. on a display above it): sends no
+  keystrokes. A throwaway-profile Chrome opens
   `scripts/fixtures/composer.html`, a chat composer (one `<p>` per line, like ProseMirror)
   that types into itself 6 s after its window is focused, at 110–190 ms per character, and
   pauses while it isn't: a first line that wraps, Enter and a second line, the field
@@ -263,8 +265,14 @@ after the caret on its line when there are any (letters as `a`, others as `U+XXX
 `line=` the caret line's start index, `field=` the field's top and height, and `show=` how
 the suggestion was drawn (`inline`, `card` under the caret, `mirror` above the
 field, `hidden`). The pixel caret locator logs `pixel caret (blink|verify|solid): X,Y hH in
-N frames M ms, width scale S`, `pixel caret: no blinking caret found in BUNDLE` and `pixel
-caret: no solid caret found in BUNDLE (N bars, direction D, from y Y)`; `rev N pixel caret moved the suggestion: show=...`
+N frames M ms, width scale S`, `pixel caret: no blinking caret found in BUNDLE (field: WHY;
+window: WHY)` and `pixel caret: no solid caret found in BUNDLE (N bars, direction D, from y
+Y)`. WHY is `no capture of WxH pt` (ScreenCaptureKit returned nothing), `frame size changed`,
+or `N frames of WxH px at Sx, P px changed, bars a/b/c/d/e (all/thin/filled/clear/quiet)`
+with the first sizes in points: how many changed-pixel bars survived each filter (a caret
+needs exactly one at the end; typing during the captures leaves many, a caret that never
+blinks none). `capture: APP window N only through its display (full screen)` marks a window
+that is captured through its display (D42); `rev N pixel caret moved the suggestion: show=...`
 when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps llama.cpp's own logs.
 
 ## macOS permissions and signing (TCC)

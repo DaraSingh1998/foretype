@@ -538,3 +538,20 @@ are also English (main, me, par, the, hum, sun, mat) are left off the list so th
 doesn't read as Hinglish; until a field has two listed words, unlisted spellings are still
 judged by the checker. A typo the user kept once in a field isn't offered a fix again there.
 The list is maintained by hand.
+
+## D42. Full-screen windows are captured through their display (2026-10-23)
+
+**Decision.** `WindowCapture` (pixel caret and screen context) captures a window with
+`SCContentFilter(desktopIndependentWindow:)` first. When that returns nothing it captures
+the same rectangle with `SCContentFilter(display:including: [window])` on the display under
+the rectangle's centre, and remembers the window so the failing attempt isn't repeated.
+**Why.** In WhatsApp Web in the user's Chrome every caret capture failed, so suggestions
+stayed in the card: the window was in native full screen, and for such a window the
+desktop-independent filter fails with ScreenCaptureKit error -3811 ("Failed to start stream
+due to audio/video capture failure") while the display filter limited to that window works
+(`docs/MEASUREMENTS.md`). The display filter keeps what the locator relies on: only that
+window's pixels, with no other window, Foretype's overlay or the pointer.
+**Cost.** The display path sees only the part of the window on that display (a window
+across two displays is clipped to the one under the field). A window that leaves full
+screen keeps the display path until Foretype quits; it still works, as the display filter
+captures windows that aren't full screen too. Measured only on macOS 27 with Chrome.
