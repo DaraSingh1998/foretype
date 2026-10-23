@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.7 (2026-10-24)
+
 ### See what Foretype reads from other apps (2026-10-24)
 - New in Settings ▸ Context: **What Foretype Sees…** opens a window that shows, live, the
   other apps' windows Foretype has in memory (on screen or viewed how long ago, on which
