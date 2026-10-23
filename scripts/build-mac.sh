@@ -48,9 +48,14 @@ SCRATCH="$ROOT/mac/.build"
 [ "$SPARKLE" = 1 ] && SCRATCH="$ROOT/mac/.build-sparkle"
 
 (cd "$ROOT/core" && cargo build --release --lib)
-(cd "$ROOT/mac" && FORETYPE_SPARKLE="$SPARKLE" swift build -c release --scratch-path "$SCRATCH" 2>&1 \
-  | grep -v "was built for newer 'macOS' version" || true)
-[ -x "$SCRATCH/release/Foretype" ] || { echo "swift build failed"; exit 1; }
+# swift build's own exit status decides (pipefail): after compile errors the binary from an
+# earlier build is still there, and packaging it would ship stale code. grep only drops the
+# link warnings and exits 1 when it drops every line, which is not a failure.
+if ! (cd "$ROOT/mac" && FORETYPE_SPARKLE="$SPARKLE" swift build -c release --scratch-path "$SCRATCH" 2>&1) \
+  | { grep -v "was built for newer 'macOS' version" || true; }; then
+  echo "swift build failed"; exit 1
+fi
+[ -x "$SCRATCH/release/Foretype" ] || { echo "swift build failed: no $SCRATCH/release/Foretype"; exit 1; }
 
 APP="${FORETYPE_OUT:-$ROOT/build}/Foretype.app"
 rm -rf "$APP"
