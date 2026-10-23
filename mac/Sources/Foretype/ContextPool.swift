@@ -85,9 +85,15 @@ final class ContextPool {
         static let maxEntries = 12
         private(set) var entries: [String: Entry] = [:]
 
-        /// One refresh: `read` were read now; every other window is no longer on screen.
-        mutating func merge(_ read: [Entry], now: Date) {
-            for k in entries.keys { entries[k]?.visible = false }
+        /// One refresh: `read` were read now; windows in `onScreen` are still on screen but
+        /// weren't read again (their app ran out of time) and keep their text; every other
+        /// window is no longer on screen.
+        mutating func merge(_ read: [Entry], onScreen: Set<String> = [], now: Date) {
+            for k in entries.keys {
+                let still = onScreen.contains(k)
+                entries[k]?.visible = still
+                if still { entries[k]?.lastSeen = now }
+            }
             for var e in read {
                 e.lastSeen = now
                 entries[e.key] = e
@@ -314,8 +320,9 @@ final class ContextPool {
                   gate.allows(pid: pid, bundleId: bundle) else { continue }
             let el = AXUIElementCreateApplication(pid)
             AXUIElementSetMessagingTimeout(el, 0.05)
-            let deadline = CFAbsoluteTimeGetCurrent() + ContextPool.appBudget
             let axWindows = ((AX.copy(el, kAXWindowsAttribute) as? [AXUIElement]) ?? []).map { ($0, AX.frame($0)) }
+            // The 50 ms are for reading text; listing the windows has its own 50 ms timeout.
+            let deadline = CFAbsoluteTimeGetCurrent() + ContextPool.appBudget
             for cg in byPid[pid] ?? [] {
                 guard CFAbsoluteTimeGetCurrent() < deadline, read.count + ocrCandidates.count < ContextPool.maxWindows else { break }
                 guard let ax = axWindows.first(where: { $0.1.map(ContextPool.same(cg.bounds)) == true })?.0 else { continue }
@@ -357,8 +364,10 @@ final class ContextPool {
         let axCount = read.count
         read += ocr(ocrCandidates)
         // Windows read before and still on screen but not read this time (an app over its
-        // time budget) keep their text; merge marks every other window as no longer visible.
-        store.merge(read, now: Date())
+        // time budget, a busy app) keep their text and stay visible; every other window is
+        // no longer on screen.
+        let onScreen = Set(windows.filter { $0.visible && $0.number != focusedNumber }.map { "\($0.pid):\($0.number)" })
+        store.merge(read, onScreen: onScreen, now: Date())
         Log.debug(String(format: "context: %d windows read (%d by Accessibility, %d by OCR) in %.0f ms; pool %d, %d on screen",
                          read.count, axCount, read.count - axCount, Date().timeIntervalSince(t0) * 1000,
                          store.entries.count, store.entries.values.filter(\.visible).count))
@@ -599,6 +608,10 @@ final class ContextPool {
         check(s.signature != sig, "a window leaving the screen is sent")
         check(s.entries["1:11"]?.visible == false && s.entries["1:11"]?.lastSeen == t0.addingTimeInterval(60), "recently viewed keeps its time")
         check(s.ordered.first?.key == "1:10", "windows on screen first")
+        // Still on screen but not read again (its app was busy): visible, text kept.
+        var busy = s
+        busy.merge([entry("1:10", "Q3 budget")], onScreen: ["1:11"], now: t0.addingTimeInterval(130))
+        check(busy.entries["1:11"]?.visible == true && busy.entries["1:11"]?.text == "Launch plan", "a busy app's window stays")
         // Ten minutes after it was last seen it is gone; the visible one stays.
         check(!s.expire(now: t0.addingTimeInterval(60 + 599)), "kept just under 10 minutes")
         s.merge([entry("1:10", "Q3 budget")], now: t0.addingTimeInterval(60 + 600))
