@@ -12,6 +12,29 @@
 Each line has `id`, `register`, `header` (for example "An email written in Mail:", used to
 name the app) and `text`.
 
+## Hindi and Hinglish
+
+Written for this evaluation on 2026-10-22 (self-written, may be used without restriction),
+in the same registers and JSONL shape as the English `sw-*` documents, with headers in
+English (only the app name reaches the prompt):
+
+- `corpus-hi.jsonl`: 13 documents in Devanagari, 949 words, 4,616 characters: formal and
+  family emails, a leave application, a support reply, WhatsApp, Slack, Teams and Messages
+  chats, notes, a product review and an essay paragraph. Standard grammar and spelling,
+  danda (`।`) at sentence ends, nukta forms (ज़, फ़) and common English loanwords in
+  Devanagari (डिप्लॉय, डैशबोर्ड). NFC, so a nukta is a separate combining mark.
+- `corpus-hinglish.jsonl`: 12 documents of Hindi in Roman script mixed with English, 678
+  words, 3,632 characters: WhatsApp, Slack, Teams and Messages chats, two informal emails,
+  a to-do note and a review, with the common spellings (`hai`, `nahi`, `kya`, `toh`,
+  `achha`) and ASCII punctuation.
+
+    core/target/release/ft-replay MODEL.gguf --corpus eval/corpus-hi.jsonl
+    core/target/release/ft-replay MODEL.gguf --corpus eval/corpus-hinglish.jsonl
+    core/target/release/ft-replay MODEL.gguf --corpus eval/corpus-hi.jsonl --token-cost
+
+Characters are Unicode scalars, so a Devanagari consonant, a vowel sign and a virama each
+count as one keystroke, as they do on the InScript keyboard.
+
 `details.json`: the user's own details (Settings ▸ About You) for `ft-replay --details`, by
 document id: the three self-written documents that end with a signature get their signer
 (fictional), `*` gives every other document one more fictional person. Example values only

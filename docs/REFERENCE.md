@@ -310,6 +310,12 @@ saved and latency on the 53-document corpus, M3 Pro (`docs/MEASUREMENTS.md`):
 | Gemma 4 E2B Q4_K_M | 3.4 GB | opt-in on 16 GB+ | 42.8% | 109 ms |
 | Qwen3 4B Base Q4_K_M | 2.5 GB | opt-in on 16 GB+ (about twice the latency) | 45.0% | 147 ms |
 
+**Hindi and Hinglish:** choose Gemma 4 E2B. It saves 34.2% of keystrokes on Hindi
+(Devanagari) and 27.7% on Hinglish, against 27.7% and 15.1% for the default Qwen3 1.7B and
+32.5% and 23.0% for Qwen3 4B, and it is the fastest of the three on Hindi (p50 125 ms): its
+vocabulary spends 1.3 tokens per Devanagari word, Qwen3's 4.6. Below 16 GB, Qwen3 1.7B
+beats 0.6B (20.0% and 10.8%).
+
 Installed models show their size on disk, and the submenu shows the Models folder's total.
 Other GGUF files in the folder are listed too and can be chosen. **Delete a Model** (and
 Delete… in Settings → Model) removes a model file after a confirmation; the model in use

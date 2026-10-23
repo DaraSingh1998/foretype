@@ -29,6 +29,8 @@
 //!       pass 512 tokens (Gemma 4's sliding window). --fresh-batch N adds a third pass, fresh
 //!       but prefilled in batches of N: it differs from the first fresh pass only in float
 //!       rounding, which shows how much of a mismatch rate is noise rather than rollback.
+//!   ft-replay MODEL --corpus CORPUS.jsonl --token-cost
+//!       tokenizer cost: characters per token and tokens per word of the corpus text.
 //!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
 //!       types with those custom instructions (corpus apps such as "Mail" stand in for their
 //!       bundle IDs); without either, with none.
@@ -440,6 +442,25 @@ fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
     );
 }
 
+/// How many tokens the model's vocabulary spends on the corpus text: scripts it encodes
+/// poorly (Devanagari in a mostly-Latin BPE) cost more decode steps per word.
+fn token_cost(model: &str, docs: &[Doc]) {
+    let e = Engine::load(&EngineConfig { model_path: model.to_string(), ..EngineConfig::default() }).expect("load model");
+    let bos = e.tokenize("").len();
+    let (mut chars, mut words, mut tokens) = (0usize, 0usize, 0usize);
+    for d in docs {
+        chars += d.text.chars().count();
+        words += words::count_words(&d.text);
+        tokens += e.tokenize(&d.text).len() - bos;
+    }
+    println!(
+        "token-cost: {} docs, {chars} chars, {words} words, {tokens} tokens: {:.2} chars/token, {:.2} tokens/word",
+        docs.len(),
+        chars as f64 / tokens.max(1) as f64,
+        tokens as f64 / words.max(1) as f64
+    );
+}
+
 #[derive(serde::Deserialize, Clone)]
 struct Doc {
     id: String,
@@ -512,6 +533,9 @@ fn main() {
         if has("--mid-line-eval") {
             let typed = flag("--typed").and_then(|s| s.parse().ok()).unwrap_or(1);
             return mid_line_eval(&model, &docs, typed);
+        }
+        if has("--token-cost") {
+            return token_cost(&model, &docs);
         }
         if has("--check-cache") {
             let n_docs = flag("--docs").and_then(|s| s.parse().ok()).unwrap_or(6);
