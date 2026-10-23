@@ -487,7 +487,10 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   nothing (Teams, LibreOffice) or the app's rule says `"caret": "pixel"`. It captures only
   the field's rectangle (or the window, for apps whose field frame turned out not to contain
   the caret) of the app's own window with `SCScreenshotManager` (the pointer and Foretype's
-  overlay are never in it), converts it to bytes and drops the image. Two detectors share a
+  overlay are never in it), converts it to bytes and drops the image. `WindowCapture` makes
+  the capture: a desktop-independent window filter, or for a window in full screen (which
+  that filter can't capture: error -3811) its display with only that window included,
+  remembered per window (D43). Two detectors share a
   bar finder (column runs of set pixels merged into bars ≤ 3.5 pt wide, ≥ 3× as tall as
   wide, ≥ 75% filled, clear columns either side):
   - *blink*: captures every 120 ms for up to 1.3 s and keeps each pixel's colour range;
@@ -568,8 +571,9 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   context is off while saving energy. Per-app pauses (`snooze`) end at a time or, with
   `Date.distantFuture`, when the app's last process quits.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
-  every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
-  `SCScreenshotManager.captureImage` → Vision `.accurate` OCR → lines grouped into rows,
+  every 15 s: `SCShareableContent` → the focused window (the app's window holding the
+  field's centre, `ScreenGeometry.windowIndex`; none if no window does) →
+  `WindowCapture` (as the pixel caret, so full-screen windows work) → Vision `.accurate` OCR → lines grouped into rows,
   rows inside the field dropped, rows nearest the field kept (rows above first, budget
   1,400 characters) in reading order. The new text is prefilled with `warm` right away.
   Skipped for secure input, secure fields and apps where suggestions are off. The image is
@@ -582,7 +586,9 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   display left of or above the primary has negative global x or y. `cocoaRect(fromGlobal:)`
   flips around the primary's height (the ghost panel's frame), `displayIndex(for:in:)` is
   the display showing most of a rect (or the nearest), `scale(for:in:)` its backing scale,
-  and `cardY` puts a card above a field unless that leaves the field's display. Never
+  `cardY` puts a card above a field unless that leaves the field's display, and
+  `windowIndex` picks the window holding a field (the tracker reads a window's frame on
+  focus, and again only when the field's frame changes, so it can lag a move). Never
   compare a global rect with an `NSScreen` frame. `--geometry-selftest` checks them on
   made-up layouts (displays left, above, below and right of the primary, 1x and 2x).
 - **`Hotkeys.swift`**: Carbon `RegisterEventHotKey`: Ctrl + key above Tab forces
@@ -724,8 +730,9 @@ than the focused one. Where it must plug in:
   (`FORETYPE_ONLY_APPS=com.apple.mail,com.microsoft.Word`).
 - In the same place: the never-read list (password managers by default), the user's
   per-app opt-outs and disabled apps, secure input (`IsSecureEventInputEnabled`) and
-  Foretype's own windows; the feature's setting; and the backend (no reading at all for
-  `llama-server` and `openai`).
+  Foretype's own windows; the feature's setting; the backend (no reading at all for
+  `llama-server` and `openai`); and the Mac's memory (under 12 GB, Accessibility text only,
+  never OCR of other windows; the core keeps the section to 512 tokens there, D42).
 - **Coordinates.** Windows on every display come from `SCShareableContent` in global
   coordinates; use `ScreenGeometry` for anything that meets `NSScreen` or `NSWindow`.
   `onScreenWindowsOnly` lists each display's current Space only, so windows on other Spaces

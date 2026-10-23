@@ -5,7 +5,13 @@ the release notes are taken from it.
 
 ## Unreleased
 
-### Several displays (2026-10-23)
+### Full-screen windows and several displays (2026-10-23)
+- In a window in full screen (its own Space), such as WhatsApp Web in full-screen Chrome,
+  suggestions showed in a card (⇥ …) instead of after the caret. macOS refuses to capture a
+  full-screen window on its own, so where the app gives no caret position Foretype never
+  found the caret. Such a window is now captured through its display with only that window
+  in the picture: in WhatsApp Web every suggestion is drawn inline. Screen context reads
+  full-screen windows the same way.
 - Screen context now captures a window at its own display's resolution. A window on a
   display above or below the main one, or on a standard external display next to a Retina
   one, could be captured at the wrong scale: larger than needed (slower text recognition) or
@@ -15,8 +21,18 @@ the release notes are taken from it.
   cards went below the field whenever the field was on a display above the main one, and a
   card for a field at the top of a display below the main one could appear on the main
   display. Both now stay on the field's display.
+- Screen context could read the wrong window after the window you type in was moved (for
+  example dragged to another display): it looked for the window where it was when the
+  field got focus, and found another window of the same app there. It now reads the window
+  that holds the field, and nothing when none does; the window's position is read again
+  when the field moves.
 - `Foretype --geometry-selftest` checks the coordinate conversions on made-up layouts with
   displays left of, above, below and right of the main one, at 1x and 2x.
+- `FORETYPE_DEBUG` logs where the ghost panel is on screen (`show=inline at X,Y`) and which
+  window screen context captured, at what scale.
+- `FORETYPE_DEBUG` says why a blink search found no caret (no capture, or what changed
+  between frames); `scripts/e2e-inline-caret.sh` takes `WINDOW_POS` to open its window on
+  another display.
 
 ### Measuring context from other apps (2026-10-23)
 - `eval/corpus-multiwindow.jsonl`: 21 replies and notes written while another app shows

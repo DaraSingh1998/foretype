@@ -22,15 +22,16 @@ Suggestions that use what is open in other apps (a Word document, slides or a we
 beside the email being written) and on every display, without slowing typing down. The
 user's decisions are D42: opt-in with its own setting, recently viewed windows kept 10
 minutes in memory only, password managers never read by default, off for server backends;
-8 GB Macs still open.
+8 GB Macs get it with a small budget (Accessibility text only, a 512-token section, n_ctx
+2048).
 
 | Phase | Status | What |
 |---|---|---|
 | A. Baseline and multi-monitor audit | Done (`feat/context-baseline`) | `eval/corpus-multiwindow.jsonl` (21 items) and `ft-replay --context-mode`, `--n-ctx`, `--ctx-bench`; keystrokes saved with no, focused-window and other-app context, first-suggestion latency, prefill and memory at n_ctx 2048/4096/8192 for every catalog model (`docs/MEASUREMENTS.md`); multi-monitor coordinate fixes with `--geometry-selftest`; the FORETYPE_ONLY_APPS hook point for reading (`docs/ARCHITECTURE.md`) |
-| B. Context collector | Next | Text of other apps' windows on every display: Accessibility text first (no Screen Recording needed, exact), OCR of the window as the fallback; a recently-viewed pool (10 minutes, memory only, cleared on pause, lock and sleep); the never-read list (password managers), per-app opt-out, FORETYPE_ONLY_APPS, secure input; off for server backends; its own setting |
-| C. Relevance and prompt | Planned | Rank the pool's passages against the text being written (BM25, in the core), a prompt section of its own (labelled by app and window, after the focused window's text, before the body) within a token budget, and `ft_engine_set_context` so the shell sends context separately from each keystroke's snapshot; measure on the multi-window corpus |
-| D. Performance | Planned | Keep a bigger header off the typing path: prefill a changed context on a second KV sequence in the background and switch when ready (double buffering); cache KV states per context (`llama_state_seq_*`); q8_0 KV cache and flash attention (memory and long-context decode); cheaper OCR (`.fast` level, only changed regions, fewer refreshes); re-run `scripts/bench-context.sh` against the Phase A numbers |
-| E. UX and docs | Planned | The setting, the never-read list and a "what Foretype sees" view in Settings; onboarding text; README, REFERENCE and privacy notes; the 8 GB decision applied |
+| B. Context collector | Next | Text of other apps' windows on every display: Accessibility text first (no Screen Recording needed, exact), OCR of the window as the fallback; a recently-viewed pool (10 minutes, memory only, cleared on pause, lock and sleep); the never-read list (password managers), per-app opt-out, FORETYPE_ONLY_APPS, secure input; off for server backends; its own setting. On Macs under 12 GB, Accessibility text only: no OCR of other windows (D42) |
+| C. Relevance and prompt | Planned | Rank the pool's passages against the text being written (BM25, in the core), a prompt section of its own (labelled by app and window, after the focused window's text, before the body) within a token budget (D42: 512 tokens at n_ctx 2048 on Macs under 12 GB; provisionally 2,048 at n_ctx 4096 on 16 GB and up, to tune on the corpus), counted in tokens and trimmed first when a prompt would overflow, and `ft_engine_set_context` so the shell sends context separately from each keystroke's snapshot; measure on the multi-window corpus |
+| D. Performance | Planned | Keep a bigger header off the typing path: prefill a changed context on a second KV sequence in the background and switch when ready (double buffering); cache KV states per context (`llama_state_seq_*`); q8_0 KV cache and flash attention (memory and long-context decode; with q8_0, n_ctx 4096 on an 8 GB Mac costs today's KV memory, and its section may grow to 1,024 tokens if Phase C shows it helps); cheaper OCR (`.fast` level, only changed regions, fewer refreshes); re-run `scripts/bench-context.sh` against the Phase A numbers |
+| E. UX and docs | Planned | The setting, the never-read list and a "what Foretype sees" view in Settings; onboarding text; README, REFERENCE and privacy notes; what 8 GB Macs get (no OCR of other windows, a smaller budget) explained in Settings |
 
 What Phase A found (details in `docs/MEASUREMENTS.md`, "Cross-app context baseline"):
 - The other app's text is worth it: +17 to +20 points of keystrokes saved on every model
@@ -46,7 +47,11 @@ What Phase A found (details in `docs/MEASUREMENTS.md`, "Cross-app context baseli
   prefill batch, so a long cold prefill can cut the first suggestion short (Phase D: call
   `synchronize()` after prefill).
 - Multi-monitor: on the developer's Mac the second display is above the built-in one, where
-  screen context used the wrong capture scale and cards went below fields; fixed.
+  screen context used the wrong capture scale and cards went below fields, and a window
+  moved there after focus had another window of the same app captured instead; fixed and
+  checked on that display (ghost text, pixel caret, mirror card, capture scale).
+- With noise in the screen section the model echoed a header marker (`[End of screen t…`):
+  Phase C should keep section markers out of suggestions.
 - Windows on other Spaces aren't on screen, so ScreenCaptureKit's on-screen list (and
   Accessibility, for most apps) can't see them: the pool has to keep what was read while
   they were visible.
@@ -147,7 +152,8 @@ are kept for if that changes; the core stays portable.
   the first keystroke); later fields, new lines and wraps are found while typing with one
   capture (D37). A caret that never blinks is never found; between checks the ghost follows
   a font guess (about 1 pt off over a line without the host font). Measured in TextEdit
-  against its AX caret and in a Chrome chat-composer fixture (`docs/MEASUREMENTS.md`).
+  against its AX caret, in a Chrome chat-composer fixture, in the Claude app and in WhatsApp
+  Web in full-screen Chrome on a display above the main one (`docs/MEASUREMENTS.md`).
 - About You fills only at the end of a line, from English cue phrases, and only when what
   was typed is the start of the stored value exactly as written (case aside).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in

@@ -860,6 +860,9 @@ compute buffers, Metal allocations.
   At 4096 the feature costs an 8 GB Mac about 0.22 GB more than today (0.11 GB with a q8_0
   KV cache); at 8192, 0.67 GB (0.34 GB). The pool's text itself is small (10 minutes of
   windows: tens of kilobytes). OCR of more windows costs CPU and energy, not much memory.
+  Decided (D42): 8 GB Macs get the feature with Accessibility text only, a 512-token
+  other-app section and n_ctx kept at 2048, so no extra KV memory; with a q8_0 KV cache
+  (Phase D) n_ctx 4096 would cost what 2048 costs today.
 - `prefill_ms` as the engine reports it stops when the last batch is submitted: llama.cpp
   runs that batch on the GPU asynchronously and waits for it at the first logits read, so
   its time shows up as generation (first suggestion minus prefill: 4B at 2048, 741 ms). The
@@ -876,6 +879,57 @@ R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/M
 $R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both
 $R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 4096
 ```
+
+### A second display above the main one (by log and screenshot)
+
+The developer's Mac: the built-in Retina display (1512×982 points, 2x) is the main one, a
+BenQ GW2490 (1920×1080, 1x) is arranged above it (global y −1080 to 0). Qwen3-1.7B, with
+`FORETYPE_ONLY_APPS`, on `feat/context-baseline`; `--geometry-selftest` converts both
+displays' global frames to exactly their `NSScreen` frames. The log line
+`show=… at X,Y` is the panel's frame as AppKit placed it.
+
+| Check | Result |
+|---|---|
+| TextEdit on the BenQ (`e2e-textedit.sh`, `WINDOW_BOUNDS=100,-900,1000,-450`) | 60 of 60 suggestions inline, the panel's origin equal to the caret's every time (caret 865,−674 → panel at 865,−674); Tab, accept-all, Esc and Option+Tab as on the main display |
+| Screen context of that window | Before: the window was captured at 2x. After it moved to the BenQ, the capture found the window by its frame at focus time and took TextEdit's empty Untitled window on the main display instead (81 characters of toolbar and ruler); right after, the model suggested `[End of screen t…`, echoing the header's marker. After the fixes: the moved window at 1x, 900×450 px |
+| Chrome composer on the BenQ (`e2e-inline-caret.sh ce`, `WINDOW_POS=100,-950`, pixel caret) | Caret found by its blink in 176 ms at 1x (width scale 1.00), then by single captures in 39–59 ms; 199 suggestions inline over three segments (wrap 109, new line 72, list 29; the run stopped there when the keyboard or mouse was used); screen context 1000×600 px at 1x |
+| Mirror card on the BenQ | Above the field: panel at 157,−791, field top −762. The old rule (y < 0 → below) would have put it under the field |
+
+In one of the two runs with the new window matching, the moved window was missing from
+ScreenCaptureKit's list at the moment of capture and the fallback still took the nearest
+window; with a field known, the capture now skips instead. Not checked by eye: a
+full-screen app on the BenQ with this branch (the full-screen capture of D43 was checked
+in WhatsApp Web, next section), a window across both
+displays (covered by the self-test's display matching), and switching Spaces.
+
+## WhatsApp Web in full-screen Chrome (2026-10-23)
+
+Report: in WhatsApp Web the suggestion never showed after the caret, only in a card
+(⇥ …) under the line at the text's left edge. Setup: the user's own Chrome (dev build
+limited to its pid, Gemma 4 E2B Q4_K_M, installed Foretype quit), in native full screen on
+a 1920×1080 display at 1× arranged above the built-in one (AX y −1080…0); the user typed an
+unsent draft in "Message yourself" with pauses and deleted it. WhatsApp Web, like the
+Claude app, gives no AX caret, so the pixel locator has to place the ghost text.
+
+- Before (main `29a50d6`): 56 suggestions drawn as the mirror card, 1 inline; all 8 blink
+  searches found nothing. The card was under the line because `GhostPanel` moved it below
+  the field when its top was at y < 0, "above the screen"; on a display above the main
+  one every y is negative.
+- Diagnostic run (blink failure reasons logged): every capture returned nothing, for the
+  field (1125×36 pt) and for the whole window (1920×992 pt). A probe outside Foretype: for
+  that window `SCContentFilter(desktopIndependentWindow:)` fails with error -3811 ("Failed
+  to start stream due to audio/video capture failure"); `SCContentFilter(display:including:)`
+  with only that window captures the same rectangle.
+- The chat-composer fixture with its window on the upper display (`WINDOW_POS`, not full
+  screen, main build): 63 of 63 suggestions inline, so 1× and negative coordinates were
+  not the problem.
+- After (this fix, same setup): 33 of 33 suggestions inline, no card; the user saw the
+  ghost text right after the caret. The first capture logged `only through its display
+  (full screen)`; a blink found the caret when the field got focus (4 frames, 484 ms),
+  before the first keystroke, and the first suggestion was drawn inline 0.2 s after it.
+  3 blinks and 7 pause verifies in all, 1 solid search found no caret. Screen context
+  (same capture) read 702 and 708 characters (704 and 374 ms).
+- Self-tests: `--caret-selftest` (30 cases, worst error 0.00 pt) and `--font-selftest` pass.
 
 ## How to reproduce
 

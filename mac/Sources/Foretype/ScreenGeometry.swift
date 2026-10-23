@@ -58,6 +58,28 @@ enum ScreenGeometry {
         displayIndex(for: rect, in: displays.map(\.bounds)).map { displays[$0].scale }
     }
 
+    /// Among an app's windows (global frames), the one a field is in: the window holding the
+    /// field's centre (the one nearest `window`, Accessibility's frame of the focused window,
+    /// when several do; else the smallest). With a field that no window holds, none: reading
+    /// another window would put the wrong text in the prompt. Without a field, the one nearest
+    /// `window`, otherwise the largest. The field's frame is read with every snapshot;
+    /// `window` can be stale after the window was moved, so it only breaks ties.
+    static func windowIndex(field: CGRect?, window: CGRect?, in frames: [CGRect]) -> Int? {
+        func distance(_ f: CGRect, _ w: CGRect) -> CGFloat {
+            abs(f.minX - w.minX) + abs(f.minY - w.minY) + abs(f.width - w.width)
+        }
+        func area(_ i: Int) -> CGFloat { frames[i].width * frames[i].height }
+        if let field {
+            let c = CGPoint(x: field.midX, y: field.midY)
+            let holding = frames.indices.filter { frames[$0].contains(c) }
+            if let w = window, let i = holding.min(by: { distance(frames[$0], w) < distance(frames[$1], w) }) { return i }
+            if let i = holding.min(by: { area($0) < area($1) }) { return i }
+            if field.width > 0, field.height > 0 { return nil }
+        }
+        if let w = window { return frames.indices.min { distance(frames[$0], w) < distance(frames[$1], w) } }
+        return frames.indices.max { area($0) < area($1) }
+    }
+
     /// Global y for a card `height` tall next to `anchor`: above it, `gap` apart, when that
     /// stays on `display` (the anchor's), otherwise below it.
     static func cardY(nextTo anchor: CGRect, height: CGFloat, gap: CGFloat, display: CGRect?) -> CGFloat {
@@ -162,6 +184,23 @@ enum ScreenGeometry {
               "card below a field at the lower display's top (above it would be on the laptop)")
         check(cardY(nextTo: CGRect(x: 10, y: 300, width: 100, height: 20), height: 24, gap: 4, display: laptop.bounds) == 272,
               "card above a field on the primary")
+
+        // The window a field is in, when Accessibility's window frame is from before the window
+        // was moved to the display above (e2e on 2026-10-23: TextEdit's document moved there, and
+        // screen context captured another TextEdit window still near the old frame).
+        let otherWindow = CGRect(x: 0, y: 482, width: 586, height: 488)
+        let movedDocument = CGRect(x: 100, y: -900, width: 900, height: 450)
+        let fieldInDocument = CGRect(x: 110, y: -800, width: 880, height: 344)
+        let staleFrame = CGRect(x: 20, y: 470, width: 586, height: 488)
+        check(windowIndex(field: fieldInDocument, window: staleFrame, in: [otherWindow, movedDocument]) == 1,
+              "the window holding the field wins over a stale window frame")
+        check(windowIndex(field: fieldInDocument, window: staleFrame, in: [otherWindow]) == nil,
+              "no window holds the field (the list missed it): nothing, not the window near the stale frame")
+        check(windowIndex(field: nil, window: staleFrame, in: [otherWindow, movedDocument]) == 0, "no field: nearest frame")
+        check(windowIndex(field: nil, window: nil, in: [otherWindow, movedDocument]) == 1, "nothing known: largest")
+        check(windowIndex(field: fieldInDocument, window: nil, in: [movedDocument, CGRect(x: 90, y: -950, width: 1200, height: 800)]) == 0,
+              "nested windows: the smallest holding the field")
+        check(windowIndex(field: fieldInDocument, window: nil, in: []) == nil, "no windows")
 
         // This Mac's displays, for the record (not checked: any layout is valid). For a window
         // in the middle of each, the scale the old matching would have used.

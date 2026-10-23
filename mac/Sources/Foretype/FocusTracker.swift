@@ -100,7 +100,10 @@ final class FocusTracker {
     private var revision: UInt64 = 0
     private var readPending = false
     private var fontCache: (key: UInt64, line: Int, caret: Int, count: Int, typed: Int, font: NSFont?) = (0, -1, 0, 0, 0, nil)
-    private var titleCache: (pid: pid_t, title: String, frame: CGRect?) = (0, "", nil)
+    /// The focused window's title and frame, read on focus changes. `window` and `field` (the
+    /// field's frame when the window frame was last read) let `emit` read the frame again
+    /// when the field moved: the window was dragged, perhaps to another display.
+    private var titleCache: (pid: pid_t, title: String, frame: CGRect?, window: AXUIElement?, field: CGRect?) = (0, "", nil, nil, nil)
     private var fieldInfoCache: (key: UInt64, description: String, url: String, web: Bool) = (0, "", "", false)
     /// Characters typed after the caret arrives during which its font is read again (above).
     private static let fontSettleChars = 6
@@ -347,6 +350,11 @@ final class FocusTracker {
             return
         }
         heldLagging = false
+        if let f = s.frame, f != titleCache.field, let w = titleCache.window {
+            titleCache.frame = AX.frame(w)
+            titleCache.field = f
+            s.windowFrame = titleCache.frame
+        }
         lastEmitted = s
         lastSignature = sig
         lastFieldKey = s.fieldKey
@@ -398,7 +406,7 @@ final class FocusTracker {
         snap.url = fieldInfoCache.url
         if titleCache.pid != pid || reason == "focus" {
             let window = AX.element(AX.copy(app, kAXFocusedWindowAttribute))
-            titleCache = (pid, window.flatMap { AX.string($0, kAXTitleAttribute) } ?? "", window.flatMap { AX.frame($0) })
+            titleCache = (pid, window.flatMap { AX.string($0, kAXTitleAttribute) } ?? "", window.flatMap { AX.frame($0) }, window, nil)
         }
         snap.windowTitle = titleCache.title
         snap.windowFrame = titleCache.frame
