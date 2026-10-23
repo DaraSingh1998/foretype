@@ -110,38 +110,94 @@ enum CaretResolver {
         return nil
     }
 
-    /// The host field's font as drawn: the reported font, scaled when the document is zoomed.
+    private static let axFont = NSAttributedString.Key("AXFont")
+    private static let runBreaks = CharacterSet.newlines.union(CharacterSet(charactersIn: "\t"))
+
+    /// Characters just before the caret and their rectangle on screen.
+    struct MeasuredRun {
+        var text: String
+        var rect: CGRect
+    }
+
+    /// The host field's font as drawn, from `AXAttributedStringForRange`: the font of the
+    /// character before the caret (of the first one, at the start), scaled when the document
+    /// is zoomed.
     static func font(_ el: AXUIElement, caret: Int, length: Int) -> NSFont? {
-        reportedFont(el, caret: caret, length: length).map { zoomed($0, el, caret: caret) }
+        guard let (before, start) = attributedBefore(el, caret: caret, length: length),
+              let dict = before.attribute(axFont, at: before.length - 1, effectiveRange: nil) as? [String: Any]
+        else { return nil }
+        let run = caret > 0 ? measurableRun(before, start: start) { AX.bounds(el, $0, $1) } : nil
+        return zoomed(reportedFont(dict, run: run), run: run)
+    }
+
+    /// Up to 24 characters before the caret with their attributes, and where they start (the
+    /// first character when the caret is at the start). Just the one before the caret when the
+    /// app can't give the longer range.
+    private static func attributedBefore(_ el: AXUIElement, caret: Int, length: Int) -> (NSAttributedString, Int)? {
+        func read(_ location: Int, _ count: Int) -> NSAttributedString? {
+            guard let raw = AX.copyParam(el, "AXAttributedStringForRange", AX.makeRange(location, count)),
+                  CFGetTypeID(raw) == CFAttributedStringGetTypeID() else { return nil }
+            let s = raw as! NSAttributedString
+            return s.length > 0 ? s : nil
+        }
+        guard caret > 0 else { return length > 0 ? read(0, 1).map { ($0, 0) } : nil }
+        let k = min(caret, 24)
+        if let s = read(caret - k, k), s.length == k { return (s, caret - k) }
+        return read(caret - 1, 1).map { ($0, caret - 1) }
+    }
+
+    /// The characters before the caret whose width on screen says how the font is drawn: those
+    /// after the last newline or tab (a tab's width depends on where it starts), in the font of
+    /// the one before the caret (text typed at 12 pt after 20 pt text is measured alone), and
+    /// on the caret's visual line (a range across a soft wrap is as wide as the line: TextEdit
+    /// gave 773 pt for 24 characters, which read as a 3.9× zoom). `before` holds the
+    /// characters from `start` to the caret; `bounds` reads a range's rectangle (AX
+    /// coordinates). Nil when there are none.
+    static func measurableRun(_ before: NSAttributedString, start: Int, bounds: (Int, Int) -> CGRect?) -> MeasuredRun? {
+        let s = before.string as NSString
+        let n = s.length
+        let lastBreak = s.rangeOfCharacter(from: runBreaks, options: .backwards)
+        var from = lastBreak.location == NSNotFound ? 0 : lastBreak.location + lastBreak.length
+        guard from < n else { return nil }
+        var sameFont = NSRange()
+        _ = before.attribute(axFont, at: n - 1, longestEffectiveRange: &sameFont, in: NSRange(location: from, length: n - from))
+        from = max(from, sameFont.location)
+        guard let last = bounds(start + n - 1, 1), last.height > 0,
+              var rect = bounds(start + from, n - from), rect.width > 0 else { return nil }
+        if rect.height >= last.height * 1.5 {
+            // Across a soft wrap: keep the characters on the caret's line.
+            func onCaretLine(_ i: Int) -> Bool {
+                bounds(start + i, 1).map { abs($0.midY - last.midY) < last.height / 2 } ?? false
+            }
+            var lo = from, hi = n - 1
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if onCaretLine(mid) { hi = mid } else { lo = mid + 1 }
+            }
+            from = lo
+            guard let r = bounds(start + from, n - from), r.width > 0, r.height < last.height * 1.5 else { return nil }
+            rect = r
+        }
+        return MeasuredRun(text: s.substring(from: from), rect: rect)
     }
 
     /// LibreOffice reports the document's font size, not the zoomed one on screen (12 pt for
-    /// text drawn with a 29 pt line). When the last few characters are more than 25% wider or
-    /// narrower on screen than in the font, scale it to match.
-    static func zoomed(_ font: NSFont, _ el: AXUIElement, caret: Int) -> NSFont {
-        let k = min(caret, 24)
-        // No tabs: their width depends on where the run starts.
-        guard k >= 6, let text = AX.string(el, range: caret - k, k), !text.contains(where: \.isNewline), !text.contains("\t"),
-              let r = AX.bounds(el, caret - k, k), r.width > 0 else { return font }
-        let w = FontMatcher.width(text, font)
+    /// text drawn with a 29 pt line). When the run before the caret (6 characters or more) is
+    /// more than 25% wider or narrower on screen than in the font, scale it to match, unless
+    /// the result would not fit the run's line.
+    static func zoomed(_ font: NSFont, run: MeasuredRun?) -> NSFont {
+        guard let run, run.text.utf16.count >= 6 else { return font }
+        let w = FontMatcher.width(run.text, font)
         guard w > 0 else { return font }
-        let zoom = r.width / w
+        let zoom = run.rect.width / w
         guard zoom > 1.25 || zoom < 0.8, zoom > 0.3, zoom < 4,
-              r.height < font.pointSize * zoom * 2.2 else { return font }  // one line only
+              font.pointSize * zoom <= run.rect.height * 1.25 else { return font }
         return NSFont(descriptor: font.fontDescriptor, size: (font.pointSize * zoom).rounded()) ?? font
     }
 
-    /// The host field's font, from `AXAttributedStringForRange` around the caret. Chrome
-    /// reports only a size; that falls back to the system font at that size.
-    private static func reportedFont(_ el: AXUIElement, caret: Int, length: Int) -> NSFont? {
-        let loc = caret > 0 ? caret - 1 : (length > 0 ? 0 : -1)
-        guard loc >= 0,
-              let raw = AX.copyParam(el, "AXAttributedStringForRange", AX.makeRange(loc, 1)),
-              CFGetTypeID(raw) == CFAttributedStringGetTypeID() else { return nil }
-        let attributed = raw as! NSAttributedString
-        guard attributed.length > 0,
-              let dict = attributed.attributes(at: 0, effectiveRange: nil)[NSAttributedString.Key("AXFont")] as? [String: Any]
-        else { return nil }
+    /// The font an `AXFont` dictionary names. Chrome reports only a size: the family whose
+    /// rendering of the run before the caret matches its width on screen, else the system font.
+    static func reportedFont(_ dict: [String: Any], run: MeasuredRun?) -> NSFont {
         let size = (dict["AXFontSize"] as? NSNumber).map { CGFloat($0.doubleValue) } ?? 13
         if let name = dict["AXFontName"] as? String, !name.hasPrefix("."), let f = NSFont(name: name, size: size) {
             // Word reports a fake name that disagrees with the family; trust the family then.
@@ -155,12 +211,8 @@ enum CaretResolver {
            let f = NSFontManager.shared.font(withFamily: family, traits: [], weight: 5, size: size) {
             return f
         }
-        // Size only (Chrome): pick the font family whose rendering of the last few
-        // characters matches their on-screen width.
-        let k = min(caret, 24)
-        if k >= 4, let text = AX.string(el, range: caret - k, k), !text.contains(where: \.isNewline),
-           let r = AX.bounds(el, caret - k, k), r.width > 0, r.height < size * 2.2 {
-            return FontMatcher.best(text: text, width: r.width, size: size)
+        if let run, run.text.utf16.count >= 4 {
+            return FontMatcher.best(text: run.text, width: run.rect.width, size: size)
         }
         return NSFont.systemFont(ofSize: size)
     }
@@ -198,7 +250,72 @@ enum FontMatcher {
         let sys = NSFont.systemFont(ofSize: 15)
         let picked = best(text: sample, width: width(sample, sys), size: 15)
         print("system: picked \(picked.familyName ?? "?") \(picked.familyName == sys.familyName ? "ok" : "WRONG")")
+        ok = CaretResolver.runSelfTest() && ok
         print(ok ? "font self-test passed" : "font self-test FAILED")
+        return ok
+    }
+}
+
+extension CaretResolver {
+    /// Part of `--font-selftest`: the ghost's font from the text before the caret of a fake
+    /// field, laid out as TextEdit and LibreOffice report it.
+    static func runSelfTest() -> Bool {
+        /// `parts` (text, font name, size) laid out from x `x0` on lines `lineHeight` tall, each
+        /// character advancing as in its font times `zoom` (a tab 36 pt); the line wraps before
+        /// character `wrap` and after a newline, and starts again at x 100.
+        func check(_ label: String, _ parts: [(String, String, CGFloat)], zoom: CGFloat = 1, wrap: Int? = nil,
+                   x0: CGFloat = 100, lineHeight: CGFloat, expect: (String, CGFloat)) -> Bool {
+            let s = NSMutableAttributedString()
+            var rects: [CGRect] = []
+            var x = x0, y: CGFloat = 300
+            for (text, name, size) in parts {
+                guard let font = NSFont(name: name, size: size) else { print("\(label): no \(name)"); return false }
+                var prefix = ""
+                for ch in text {
+                    if rects.count == wrap { x = 100; y += lineHeight }
+                    let advance = FontMatcher.width(prefix + String(ch), font) - FontMatcher.width(prefix, font)
+                    prefix = ch == "\n" || ch == "\t" ? "" : prefix + String(ch)
+                    let w = ch == "\n" ? 0 : ch == "\t" ? 36 * zoom : advance * zoom
+                    rects.append(CGRect(x: x, y: y, width: w, height: lineHeight))
+                    x += w
+                    if ch == "\n" { x = 100; y += lineHeight }
+                }
+                let dict: [String: Any] = ["AXFontName": name, "AXFontSize": size, "AXFontFamily": font.familyName ?? name]
+                s.append(NSAttributedString(string: text, attributes: [axFont: dict]))
+            }
+            let start = 500
+            let run = measurableRun(s, start: start) { location, length in
+                let i = location - start
+                guard i >= 0, length > 0, i + length <= rects.count else { return nil }
+                return rects[i..<(i + length)].reduce(rects[i]) { $0.union($1) }
+            }
+            let dict = s.attribute(axFont, at: s.length - 1, effectiveRange: nil) as? [String: Any] ?? [:]
+            let font = zoomed(reportedFont(dict, run: run), run: run)
+            let pass = font.fontName == expect.0 && font.pointSize == expect.1
+            print("\(label): \(font.fontName) \(font.pointSize), run \(run.map { "\"\($0.text)\"" } ?? "none") \(pass ? "ok" : "WRONG")")
+            return pass
+        }
+        var ok = true
+        // TextEdit, short window: the 24 characters before the caret wrap after "really " (the
+        // whole range is 773 pt wide on screen, which read as a 3.9× zoom).
+        ok = check("wrapped", [("nd it reads really well.", "Helvetica-Light", 20)], wrap: 19, x0: 700,
+                   lineHeight: 24, expect: ("Helvetica-Light", 20)) && ok
+        // Plain text whose text a script set to 20 pt; typing goes on at 12 pt.
+        ok = check("typed smaller", [("reads really well.", "Menlo-Regular", 20), (" I'll go", "Menlo-Regular", 12)],
+                   lineHeight: 24, expect: ("Menlo-Regular", 12)) && ok
+        ok = check("first typed", [("it reads really well.", "Menlo-Regular", 20), (" I", "Menlo-Regular", 12)],
+                   lineHeight: 24, expect: ("Menlo-Regular", 12)) && ok
+        ok = check("typed larger", [("Hi Sam, thanks", "Menlo-Regular", 12), (" for the", "Menlo-Regular", 20)],
+                   lineHeight: 24, expect: ("Menlo-Regular", 20)) && ok
+        // LibreOffice: reports 12 pt for text drawn twice as wide.
+        ok = check("zoomed", [("Thanks for the notes", "Helvetica", 12)], zoom: 2, lineHeight: 29,
+                   expect: ("Helvetica", 24)) && ok
+        ok = check("zoomed, wrapped", [("the notes from today.", "Helvetica", 12)], zoom: 2, wrap: 15, x0: 600,
+                   lineHeight: 29, expect: ("Helvetica", 24)) && ok
+        ok = check("zoomed, after a tab", [("Dear Sam,\n\tThanks again", "Helvetica", 13)], zoom: 2, lineHeight: 31,
+                   expect: ("Helvetica", 26)) && ok
+        ok = check("zoomed, line start", [("Dear Sam,\nThe", "Helvetica", 12)], zoom: 2, lineHeight: 29,
+                   expect: ("Helvetica", 12)) && ok
         return ok
     }
 }

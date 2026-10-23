@@ -652,6 +652,22 @@ poll), the user working meanwhile:
   Turning residency sets off may let macOS page the model's GPU buffers out between bursts
   of typing; that latency hasn't been measured, so it is not changed here.
 
+## Ghost font size in TextEdit (2026-10-22)
+
+`CaretResolver.font` read at every caret position of two test documents (a scratch probe
+calling it over Accessibility, nothing typed), before and after the fix:
+
+| Document | Positions | Before | After |
+|---|---|---|---|
+| RTF from `textutil -font Helvetica -fontsize 20` (Helvetica Light 20), 800×190 pt window | 102 | 97 right; 5 at 74–80 pt (the last 24 characters crossed a soft wrap: rect 773×48 pt) | all Helvetica-Light 20 |
+| Plain text (Menlo) set to 20 pt by AppleScript, last 44 characters at 12 pt, 760×200 pt window | 147 | 111 right; 23 at 50 pt (soft wrap), 13 at 15–19 pt (20 pt and 12 pt measured together) | 103 at Menlo 20, 44 at Menlo 12 |
+
+Before the fix the font was also read only once per line, before typing, so the 12 pt text
+typed after the 20 pt text got a 20 pt ghost. Live run (dev build, Qwen3-0.6B, synthetic
+typing in both documents, `FORETYPE_DEBUG` logs the font): every suggestion in the RTF was
+drawn in Helvetica-Light 20 and every one after the typed text in the plain-text document in
+Menlo-Regular 11, the size the text was typed in.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

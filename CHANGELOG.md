@@ -5,6 +5,19 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Ghost text at the right size (2026-10-22)
+- In a short or narrow window, ghost text could be drawn several times too big (about 60 pt
+  next to 20 pt text in TextEdit): when the last 24 characters before the caret crossed a
+  soft wrap, their on-screen width was the whole line's, which read as a zoomed document.
+  The width is now measured only on the caret's visual line.
+- Ghost text follows the size you are typing in. Text typed at 12 pt after 20 pt text got
+  20 pt ghost text: the font was read once per line, before typing, and the zoom check
+  measured both sizes together. The font is now read again for the first few characters
+  typed after the caret arrives (and after a click, an arrow or a deletion), and the check
+  measures only the characters in the caret's font, after the last newline or tab.
+- `FORETYPE_DEBUG` logs the font each suggestion is drawn in; `--font-selftest` checks the
+  ghost font for a soft wrap, mixed sizes and a zoomed document.
+
 ## 0.1.2 (2026-10-22)
 
 ### A waiting update is visible (2026-10-22)
