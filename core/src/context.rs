@@ -1,13 +1,16 @@
 //! Builds the prompt for a base model used as a plain text continuer.
 //!
-//! The prompt is a byte-stable header (text visible around the field, app, window, the
-//! user's instructions) followed by the text before the caret. Everything that can change per keystroke sits at
+//! The prompt is a byte-stable header (text from other apps' windows, text visible around
+//! the field, app, window, the user's instructions) followed by the text before the caret. Everything that can change per keystroke sits at
 //! the very end, so successive prompts share the longest possible token prefix and the
 //! engine only prefills a token or two per keystroke.
 
 use crate::words;
 
 pub struct ContextInput<'a> {
+    /// The other-apps section, rendered (`others::OtherApps::select`): `[Also open: …]`
+    /// blocks ending in a blank line, or empty.
+    pub other_apps: &'a str,
     pub app_name: &'a str,
     pub window_title: &'a str,
     pub url: &'a str,
@@ -32,6 +35,9 @@ pub struct Prompt {
     /// Rest of the caret's line when completing mid-line (the suggestion is cut where it
     /// starts repeating it); empty at the end of a line.
     pub suffix: String,
+    /// Bytes at the start of `prefix` that are the other-apps section: the part dropped
+    /// first when a prompt doesn't fit the context.
+    pub others: usize,
 }
 
 /// Quantum by which the front of a long text window moves, so the prompt start stays fixed
@@ -64,7 +70,8 @@ fn screen_section(raw: &str) -> String {
     kept.join("\n")
 }
 
-fn header(input: &ContextInput) -> String {
+/// The header without the other-apps section.
+pub(crate) fn header(input: &ContextInput) -> String {
     let mut place = input.app_name.trim().to_string();
     let title = truncate_chars(input.window_title.trim(), 80);
     if !title.is_empty() && title != place {
@@ -132,11 +139,47 @@ fn window_start(text: &str, max_chars: usize) -> usize {
     }
 }
 
+/// The body window: the end of `text_before` the prompt carries (see `window_start`).
+pub fn body_window(text_before: &str, max_body_chars: usize) -> &str {
+    &text_before[window_start(text_before, max_body_chars)..]
+}
+
 pub fn build(input: &ContextInput, max_body_chars: usize) -> Prompt {
-    let start = window_start(input.text_before, max_body_chars);
-    let body = &input.text_before[start..];
+    let body = body_window(input.text_before, max_body_chars);
     let (committed, fragment) = words::split_fragment(body);
-    Prompt { prefix: format!("{}{}", header(input), committed), fragment: fragment.to_string(), suffix: String::new() }
+    // The other-apps section heads the prompt (it changes least while typing in one field
+    // and survives moving to another); it arrives cleaned and ends in a blank line.
+    let others = input.other_apps;
+    Prompt {
+        prefix: format!("{others}{}{committed}", header(input)),
+        fragment: fragment.to_string(),
+        suffix: String::new(),
+        others: others.len(),
+    }
+}
+
+/// The words in the prompt's own header markers. A suggestion that starts one ("[End of
+/// screen t", "[Also open: Wo") is the model echoing the prompt's layout.
+const MARKERS: &[&str] = &["Also open:", "Text visible on screen", "End of screen text", "End of earlier writing", "Earlier writing by", "Written in", "Written by", "Writer's notes"];
+
+/// Cuts a suggestion where it starts echoing a header marker: a "[" followed by at least
+/// three characters of a marker (or a whole marker and more). Trailing spaces before the
+/// cut go too.
+pub fn strip_marker_echo(text: &str) -> &str {
+    for (i, _) in text.match_indices('[') {
+        let after = &text[i + 1..];
+        let n = after.chars().count();
+        let echo = MARKERS.iter().any(|m| {
+            if after.starts_with(m) {
+                return true;
+            }
+            n >= 3 && m.starts_with(after.trim_end_matches(|c: char| c == '\n'))
+        });
+        if echo {
+            return text[..i].trim_end_matches(' ');
+        }
+    }
+    text
 }
 
 fn truncate_chars(s: &str, n: usize) -> &str {
@@ -157,6 +200,7 @@ mod tests {
 
     fn input<'a>(text: &'a str) -> ContextInput<'a> {
         ContextInput {
+            other_apps: "",
             app_name: "Mail",
             window_title: "Re: planning",
             url: "",
@@ -200,6 +244,35 @@ mod tests {
         let p = build(&i, 2000);
         assert!(p.prefix.contains("line 399\n[End of screen text]"));
         assert!(!p.prefix.contains("line 1\n"));
+    }
+
+    #[test]
+    fn other_apps_section_heads_the_prompt() {
+        let mut i = input("Total spend was four");
+        i.other_apps = "[Also open: Microsoft Word \u{2014} Q3.docx]\nTotal Q3 spend was $412,600.\n\n";
+        i.screen_context = "Martin: could you send the Q3 numbers?";
+        let p = build(&i, 2000);
+        assert_eq!(
+            p.prefix,
+            "[Also open: Microsoft Word \u{2014} Q3.docx]\nTotal Q3 spend was $412,600.\n\n\
+             [Text visible on screen]\nMartin: could you send the Q3 numbers?\n[End of screen text]\n\n\
+             [Written in Mail \u{2014} Re: planning]\n\nTotal spend was"
+        );
+        assert_eq!(p.fragment, " four");
+        assert_eq!(p.others, i.other_apps.len());
+        assert!(p.prefix[p.others..].starts_with("[Text visible on screen]"));
+        assert_eq!(build(&input("Hi"), 2000).others, 0);
+    }
+
+    #[test]
+    fn marker_echoes_are_cut() {
+        assert_eq!(strip_marker_echo(" the figures [End of screen t"), " the figures");
+        assert_eq!(strip_marker_echo(" [Also open: Word"), "");
+        assert_eq!(strip_marker_echo(" [Wri"), "");
+        assert_eq!(strip_marker_echo(" see [1] and [2]"), " see [1] and [2]");
+        assert_eq!(strip_marker_echo(" at the [End of the day]"), " at the [End of the day]");
+        assert_eq!(strip_marker_echo(" [Wr"), " [Wr");
+        assert_eq!(strip_marker_echo(" going next week"), " going next week");
     }
 
     #[test]

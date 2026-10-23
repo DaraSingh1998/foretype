@@ -110,6 +110,13 @@ final class EngineBridge {
         return ft_engine_set_details(handle, json)
     }
 
+    /// Text from other apps' windows (`ContextPool.Store.json`), sent when the pool changes.
+    @discardableResult
+    func setContext(_ json: String) -> Bool {
+        guard let handle else { return false }
+        return ft_engine_set_context(handle, json)
+    }
+
     func historyStats() -> (records: Int, words: Int) {
         guard let handle, let raw = ft_engine_history_stats(handle) else { return (0, 0) }
         defer { ft_string_free(raw) }

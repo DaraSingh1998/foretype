@@ -126,6 +126,8 @@ struct StateSnapshot {
 #[derive(Debug)]
 pub enum GenError {
     Cancelled,
+    /// The prompt (this many tokens) leaves less than 64 tokens of the context free.
+    TooLong(usize),
     Failed(String),
 }
 
@@ -348,7 +350,7 @@ impl Engine {
             return Err(GenError::Failed("empty prompt".into()));
         }
         if tokens.len() + 64 > self.n_ctx {
-            return Err(GenError::Failed(format!("prompt of {} tokens exceeds context", tokens.len())));
+            return Err(GenError::TooLong(tokens.len()));
         }
         let common = self.cached.iter().zip(tokens).take_while(|(a, b)| a == b).count();
         // The last prompt token must be decoded again: its logits were overwritten by

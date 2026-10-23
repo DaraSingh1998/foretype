@@ -17,6 +17,7 @@ pub mod hinglish;
 pub mod history;
 pub mod instructions;
 pub mod models;
+pub mod others;
 pub mod policy;
 pub mod profile;
 pub mod session;
@@ -34,6 +35,7 @@ use crate::context::{ContextInput, Prompt};
 use crate::details::UserDetails;
 use crate::engine::{Engine, EngineConfig, GenError, GenOptions};
 use crate::history::{History, Record};
+use crate::others::{OtherApps, Passage, Query};
 use crate::policy::CompatDb;
 use crate::profile::Profile;
 use crate::session::{AcceptMode, Accepted, Session};
@@ -125,6 +127,10 @@ pub struct Settings {
     pub mid_line: bool,
     /// Phrase beam search width (1 = greedy).
     pub beam_width: usize,
+    /// Most tokens the other-apps section may take (D42, D44: the macOS shell sends 512 on
+    /// Macs under 16 GB, 2,048 provisionally from 16 GB). The section also leaves room for the
+    /// rest of the prompt within `n_ctx` − 64; 0 turns it off.
+    pub other_apps_tokens: usize,
 }
 
 impl Settings {
@@ -174,6 +180,7 @@ impl Default for Settings {
             typo_gate: true,
             mid_line: false,
             beam_width: 1,
+            other_apps_tokens: 512,
         }
     }
 }
@@ -307,8 +314,12 @@ struct Shared {
     /// The prompt header's writer line; empty unless the user allowed it.
     writer: RwLock<String>,
     /// Completions come from an HTTP server, which may not be on this Mac: the writer line
-    /// is never sent there.
+    /// and other apps' text are never sent there.
     remote_http: bool,
+    /// Text from other apps' windows (`ft_engine_set_context`) and the current selection.
+    others: Mutex<OtherApps>,
+    /// The engine's context size in tokens: the prompt must leave 64 of it free.
+    n_ctx: usize,
 }
 
 fn debug() -> bool {
@@ -350,6 +361,8 @@ impl Core {
             details: RwLock::new(UserDetails::default()),
             writer: RwLock::new(String::new()),
             remote_http: matches!(config.backend.as_str(), "llama-server" | "openai"),
+            others: Mutex::new(OtherApps::default()),
+            n_ctx: config.n_ctx as usize,
         });
         let engine_cfg = EngineConfig {
             model_path: config.model_path.clone(),
@@ -407,6 +420,24 @@ impl Core {
         *self.shared.details.write().unwrap() = details;
         *self.shared.writer.write().unwrap() = writer;
         self.shared.session.lock().unwrap().clear();
+    }
+
+    /// Replaces the pool of other apps' text (D42). Ignored with a server backend: other
+    /// apps' text only ever reaches an on-device model. An empty list clears it.
+    pub fn set_context(&self, passages: Vec<Passage>) {
+        let passages = if self.shared.remote_http { Vec::new() } else { passages };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+        let mut o = self.shared.others.lock().unwrap();
+        o.set_passages(&passages, now);
+        if debug() {
+            let (w, c) = o.size();
+            eprintln!("[foretype] other apps: {w} windows, {c} passages ({} visible)", passages.iter().filter(|p| p.visible).count());
+        }
+    }
+
+    /// How often the other-apps section changed (each change costs a full prefill).
+    pub fn context_changes(&self) -> u64 {
+        self.shared.others.lock().unwrap().changes
     }
 
     /// (records, distinct words) in the personalization history.
@@ -628,7 +659,7 @@ impl Core {
             session.clear();
         }
         let examples = self.examples_for(&snap, &settings);
-        let prompt = build_prompt(&snap, &settings, &examples, &self.shared.writer.read().unwrap());
+        let prompt = build_prompt(&self.shared, &snap, &settings, &examples, true);
         self.enqueue(Job {
             kind: JobKind::Complete,
             revision: rev,
@@ -737,7 +768,7 @@ impl Core {
         }
         let settings = self.settings();
         let examples = self.examples_for(&snap, &settings);
-        let prompt = build_prompt(&snap, &settings, &examples, &self.shared.writer.read().unwrap());
+        let prompt = build_prompt(&self.shared, &snap, &settings, &examples, true);
         let mut pending = self.shared.pending.lock().unwrap();
         if pending.is_none() && !self.is_paused() {
             *pending = Some(Job {
@@ -826,25 +857,70 @@ fn line_suffix(snap: &Snapshot) -> &str {
 /// Most of the line after the caret a mid-line prompt carries.
 const MAX_SUFFIX_CHARS: usize = 200;
 
-fn build_prompt(snap: &Snapshot, settings: &Settings, examples: &[String], writer: &str) -> Prompt {
+/// Tokens kept free for the body when sizing the other-apps section: `max_body_chars` bytes
+/// at three bytes a token (Devanagari is three bytes and about one Qwen3 token a character;
+/// English runs 4–4.5 characters a token), so the section doesn't shrink as the text grows.
+fn body_reserve(max_body_chars: usize) -> usize {
+    max_body_chars.div_ceil(3)
+}
+
+/// The prompt for a snapshot. `select`: pick the other-apps passages for this text (submit
+/// and warm); otherwise the current section is reused (the prefetch, which must not move
+/// the selection the next keystroke's prompt starts from).
+fn build_prompt(shared: &Shared, snap: &Snapshot, settings: &Settings, examples: &[String], select: bool) -> Prompt {
     let instructions = settings.instructions_for(&snap.bundle_id);
-    let mut prompt = context::build(
-        &ContextInput {
-            app_name: &snap.app_name,
-            window_title: &snap.window_title,
-            url: &snap.url,
-            instructions: &instructions,
-            writer,
-            screen_context: &snap.screen_context,
-            examples,
-            text_before: &snap.text_before,
-        },
-        settings.max_body_chars,
-    );
+    let writer = shared.writer.read().unwrap().clone();
+    let mut input = ContextInput {
+        other_apps: "",
+        app_name: &snap.app_name,
+        window_title: &snap.window_title,
+        url: &snap.url,
+        instructions: &instructions,
+        writer: &writer,
+        screen_context: &snap.screen_context,
+        examples,
+        text_before: &snap.text_before,
+    };
+    let section = other_apps_section(shared, snap, settings, &input, select);
+    input.other_apps = &section;
+    let mut prompt = context::build(&input, settings.max_body_chars);
     if settings.mid_line {
         prompt.suffix = line_suffix(snap).chars().take(MAX_SUFFIX_CHARS).collect();
     }
     prompt
+}
+
+/// The other-apps section for this prompt: its budget is the setting's, cut to what the
+/// context has left after the rest of the header, the body's reserve and 64 tokens.
+fn other_apps_section(shared: &Shared, snap: &Snapshot, settings: &Settings, input: &ContextInput, select: bool) -> String {
+    let mut o = shared.others.lock().unwrap();
+    if o.is_empty() && o.section().is_empty() {
+        return String::new();
+    }
+    if !select {
+        return o.section().to_string();
+    }
+    let rest = others::estimate_tokens(&context::header(input)) + body_reserve(settings.max_body_chars) + 64;
+    let budget = settings.other_apps_tokens.min(shared.n_ctx.saturating_sub(rest));
+    let body = context::body_window(&snap.text_before, settings.max_body_chars);
+    let (committed, _) = words::split_fragment(body);
+    let query = Query::new(committed, &snap.screen_context, &snap.window_title);
+    let before = o.changes;
+    let section = o.select(&query, budget).to_string();
+    if debug() && o.changes != before {
+        let d = shared.details.read().unwrap();
+        eprintln!(
+            "[foretype] other apps section: ~{} tokens (budget {budget}): {}",
+            others::estimate_tokens(&section),
+            d.redact(&o.describe())
+        );
+    }
+    section
+}
+
+/// A prompt whose other-apps section didn't fit the context: the same prompt without it.
+fn without_others(p: &Prompt) -> Option<Prompt> {
+    (p.others > 0).then(|| Prompt { prefix: p.prefix[p.others..].to_string(), others: 0, ..p.clone() })
 }
 
 struct RemoteConfig {
@@ -1015,9 +1091,11 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
         let cancel = || latest.load(Ordering::SeqCst) != rev;
         match job.kind {
             JobKind::Warm => {
-                let r = engine.warm(&job.prompt.prefix, &|| {
-                    shared.paused.load(Ordering::SeqCst) || shared.pending.lock().map(|p| p.is_some()).unwrap_or(false)
-                });
+                let busy = || shared.paused.load(Ordering::SeqCst) || shared.pending.lock().map(|p| p.is_some()).unwrap_or(false);
+                let mut r = engine.warm(&job.prompt.prefix, &busy);
+                if let (Err(GenError::TooLong(_)), Some(p)) = (&r, without_others(&job.prompt)) {
+                    r = engine.warm(&p.prefix, &busy);
+                }
                 if debug() {
                     eprintln!("[foretype] warm rev={rev} -> {r:?}");
                 }
@@ -1046,8 +1124,19 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     personal_strength: settings.personal_strength(),
                     beam_width: settings.beam_width,
                 };
-                match engine.complete(&job.prompt, &opts, &cancel) {
-                    Ok(c) => {
+                // Too long for the context: the other apps' text is what goes first (D42).
+                let mut result = engine.complete(&job.prompt, &opts, &cancel);
+                let mut dropped_others = false;
+                if let (Err(GenError::TooLong(n)), Some(p)) = (&result, without_others(&job.prompt)) {
+                    if debug() {
+                        eprintln!("[foretype] rev={rev} prompt of {n} tokens too long: other apps' text left out");
+                    }
+                    result = engine.complete(&p, &opts, &cancel);
+                    dropped_others = true;
+                }
+                match result {
+                    Ok(mut c) => {
+                        c.text = context::strip_marker_echo(&c.text).to_string();
                         let queue_ms = job.queued.elapsed().as_secs_f64() * 1000.0;
                         if debug() {
                             eprintln!(
@@ -1086,15 +1175,18 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             let mut next = job.snapshot.clone();
                             next.text_before = format!("{}{}", job.text_before, shown);
                             let examples = shared.examples.lock().unwrap().get(&job.field_key).cloned().unwrap_or_default();
-                            let writer = shared.writer.read().unwrap().clone();
-                            let prompt = build_prompt(&next, &settings, &examples, &writer);
+                            let mut prompt = build_prompt(&shared, &next, &settings, &examples, false);
+                            if dropped_others {
+                                prompt = without_others(&prompt).unwrap_or(prompt);
+                            }
                             let busy = || {
                                 shared.shutdown.load(Ordering::SeqCst)
                                     || shared.paused.load(Ordering::SeqCst)
                                     || shared.pending.lock().map(|p| p.is_some()).unwrap_or(true)
                             };
                             if !busy() {
-                                if let Ok(p) = engine.complete(&prompt, &opts, &busy) {
+                                if let Ok(mut p) = engine.complete(&prompt, &opts, &busy) {
+                                    p.text = context::strip_marker_echo(&p.text).to_string();
                                     if !p.text.trim().is_empty() {
                                         shared.session.lock().unwrap().remember(job.field_key, &next.text_before, &p.text);
                                         if debug() {
@@ -1107,12 +1199,17 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                         }
                     }
                     Err(GenError::Cancelled) => {}
-                    Err(GenError::Failed(e)) => {
+                    Err(e @ (GenError::Failed(_) | GenError::TooLong(_))) => {
+                        let reason = match e {
+                            GenError::TooLong(n) => format!("prompt of {n} tokens exceeds context"),
+                            GenError::Failed(e) => e,
+                            GenError::Cancelled => unreachable!(),
+                        };
                         (shared.sink)(&Event::Suggestion {
                             revision: rev,
                             text: String::new(),
                             source: "error",
-                            reason: Some(e),
+                            reason: Some(reason),
                             ms: None,
                             prefilled: None,
                             stop: None,
@@ -1437,6 +1534,53 @@ mod tests {
         assert_eq!(status(&rx).0, "loading");
     }
 
+    fn sheet(visible: bool) -> Passage {
+        Passage {
+            app: "Numbers".into(),
+            bundle_id: "com.apple.iWork.Numbers".into(),
+            window_title: "Q3 budget".into(),
+            text: "Contractors: $68,900 (budget $52,000)\nTravel: $11,200 (budget $14,000)".into(),
+            captured_at: 0.0,
+            visible,
+            ..Passage::default()
+        }
+    }
+
+    #[test]
+    fn other_apps_text_heads_the_prompt_for_local_models_only() {
+        let c = core();
+        c.set_context(vec![sheet(true)]);
+        let p = build_prompt(&c.shared, &snap(1, "Contractors came to sixty"), &c.settings(), &[], true);
+        assert!(p.prefix.starts_with("[Also open: Numbers \u{2014} Q3 budget]\nContractors: $68,900"), "{}", p.prefix);
+        assert_eq!(&p.prefix[p.others..], "Contractors came to");
+        // The prefetch reuses the section; switching the feature off empties it.
+        assert_eq!(build_prompt(&c.shared, &snap(1, "Contractors came to $68,900"), &c.settings(), &[], false).others, p.others);
+        let off = Settings { other_apps_tokens: 0, ..c.settings() };
+        assert_eq!(build_prompt(&c.shared, &snap(1, "Contractors came to $68"), &off, &[], true).others, 0);
+        c.set_context(Vec::new());
+        assert_eq!(build_prompt(&c.shared, &snap(1, "Contractors came to $68"), &c.settings(), &[], true).others, 0);
+        // A server never sees it.
+        let remote = Core::new(CoreConfig { backend: "openai".into(), backend_url: "http://127.0.0.1:9".into(), ..CoreConfig::default() }, Box::new(|_| {}));
+        remote.set_context(vec![sheet(true)]);
+        assert_eq!(build_prompt(&remote.shared, &snap(1, "Contractors came to $68"), &remote.settings(), &[], true).others, 0);
+    }
+
+    #[test]
+    fn other_apps_section_leaves_room_for_the_rest_of_the_prompt() {
+        let c = Core::new(CoreConfig { model_path: "/nonexistent.gguf".into(), n_ctx: 1600, ..CoreConfig::default() }, Box::new(|_| {}));
+        c.set_context(vec![sheet(true)]);
+        assert!(build_prompt(&c.shared, &snap(1, "Contractors came to $68"), &c.settings(), &[], true).others > 0);
+        // Devanagari screen text costs about a token a character: no room is left.
+        let hindi = "क्या आप कल की बैठक में आएँगे? ".repeat(50);
+        let s = Snapshot { screen_context: hindi, ..snap(1, "Contractors came to $68") };
+        assert_eq!(build_prompt(&c.shared, &s, &c.settings(), &[], true).others, 0);
+        // A prompt that still overflows drops the section first.
+        let p = build_prompt(&c.shared, &snap(1, "Contractors came to $68"), &c.settings(), &[], true);
+        let q = without_others(&p).unwrap();
+        assert_eq!(q.prefix, p.prefix[p.others..]);
+        assert!(without_others(&q).is_none());
+    }
+
     #[test]
     fn pausing_drops_queued_work_and_the_backend() {
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1454,7 +1598,7 @@ mod tests {
             revision: 9,
             field_key: 1,
             text_before: String::new(),
-            prompt: build_prompt(&snap(1, "x"), &Settings::default(), &[], ""),
+            prompt: build_prompt(&c.shared, &snap(1, "x"), &Settings::default(), &[], true),
             queued: Instant::now(),
             snapshot: snap(1, "x"),
         });

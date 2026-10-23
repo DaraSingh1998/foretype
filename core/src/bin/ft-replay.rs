@@ -32,11 +32,17 @@
 //!   ft-replay MODEL --corpus CORPUS.jsonl --token-cost
 //!       tokenizer cost: characters per token and tokens per word of the corpus text.
 //!   ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --context-mode none|focused|other|both
-//!       screen context per document from its `screen` (text of the focused window around the
-//!       field) and `context` (text from another app's window) fields: `focused` sends
-//!       `screen`, `other` sends `context`, `both` sends `context` then `screen` (the focused
-//!       window's text nearest the field, as the shell orders it). For now this goes through
-//!       screen_context, so its 1,500-character cap applies. Default `none`.
+//!       per document, its `screen` (text of the focused window around the field) and
+//!       `context` (another app's window, `context_app` and `context_title`): `focused` sends
+//!       `screen` as screen context, `other` sends `context` as the pool of other apps' text
+//!       (`set_context`, a window on screen; the core picks passages into the prompt's
+//!       other-apps section), `both` sends both. `other-screen` and `both-screen` are Phase A's
+//!       stand-in: `context` (then `screen`) through screen context, under its 1,500-character
+//!       cap. Default `none`.
+//!       --distractors N adds the next N documents' `context` to the pool as windows viewed
+//!       2, 4, … minutes ago (relevance ranking has to pick the right one); --other-recent
+//!       makes the document's own window a recently viewed one (1 minute ago) instead of one
+//!       on screen; --other-tokens N is the section's budget (default 512, as on 8 GB Macs).
 //!   ft-replay MODEL --corpus eval/corpus-multiwindow.jsonl --ctx-bench [--n-ctx N] [--fill F] [--type N]
 //!       long-context cost: per document, a prompt whose screen section holds other text,
 //!       then the document's `context` and `screen`, filled to F of the window (default 0.9);
@@ -57,6 +63,7 @@ use foretype_core::context::{self, ContextInput};
 use foretype_core::details::UserDetails;
 use foretype_core::engine::{Engine, EngineConfig, GenError, GenOptions};
 use foretype_core::instructions::{self, DefaultInstructions};
+use foretype_core::others::{self, OtherApps, Passage, Query};
 use foretype_core::session::AcceptMode;
 use foretype_core::{words, Core, CoreConfig, Event, Settings, Snapshot};
 
@@ -371,6 +378,7 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
             let app = app_of(&docs[*di].header);
             context::build(
                 &ContextInput {
+                    other_apps: "",
                     app_name: &app,
                     window_title: "",
                     url: "",
@@ -401,8 +409,8 @@ fn check_cache(model: &str, docs: &[Doc], max_docs: usize, max_chars: usize, lon
                 }
                 match e.complete(p, &opts, &never) {
                     Ok(c) => c,
-                    Err(GenError::Failed(err)) => panic!("complete: {err}"),
                     Err(GenError::Cancelled) => unreachable!(),
+                    Err(err) => panic!("complete: {err:?}"),
                 }
             })
             .collect::<Vec<_>>();
@@ -477,6 +485,7 @@ fn mid_line_eval(model: &str, docs: &[Doc], typed: usize) {
                 let before = format!("{}{}", &d.text[..line_start + ws], typed_part);
                 let mut prompt = context::build(
                     &ContextInput {
+                        other_apps: "",
                         app_name: &app,
                         window_title: "",
                         url: "",
@@ -532,6 +541,24 @@ fn token_cost(model: &str, docs: &[Doc]) {
         chars as f64 / tokens.max(1) as f64,
         tokens as f64 / words.max(1) as f64
     );
+    // The other-apps section's budget is counted with `others::estimate_tokens` before the
+    // tokenizer is at hand: how far off is it on each document's other window?
+    let (mut est, mut real, mut worst) = (0usize, 0usize, 0f64);
+    for d in docs.iter().filter(|d| !d.context.is_empty()) {
+        let mut o = OtherApps::default();
+        o.set_passages(&[passage_of(d, true, 0.0)], unix_now());
+        let section = o.select(&Query::new("", "", ""), 2048).to_string();
+        let (e_n, r_n) = (others::estimate_tokens(&section), e.tokenize(&section).len() - bos);
+        if std::env::args().any(|a| a == "-v") {
+            eprintln!("  {}: estimated {e_n}, tokenizer {r_n}", d.id);
+        }
+        est += e_n;
+        real += r_n;
+        worst = worst.max(r_n as f64 / e_n.max(1) as f64);
+    }
+    if real > 0 {
+        println!("other-apps sections: estimated {est} tokens, tokenizer {real} ({:.2} of the estimate, worst {worst:.2})", real as f64 / est.max(1) as f64);
+    }
 }
 
 /// What a long screen section costs: the first suggestion with the whole prompt to prefill,
@@ -558,6 +585,7 @@ fn ctx_bench(model: &str, docs: &[Doc], fill: f64, type_chars: usize) {
         let prompt_for = |filler: &str, typed: &str| {
             let mut p = context::build(
                 &ContextInput {
+                    other_apps: "",
                     app_name: &app,
                     window_title: "",
                     url: "",
@@ -659,6 +687,29 @@ struct Doc {
     /// Text of the focused window around the field.
     #[serde(default)]
     screen: String,
+    /// The other window's app and title.
+    #[serde(default)]
+    context_app: String,
+    #[serde(default)]
+    context_title: String,
+}
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
+}
+
+/// The other window of a document as the shell would send it.
+fn passage_of(d: &Doc, visible: bool, age_s: f64) -> Passage {
+    let app = if d.context_app.is_empty() { "Other app".to_string() } else { d.context_app.clone() };
+    Passage {
+        bundle_id: format!("corpus.{}", app.to_lowercase().replace(' ', "-")),
+        app,
+        window_title: d.context_title.clone(),
+        text: d.context.clone(),
+        captured_at: unix_now() - age_s,
+        visible,
+        ..Passage::default()
+    }
 }
 
 /// Bundle IDs of the corpus's named apps, for per-app instructions.
@@ -744,12 +795,30 @@ fn main() {
         r.think = Duration::from_millis(flag("--think").and_then(|s| s.parse().ok()).unwrap_or(0));
         let context_mode = flag("--context-mode").unwrap_or_else(|| "none".into());
         let screen_for = |d: &Doc| match context_mode.as_str() {
-            "none" => String::new(),
-            "focused" => d.screen.clone(),
-            "other" => d.context.clone(),
-            "both" => format!("{}\n\n{}", d.context, d.screen),
-            m => panic!("--context-mode {m}: expected none, focused, other or both"),
+            "none" | "other" => String::new(),
+            "focused" | "both" => d.screen.clone(),
+            "other-screen" => d.context.clone(),
+            "both-screen" => format!("{}\n\n{}", d.context, d.screen),
+            m => panic!("--context-mode {m}: expected none, focused, other, both, other-screen or both-screen"),
         };
+        let distractors: usize = flag("--distractors").and_then(|s| s.parse().ok()).unwrap_or(0);
+        let pool_for = |i: usize, d: &Doc| -> Vec<Passage> {
+            if !matches!(context_mode.as_str(), "other" | "both") || d.context.is_empty() {
+                return Vec::new();
+            }
+            let mut pool: Vec<Passage> = (1..=distractors)
+                .map(|k| &docs[(i + k) % docs.len()])
+                .filter(|o| o.id != d.id && !o.context.is_empty())
+                .enumerate()
+                .map(|(k, o)| passage_of(o, false, 120.0 * (k + 1) as f64))
+                .collect();
+            pool.push(if has("--other-recent") { passage_of(d, false, 60.0) } else { passage_of(d, true, 0.0) });
+            pool
+        };
+        if let Some(n) = flag("--other-tokens").and_then(|s| s.parse().ok()) {
+            settings.other_apps_tokens = n;
+            r.core.configure(settings.clone());
+        }
         let snap_for = |i: usize, d: &Doc| Snapshot {
             field_key: 1000 + i as u64,
             bundle_id: app_of(&d.header),
@@ -803,9 +872,18 @@ fn main() {
                 let mine = all.get(&d.id).or_else(|| all.get("*")).cloned().unwrap_or_default();
                 r.core.set_details(UserDetails { in_prompt: has("--details-in-prompt"), ..mine });
             }
-            total.add(&r.replay(&snap_for(i, d), &d.text, 0, usize::MAX));
+            r.core.set_context(pool_for(i, d));
+            let changes = r.core.context_changes();
+            let st = r.replay(&snap_for(i, d), &d.text, 0, usize::MAX);
+            if r.verbose {
+                eprintln!("{}: section changed {} times", d.id, r.core.context_changes() - changes);
+            }
+            total.add(&st);
         }
         total.print(&format!("{} docs in {:.0}s", docs.len(), t.elapsed().as_secs_f64()));
+        if matches!(context_mode.as_str(), "other" | "both") {
+            println!("other-apps section: changed {} times in {} docs", r.core.context_changes(), docs.len());
+        }
         return;
     }
 

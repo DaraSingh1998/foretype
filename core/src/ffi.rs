@@ -154,6 +154,25 @@ pub unsafe extern "C" fn ft_engine_set_details(engine: *mut FtEngine, details_js
     }
 }
 
+/// Replaces the pool of other apps' text (D42), sent when the pool changes, not with each
+/// snapshot: `{"passages": [{"app", "bundle_id", "window_title", "url_host", "text",
+/// "captured_at" (seconds since 1970), "visible", "display"}]}`. `{"passages": []}` clears it.
+/// Ignored with a server backend. Returns false if the JSON does not parse.
+///
+/// # Safety
+/// `engine` must be live; `context_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_set_context(engine: *mut FtEngine, context_json: *const c_char) -> bool {
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(context_json)) else { return false };
+    match serde_json::from_str::<crate::others::ContextUpdate>(s) {
+        Ok(u) => {
+            e.core.set_context(u.passages);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Compatibility rule for a bundle ID as JSON (`disabled`, `insertion`, `prime`, `note`).
 ///
 /// # Safety

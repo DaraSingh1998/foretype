@@ -41,6 +41,12 @@ bool ft_engine_configure(FtEngine *engine, const char *settings_json);
 /// as "details" suggestions when the text asks for one; never logged.
 bool ft_engine_set_details(FtEngine *engine, const char *details_json);
 
+/// Text from other apps' windows, sent only when it changes: {"passages": [{"app","bundle_id",
+/// "window_title","url_host","text","captured_at" (seconds since 1970),"visible","display"}]}.
+/// The core picks the passages relevant to each prompt within the settings' other_apps_tokens.
+/// {"passages": []} clears it; ignored with a server backend. False if the JSON doesn't parse.
+bool ft_engine_set_context(FtEngine *engine, const char *context_json);
+
 /// Installs the completer used when the config's backend is "shell".
 void ft_engine_set_completer(FtEngine *engine, FtCompleteCallback callback, void *ctx);
 
