@@ -1214,6 +1214,36 @@ passages that match fit 512 tokens already, as Phase C found for 2,048 at n_ctx 
 budget stays 512 under 16 GB; a corpus with longer source windows would be needed to show
 a gain.
 
+### `scripts/bench-context.sh` again (9176fb3)
+
+`FORETYPE_MODELS_DIR` with Qwen3-0.6B and 1.7B (the two models an 8 GB Mac runs), n_ctx 2048
+and 4096, ft-replay's engine defaults (f16, two slots, `n_ctx` cells per slot: the app
+without other apps' text from 16 GB); the switch bench as the app runs with other apps'
+text on (`SWITCH`: 16 GB = n_ctx 4096, q8_0, two slots of 4,096 cells, 2,048-token
+section; 8 GB = n_ctx 4096 in 4,096 shared q8_0 cells, 512-token section). Against Phase A
+and C (*Cross-app context baseline*, *the real section*):
+
+| Model | None | Focused | Other | Both | Model p50 / p90 (both) |
+|---|---:|---:|---:|---:|---:|
+| Qwen3-0.6B | 34.7% (34.7) | 38.3% (38.3) | 56.8% (56.8) | 58.8% (58.8) | 48 / 76 ms (53 / 84) |
+| Qwen3-1.7B | 38.7% (38.7) | 41.6% (41.6) | 59.1% (59.0) | 61.1% (61.1) | 77 / 119 ms (79 / 122) |
+
+| Model | Switch setup | First after the change p50 / p90 | While prefilling p50 / p90 | New header ready p50 / p90 | Peak footprint |
+|---|---|---:|---:|---:|---:|
+| Qwen3-0.6B | 16 GB (1,964 tokens) | 68 / 94 ms | 84 / 158 ms (9 keys) | 1,026 / 1,082 ms | 658 MB |
+| | 8 GB (523 tokens) | 69 / 96 ms | 48 ms (1 key) | 184 / 245 ms | 422 MB |
+| Qwen3-1.7B | 16 GB (1,964 tokens) | 102 / 144 ms | 97 / 189 ms (44 keys) | 2,884 / 4,257 ms | 664 MB |
+| | 8 GB (523 tokens) | 85 / 154 ms | 98 / 127 ms (3 keys) | 617 / 754 ms | 424 MB |
+
+- Keystrokes saved are Phase A's and C's to the tenth on both models (other on 1.7B +0.1),
+  and suggestions are as fast or faster: the second slot costs nothing while typing.
+- The ctx-bench rows of this run (f16, two full slots) give the memory of the app from
+  16 GB without other apps' text: 1.7B 613 MB loaded at n_ctx 2048 (385 MB with one
+  slot), i.e. the 224 MB of a second f16 slot; keystrokes 70 / 129 ms against 78 / 140.
+- Typing across a change, second run on 1.7B (16 GB): 102 / 144 ms for the first suggestion
+  (108 / 179 in the run above), 97 / 189 ms while prefilling, ready after 2.9 s. Qwen3-0.6B
+  makes the 2 s target with the full section too (1.0 s).
+
 ### OCR of other windows (`Foretype --ocr-bench`)
 
 A rendered document window (1,000×720 points, 16 lines of figures, dates and names) read
