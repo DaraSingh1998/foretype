@@ -727,8 +727,12 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   characters, else its static texts and fields; ≤ 6,000 characters, at most 8 windows. A
   window with under 200 characters is OCR'd instead when allowed (12 GB+, Screen
   Recording, not saving energy): `SCShareableContent` by window ID, `WindowCapture`,
-  Vision `.fast` without language correction (at most 3 windows a refresh), rows by
-  `ScreenContextProvider.assemble`; a 64×64 grayscale hash keeps an unchanged window's text. The window that had focus at the
+  Vision `.fast` without language correction (at most 3 windows a refresh, none started
+  after 400 ms of OCR, at full resolution: a smaller picture took as long and read less,
+  `--ocr-bench`), rows by `ScreenContextProvider.assemble`; a 64×64 grayscale hash keeps an
+  unchanged window's text, and a refresh after a typing pause doesn't capture a window
+  OCR'd less than a minute ago (D47). Each refresh logs its time, OCR time and CPU time
+  (`getrusage`) under `FORETYPE_DEBUG`. The window that had focus at the
   previous refresh is read too, covered or not. `Store` (pure, `--context-selftest`) merges
   a refresh (windows read now are visible; the rest no longer), keeps 12 windows at most and
   each for 10 minutes after it was last seen (a timer drops them), and builds the JSON; it
@@ -787,9 +791,12 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
   useScreenContext, useOtherApps (`FORETYPE_OTHER_APPS` overrides it), neverReadApps (the
   password managers until changed), personalize, strength, backend, backendURL,
-  backendModel, modelPath, onboarded; `otherAppsTokens` and `contextSize` from the Mac's
-  memory: 512 tokens and n_ctx 2048 under 16 GB, 2,048 and n_ctx 4096 from 16 GB while
-  other apps' text is on; `AppDelegate` restarts the built-in engine when that changes;
+  backendModel, modelPath, onboarded; `otherAppsTokens` (512 tokens under 16 GB, 2,048
+  from 16 GB), `contextSize` (4,096 while other apps' text is on, else 2,048) and
+  `engineCache` (D47: q8_0 while other apps' text is on, else f16; two slots; KV cells
+  shared by both under 16 GB, one context each from 16 GB; saved contexts 384 MB from 16
+  GB, 128 MB from 12 GB, none below); `AppDelegate` restarts the built-in engine when the
+  context size changes;
   `historyLocked` and `historyKeyMismatch` are for the run only, and
   `learning`, personalize and not locked, is what the core gets as `personalize`;
   `keychain`, the login one or an in-memory one in the self-tests; `readServerKey()` gives

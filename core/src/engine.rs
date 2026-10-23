@@ -660,22 +660,26 @@ impl Engine {
                 }
             }
             Some(Source::Saved(k)) => {
+                // Out of the list first: saving the slot may drop the oldest entries.
+                let e = self.saved.remove(k).expect("index from best_source");
+                self.saved_bytes -= e.state.byte_len();
                 self.save_slot(dest);
                 self.clear_slot(dest);
-                // Saving may have dropped older entries: find it again by its tokens.
                 let l = have + RESTORE_COST;
-                let k = self.saved.iter().position(|e| e.tokens.len() >= l && e.tokens[..l] == tokens[..l]).unwrap_or(k);
-                if let Some(e) = self.saved.remove(k) {
-                    let seq = self.slots[dest].seq;
-                    let ok = self.ctx.state_seq_set(&e.state, seq).is_ok()
-                        && self.ctx.clear_kv_cache_seq(Some(seq as u32), Some(l as u32), None).unwrap_or(false);
-                    if ok {
-                        self.slots[dest].cached = tokens[..l].to_vec();
-                    } else {
-                        self.clear_slot(dest);
-                    }
-                    self.saved.push_back(e);
+                let seq = self.slots[dest].seq;
+                // The restored sequence must reach position l - 1 (llama.cpp checks only
+                // the state's shape).
+                let ok = self.ctx.state_seq_set(&e.state, seq).is_ok()
+                    && self.ctx.kv_cache_seq_pos_max(seq) + 1 >= l as i32
+                    && self.ctx.clear_kv_cache_seq(Some(seq as u32), Some(l as u32), None).unwrap_or(false);
+                if ok {
+                    self.slots[dest].cached = tokens[..l].to_vec();
+                } else {
+                    self.clear_slot(dest);
                 }
+                self.saved_bytes += e.state.byte_len();
+                self.saved.push_back(e);
+                self.trim_saved();
             }
             _ => {
                 self.save_slot(dest);
@@ -713,6 +717,11 @@ impl Engine {
             Ok(_) => {}
             Err(e) => eprintln!("[foretype] saving a context failed: {e}"),
         }
+        self.trim_saved();
+    }
+
+    /// Drops the oldest saved contexts until they fit `saved_limit`.
+    fn trim_saved(&mut self) {
         let mut total: usize = self.saved.iter().map(|e| e.state.byte_len()).sum();
         while total > self.saved_limit {
             let Some(e) = self.saved.pop_front() else { break };

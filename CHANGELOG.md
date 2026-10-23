@@ -5,6 +5,23 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Text from other apps no longer holds up typing (2026-10-23)
+- When the text Foretype uses from other windows or from the screen changes, your next
+  suggestion no longer waits while the model reads it: suggestions keep coming from what it
+  had, and the new text is read in the background between keystrokes and used as soon as
+  it is ready. With the default model and a full section of other apps' text, the first
+  suggestion after such a change comes in about 0.1 s instead of about 1 s.
+- Returning to a field you were writing in no longer makes the model read its context
+  again: recent ones are kept in memory for up to 10 minutes (on Macs with 12 GB or more),
+  and forgotten with the rest of other apps' text when Foretype pauses, the screen locks or
+  the Mac sleeps.
+- While Use Text from Other Apps is on, the model's memory for its context takes half the
+  space, so Macs under 16 GB now get the same larger context as bigger Macs, at the memory
+  the smaller one used. Turning the setting on or off restarts the model on every Mac.
+- Reading other windows with OCR (Macs with 12 GB or more) does less work: at most 0.4 s
+  per refresh, and a window read in the last minute isn't captured again after a typing
+  pause.
+
 ## 0.1.5 (2026-10-23)
 
 ### Switching models no longer stops suggestions (2026-10-23)

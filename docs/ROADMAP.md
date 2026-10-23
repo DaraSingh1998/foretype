@@ -32,7 +32,7 @@ minutes in memory only, password managers never read by default, off for server 
 | A. Baseline and multi-monitor audit | Done (`feat/context-baseline`) | `eval/corpus-multiwindow.jsonl` (21 items) and `ft-replay --context-mode`, `--n-ctx`, `--ctx-bench`; keystrokes saved with no, focused-window and other-app context, first-suggestion latency, prefill and memory at n_ctx 2048/4096/8192 for every catalog model (`docs/MEASUREMENTS.md`); multi-monitor coordinate fixes with `--geometry-selftest`; the FORETYPE_ONLY_APPS hook point for reading (`docs/ARCHITECTURE.md`) |
 | B. Context collector | Done (`feat/context-pool`): `ContextPool.swift`, Settings ▸ Context, `--context-selftest`, `scripts/e2e-context.sh` (D44) | Text of other apps' windows on every display: Accessibility text first (no Screen Recording needed, exact), OCR of the window as the fallback; a recently-viewed pool (10 minutes, memory only, cleared on pause, lock and sleep); the never-read list (password managers), per-app opt-out, FORETYPE_ONLY_APPS, secure input; off for server backends; its own setting. On Macs under 12 GB, Accessibility text only: no OCR of other windows (D42) |
 | C. Relevance and prompt | Done (`feat/context-pool`): `core/src/others.rs`, `ft_engine_set_context`, `ft-replay --context-mode other` and `both` with `--distractors`, `--other-recent`, `--other-tokens` (D44) | Rank the pool's passages against the text being written (BM25, in the core), a prompt section of its own (labelled by app and window, after the focused window's text, before the body) within a token budget (D42: 512 tokens at n_ctx 2048 on Macs under 12 GB; provisionally 2,048 at n_ctx 4096 on 16 GB and up, to tune on the corpus), counted in tokens and trimmed first when a prompt would overflow, and `ft_engine_set_context` so the shell sends context separately from each keystroke's snapshot; measure on the multi-window corpus |
-| D. Performance | Planned | Keep a bigger header off the typing path: prefill a changed context on a second KV sequence in the background and switch when ready (double buffering); cache KV states per context (`llama_state_seq_*`); q8_0 KV cache and flash attention (memory and long-context decode; with q8_0, n_ctx 4096 on an 8 GB Mac costs today's KV memory, and its section may grow to 1,024 tokens if Phase C shows it helps); cheaper OCR (`.fast` level, only changed regions, fewer refreshes); re-run `scripts/bench-context.sh` against the Phase A numbers |
+| D. Performance | Done (`feat/context-perf`, D47): two KV slots with background prefill and the old header served meanwhile, saved contexts, q8_0 KV while other apps' text is on, OCR time budget; `ft-replay --switch-bench`, `--chunk-bench`, `--check-cache --fields`, `Foretype --ocr-bench` | Keep a bigger header off the typing path: prefill a changed context on a second KV sequence in the background and switch when ready (double buffering); cache KV states per context (`llama_state_seq_*`); q8_0 KV cache and flash attention (memory and long-context decode; with q8_0, n_ctx 4096 on an 8 GB Mac costs today's KV memory, and its section may grow to 1,024 tokens if Phase C shows it helps); cheaper OCR (`.fast` level, only changed regions, fewer refreshes); re-run `scripts/bench-context.sh` against the Phase A numbers |
 | E. UX and docs | Planned | The setting, the never-read list and a "what Foretype sees" view in Settings; onboarding text; README, REFERENCE and privacy notes; what 8 GB Macs get (no OCR of other windows, a smaller budget) explained in Settings |
 
 What Phase A found (details in `docs/MEASUREMENTS.md`, "Cross-app context baseline"):
@@ -58,6 +58,27 @@ What Phase A found (details in `docs/MEASUREMENTS.md`, "Cross-app context baseli
 - Windows on other Spaces aren't on screen, so ScreenCaptureKit's on-screen list (and
   Accessibility, for most apps) can't see them: the pool has to keep what was read while
   they were visible.
+
+What Phase D found (details in `docs/MEASUREMENTS.md`, "Cross-app context: performance"):
+- The first suggestion after other apps' text changes no longer waits for it: on Qwen3-1.7B
+  with a full 2,048-token section, 1,055 → 108 ms at p50 (1,624 → 179 ms at p90), served
+  with the previous header while the new one prefills between keystrokes.
+- The new header is ready in 3.1 s at p50 with that full section and nonstop typing (a key
+  every 150 ms), not the 2 s aimed for: suggestions keep the GPU busy two thirds of the
+  time and the section alone needs 1.8 s of it. With a pause, 2.1–2.4 s; the corpus's real
+  sections (111–286 tokens) take well under 0.3 s. Keystrokes typed meanwhile take
+  122 / 220 ms (p50 / p90) instead of about 80 / 114, as one may wait for a 40 ms step.
+- q8_0 KV saves the same keystrokes and halves KV memory, so n_ctx 4096 on Macs under 16 GB
+  costs today's memory; but on short prompts it is 6–10 ms slower at p50 on Qwen3-1.7B, so
+  it is used only while other apps' text is on. Flash attention was already on.
+- A 1,024-token section under 16 GB saves exactly what 512 does on the multi-window corpus
+  (0.6B 58.5%, 1.7B 61.2%, with three distractors): the budget stays 512 there.
+- OCR of a smaller picture costs the same and reads less (87% of 13 pt words and 49% of
+  11 pt ones at one pixel per point): captures keep their resolution; OCR gets a time budget
+  and fewer re-captures instead.
+- Left for later: background prefill can't beat nonstop typing on a full section (a
+  smaller budget, or a faster model, can); recurrent models keep one slot; the saved
+  contexts duplicate the other-apps section they share (llama.cpp saves whole sequences).
 
 ## What each phase delivered
 

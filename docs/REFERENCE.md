@@ -66,7 +66,8 @@ away right after recognition and the text is only kept in memory.
   only with **Use text from other apps**, a setting of its own (below).
 - It refreshes when a new field gets focus and after a 1.5 s typing pause at most every 15 s,
   never per keystroke, because new screen text changes the prompt header and costs a full
-  prefill. The new header is prefilled in the background as soon as OCR finishes.
+  prefill. The new header is prefilled in the background between keystrokes as soon as OCR
+  finishes, while suggestions keep coming from the previous one (see *Latency design*).
 - Warm OCR takes 145–360 ms (M3 Pro), off the typing path. The very first run on a Mac takes
   much longer while Vision compiles its models.
 
@@ -88,8 +89,9 @@ last 10 minutes (decisions D42 and D44).
   when the browser says where), else the window's texts in order; up to 6,000 characters,
   at most 50 ms per app, on a queue of its own. Where an app gives almost nothing through
   Accessibility, the window is captured and read with Vision's fast OCR, only on Macs with
-  12 GB of memory or more, with Screen Recording allowed, and not while saving energy; an
-  unchanged window isn't read again. The window you are typing in is never part of it (its
+  12 GB of memory or more, with Screen Recording allowed, and not while saving energy; at
+  most 3 windows and 0.4 s of OCR per refresh, an unchanged window isn't read again, and
+  after a typing pause a window read in the last minute isn't captured again. The window you are typing in is never part of it (its
   text is the field and the screen context).
 - **When.** When focus moves to another window or app (0.3 s later) and after a 2 s typing
   pause at most every 20 s; never per keystroke.
@@ -110,13 +112,14 @@ last 10 minutes (decisions D42 and D44).
   text before the caret, the last 300 characters counting double, plus the focused window's
   screen text and title); windows on screen outrank recently viewed ones, which need words
   in common with your text. The best passages that fit the budget go first in the prompt,
-  under `[Also open: App — Window title]`. The budget is 512 tokens on Macs under 16 GB (the
-  engine keeps its 2,048-token context) and 2,048 from 16 GB, where the engine runs with a
-  4,096-token context while the setting is on (turning it on or off restarts the built-in
-  engine there). The section also leaves room for the rest of the prompt; one that still
-  doesn't fit is sent without it. The selection changes only when another one is clearly
-  better, since every change costs a full prefill; the new text is prefilled in the
-  background as soon as it arrives.
+  under `[Also open: App — Window title]`. The budget is 512 tokens on Macs under 16 GB
+  and 2,048 from 16 GB. While the setting is on the built-in engine runs with a 4,096-token
+  context in a q8_0 KV cache (D47; under 16 GB in the memory its 2,048-token f16 context
+  took), and turning the setting on or off restarts it. The section also leaves room for the
+  rest of the prompt; one that still doesn't fit is sent without it. The selection changes
+  only when another one is clearly better, since every change costs a full prefill; the new
+  text is prefilled in the background as soon as it arrives, while suggestions keep using
+  the previous text (never text from a window that has left the pool).
 - On the multi-window corpus it saves as much typing as pasting the other window into the
   screen context did (`docs/MEASUREMENTS.md`, "Cross-app context: the real section").
 
@@ -295,6 +298,18 @@ translated strings (`docs/DEVELOPMENT.md`).
   tokens consistent with what you typed, so the cached prefix is identical for a whole word
   and each keystroke prefills 0–2 tokens.
 - Generated tokens are rolled back out of the KV cache after every suggestion.
+- The KV cache holds two prompts (D47). When text read from screens changes (other apps'
+  text, the screen context), suggestions keep coming from the prompt with the old text while
+  the new one is prefilled into the second in steps of about 40 ms between keystrokes
+  (120 ms once you stop for a second); the first suggestion that finds its prompt there
+  switches to it. A keystroke never waits for that prefill beyond one step. On Qwen3-1.7B
+  with a full 2,048-token section of other apps' text the first suggestion after a change
+  takes about 0.1 s instead of 1 s; the new text is in use about 3 s later if you type
+  without stopping (sooner after a pause, and in a fraction of a second for a typical
+  section).
+- A prompt the two slots no longer hold (a third field) is kept in memory to be restored
+  when you return to its field: up to 384 MB from 16 GB, 128 MB from 12 GB, none under 12
+  GB; each for at most 10 minutes, and all of them forgotten with other apps' text.
 - No fixed debounce: each keystroke cancels the in-flight job between decode steps.
 - Typing through a visible suggestion, backspacing inside it, and repeated Tabs reuse it
   with no inference at all.

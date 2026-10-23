@@ -1057,6 +1057,157 @@ Claude app, gives no AX caret, so the pixel locator has to place the ghost text.
   (same capture) read 702 and 708 characters (704 and 374 ms).
 - Self-tests: `--caret-selftest` (30 cases, worst error 0.00 pt) and `--font-selftest` pass.
 
+## Cross-app context: performance (2026-10-23)
+
+Phase D (`feat/context-perf`, D47): two prompts in the KV cache with the new header
+prefilled in the background, saved contexts, q8_0 KV, cheaper OCR of other windows. *Before*
+is `main` at `ef47c37` (0.1.5: one sequence, f16 KV, flash attention on by llama.cpp's own
+choice), *after* this branch, both rerun here one after another, one `ft-replay` at a time
+on the GPU, AC power. Flash attention was already on before Phase D: llama.cpp's default
+(`auto`) turns it on with Metal (`resolve_fused_ops: Flash Attention enabled` in its log),
+so Phase A's note that attention there was "quadratic without flash attention" was wrong;
+the q8_0 cache is the only change on that front.
+
+### q8_0 KV cache: keystrokes saved, latency, memory
+
+`eval/corpus.jsonl` (53 documents, none) and `eval/corpus-multiwindow.jsonl` (21, both,
+512-token section), n_ctx 2048, 4 words, greedy, prefetch, instant user.
+
+| Model | Engine | corpus.jsonl: saved, model p50 / p90 | multi-window both: saved, model p50 / p90 |
+|---|---|---:|---:|
+| Qwen3-1.7B | before (f16, one sequence) | 41.9%, 81 / 111 ms | 61.1%, 87 / 146 ms |
+| | after, f16, two slots | 41.9%, 79 / 109 ms | 61.1%, 84 / 132 ms |
+| | after, q8_0, two slots (two runs) | 41.9%, 89 / 127 and 87 / 121 ms | 61.1%, 90 / 141 ms |
+| Qwen3-0.6B | before | 39.9%, 51 / 79 ms | 58.8%, 54 / 90 ms |
+| | after, q8_0 | 39.9%, 53 / 74 ms | 58.6%, 54 / 84 ms |
+
+`--ctx-bench` (a prompt filled to 90% of the window; first suggestion from an empty cache,
+then 40 keystrokes; this process's footprint, Activity Monitor's Memory):
+
+| Model | n_ctx | KV, cells | First suggestion p50 | Prefill | Keystrokes p50 / p90 | Footprint loaded / peak |
+|---|---:|---|---:|---:|---:|---:|
+| Qwen3-1.7B | 2048 | f16, 2,048 (before) | 1,584 ms | 1,206 tok/s | 78 / 140 ms | 385 / 428 MB |
+| | 2048 | q8_0, 2,048 | 1,636 ms | 1,172 tok/s | 76 / 147 ms | 283 / 327 MB |
+| | 4096 | f16, 4,096 (before) | 3,365 ms | 1,118 tok/s | 89 / 163 ms | 613 / 659 MB |
+| | 4096 | q8_0, 4,096 | 3,416 ms | 1,099 tok/s | 82 / 156 ms | 399 / 448 MB |
+| | 4096 | q8_0, 8,192 (two slots) | 3,442 ms | 1,099 tok/s | 79 / 147 ms | 639 / 687 MB |
+| Qwen3-0.6B | 2048 | f16, 2,048 (before) | 649 ms | 3,052 tok/s | 58 / 107 ms | 389 / 419 MB |
+| | 2048 | q8_0, 2,048 | 640 ms | 3,057 tok/s | 48 / 89 ms | 282 / 313 MB |
+| | 4096 | f16, 4,096 (before) | 1,500 ms | 2,527 tok/s | 64 / 114 ms | 613 / 647 MB |
+| | 4096 | q8_0, 4,096 | 1,507 ms | 2,511 tok/s | 54 / 98 ms | 401 / 437 MB |
+
+- **Keystrokes saved don't change** with q8_0 on either corpus (0.6B's multi-window 58.8 →
+  58.6% is within the 0.3 points runs repeat to).
+- **Memory halves as expected**: the KV cache drops from 112 to 60 KB per token on both
+  models, so n_ctx 4096 in q8_0 costs what 2048 cost in f16 (1.7B 399 vs 385 MB, 0.6B 401
+  vs 389 MB loaded): D42's next step for Macs under 16 GB holds.
+- **Latency depends on the prompt's length.** Against a long cache q8_0 is no slower, even a
+  little faster (1.7B at 4096: 82 vs 89 ms; 0.6B: 54 vs 64 ms): there is half as much KV to
+  read. On the short prompts of `corpus.jsonl` it costs 1.7B 6–10 ms at p50 and 10–18 ms at
+  p90 (two clean runs; a third that shared the GPU with another test gave 91 / 204 ms),
+  0.6B 2 ms: dequantizing costs more than it saves when there is little to read. So the app
+  uses q8_0 only while other apps' text is on (long prompts, where memory matters) and keeps
+  f16 otherwise.
+- Two slots with f16 (the app without other apps' text) type exactly as before (79 / 109
+  vs 81 / 111 ms).
+
+### Typing across a change of other apps' text (`ft-replay --switch-bench`)
+
+Per document of the multi-window corpus: its own other window in the pool and its screen
+text, the shell's warm-up at focus, 40 characters typed at a fixed pace of a key every 150 ms
+(about 80 words a minute, whatever the suggestion's latency), then a long window opens beside
+it (the pool changes, the shell warms the field) and 40 more characters are typed at the
+same pace. Latency is the time from the key to the suggestion; the first suggestion after
+the change is the first model call after it.
+
+| Setup | Prompt after the change | Keys before p50 / p90 | First after the change p50 / p90 / max | While the new header prefills p50 / p90 | After p50 / p90 | New header ready p50 / p90 / max | Peak footprint |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Qwen3-1.7B, 16 GB: before (f16, one sequence) | 1,964 tokens | 76 / 113 ms | **1,055 / 1,624 / 1,693 ms** | — | 98 / 160 ms | 880 / 1,574 ms (in the key's way) | 652 MB |
+| Qwen3-1.7B, 16 GB: after (q8_0, two slots, 8,192 cells) | 1,964 tokens | 80 / 114 ms | **108 / 179 / 220 ms** | 122 / 220 ms (44 keys) | 102 / 167 ms | 3,109 / 4,448 / 6,406 ms (in the background) | 662 MB |
+| Qwen3-0.6B, under 16 GB: before (f16, n_ctx 2048) | 523 tokens | 50 / 78 ms | 75 / 190 / 201 ms | — | 58 / 85 ms | 131 / 142 ms | 412 MB |
+| Qwen3-0.6B, under 16 GB: after (q8_0, n_ctx 4096 in 4,096 cells) | 523 tokens | 53 / 83 ms | 66 / 85 / 109 ms | 47 ms (1 key) | 62 / 90 ms | 190 / 258 / 272 ms | 426 MB |
+
+- **The first suggestion after a context change no longer waits for it**: on the default
+  model with a full 2,048-token section, 1,055 → 108 ms at p50 and 1,624 → 179 ms at p90,
+  served with the previous header (2 keystrokes per change at p50) while the new one
+  prefills. On an 8 GB-style setup the section is smaller and the wait was short already;
+  its p90 drops 190 → 85 ms.
+- **Keystrokes typed while the new header prefills** take 122 / 220 ms (p50 / p90) against
+  80 / 114 ms before the change: a keystroke can arrive during a background step and waits
+  for it to finish (steps of about 40 ms while typing). Once it is ready, 102 / 167 ms: the
+  prompt is now 2,000 tokens rather than 300, the same as the old engine's 98 / 160 ms.
+- **The new header is ready in 3.1 s at p50, not 2 s,** with a full 2,048-token section and
+  nonstop typing: suggestions keep the GPU busy about two thirds of the time at a key every
+  150 ms, and 1,964 tokens need 1.8 s of GPU on their own at Qwen3-1.7B's 1,100 tokens/s.
+  The old engine was ready in 0.9 s only because it made the next key wait for it. With
+  a pause in typing it is done in about 2.1–2.4 s (*Background step length* below), and the
+  corpus's real sections (111–286 tokens) are ready in under 0.3 s (0.6B: 190 ms for 523
+  tokens).
+- Memory with two slots, q8_0 and n_ctx 4096 on 16 GB: 662 MB peak against 652 MB for one
+  f16 slot. Saved contexts come on top (below).
+
+### Background step length (`ft-replay --chunk-bench`)
+
+A prompt of 60% of a 4,096-token window (2,458 tokens on Qwen3-1.7B, q8_0) prefilled in the
+background in steps of a given length, back to back (no typing), 8 documents:
+
+| Step asked for | Ready p50 | Steps | A step p50 / p90 / max |
+|---:|---:|---:|---:|
+| 10 ms | 4,251 ms | 153 | 27 / 32 / 41 ms |
+| 40 ms | 4,760 ms | 118 | 40 / 49 / 77 ms |
+| 80 ms | 2,906 ms | 36 | 82 / 93 / 101 ms |
+| 160 ms | 2,383 ms | 14 | 160 / 177 / 182 ms |
+| 640 ms | 2,145 ms | 4 | 429 / 467 / 476 ms |
+
+A decode costs about 15 ms before its first token (the weights are read once per batch), so
+16-token steps run at half the speed of 500-token ones. 0.6B with 2,048 tokens: 1.9 s at 10
+ms, 0.94 s at 40 ms, 0.73 s at 160 ms. The worker uses 40 ms steps while keys arrive (what
+a keystroke may wait for) and 120 ms once the user has stopped for a second. Before the
+steps were sized this way (a rate measured on small pieces kept the pieces small) the 40 ms
+row took 5.3 s.
+
+PLACEHOLDER_CHECKS
+
+### A 1,024-token section under 16 GB?
+
+D42 allowed Macs under 16 GB a section of 1,024 tokens once q8_0 makes n_ctx 4096 cost
+today's memory, if more passages help. The multi-window corpus with both contexts and three
+distractor windows, n_ctx 4096 in 4,096 q8_0 cells (as the app runs there now):
+
+| Model | 512 tokens | 1,024 tokens |
+|---|---:|---:|
+| Qwen3-0.6B | 58.5%, 23 section changes, first p50 124 ms | 58.5%, 23 changes, first p50 122 ms |
+| Qwen3-1.7B | 61.2%, 23 changes, first p50 272 ms | 61.2%, 23 changes, first p50 266 ms |
+
+Nothing changes: each document's other window (111–286 tokens) and the few distractor
+passages that match fit 512 tokens already, as Phase C found for 2,048 at n_ctx 4096. The
+budget stays 512 under 16 GB; a corpus with longer source windows would be needed to show
+a gain.
+
+### OCR of other windows (`Foretype --ocr-bench`)
+
+A rendered document window (1,000×720 points, 16 lines of figures, dates and names) read
+with Vision's fast level, as the pool reads windows without Accessibility text; median of 5
+after a warm-up run, the capture itself not timed:
+
+| Text | Pixels per point | Time | CPU | Words read |
+|---|---:|---:|---:|---:|
+| 13 pt | 2 (Retina) | 37 ms | 28 ms | 100% |
+| | 1.5 | 41 ms | 25 ms | 95.5% |
+| | 1 | 35 ms | 24 ms | 87.3% |
+| 11 pt | 2 | 39 ms | 28 ms | 99.3% |
+| | 1.5 | 47 ms | 26 ms | 95.5% |
+| | 1 | 36 ms | 23 ms | 48.5% |
+
+- **Downscaling buys nothing**: Vision's fast level takes the same time at any of these
+  sizes (it scales internally) and reads fewer words, half of the 11 pt ones at one pixel
+  per point. Captures keep their full resolution. The 64×64 hash costs 0.1–0.6 ms.
+- What changed instead: at most 400 ms of OCR per refresh (no capture is started after
+  that), and a refresh after a typing pause doesn't capture a window OCR'd less than a
+  minute ago (a refresh on a window or app switch still does, and an unchanged picture is
+  still not read again). Each refresh now logs its CPU time
+  (`context: switch refresh, … OCR … ms, CPU … ms`).
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

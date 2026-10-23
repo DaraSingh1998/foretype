@@ -47,8 +47,8 @@ protocol PreferencesHost: AnyObject {
     func resumeSuggestions()
     /// The battery or Low Power Mode settings changed.
     func powerSettingsChanged()
-    /// Text from other apps' windows on or off (the built-in engine may restart with a larger
-    /// context on 16 GB Macs).
+    /// Text from other apps' windows on or off (the built-in engine restarts with a larger,
+    /// q8_0 context).
     func setUseOtherApps(_ on: Bool)
     /// Picks an application for the never-read list.
     func addNeverReadApp()

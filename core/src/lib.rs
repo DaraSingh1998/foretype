@@ -1779,6 +1779,26 @@ mod tests {
     }
 
     #[test]
+    fn an_emptied_pool_makes_the_engine_forget_and_stale_sections_unusable() {
+        let c = core();
+        c.set_context(vec![sheet(true)]);
+        let live = build_prompt(&c.shared, &snap(1, "Contractors came to sixty"), &c.settings(), &[], true);
+        assert!(c.shared.others.lock().unwrap().section_alive(live.others_section()));
+        assert!(!c.shared.forget.load(Ordering::SeqCst));
+        // The window closed: the old section may no longer stand in for the new prompt.
+        c.set_context(vec![Passage { window_title: "Q4 budget".into(), ..sheet(true) }]);
+        assert!(!c.shared.others.lock().unwrap().section_alive(live.others_section()));
+        assert!(!c.shared.forget.load(Ordering::SeqCst));
+        // Cleared (pause, lock, sleep, the setting off): the engine drops what it holds.
+        c.set_context(Vec::new());
+        assert!(c.shared.forget.load(Ordering::SeqCst));
+        // Clearing an empty pool asks for nothing.
+        c.shared.forget.store(false, Ordering::SeqCst);
+        c.set_context(Vec::new());
+        assert!(!c.shared.forget.load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn other_apps_section_leaves_room_for_the_rest_of_the_prompt() {
         let c = Core::new(CoreConfig { model_path: "/nonexistent.gguf".into(), n_ctx: 1600, ..CoreConfig::default() }, Box::new(|_| {}));
         c.set_context(vec![sheet(true)]);

@@ -755,15 +755,40 @@ next compaction under that key still drops the other key's frames.
   restored when a request shares a longer prefix with it than with any slot: 384 MB from
   16 GB, 128 MB from 12 GB, none under 12 GB; each is dropped 10 minutes after it was
   saved.
-- **q8_0 KV cache** on every Mac (flash attention, which it needs, was already on: llama.cpp
-  turns it on by itself with Metal). Under 16 GB the context is now 4,096 tokens in 4,096
-  cells shared by both slots, the memory 2,048 f16 cells took, whether or not other apps'
-  text is on (switching it no longer restarts the engine there); from 16 GB each slot gets
-  its whole context (2,048, or 4,096 while other apps' text is on).
+- **q8_0 KV cache while other apps' text is on**, f16 otherwise (flash attention, which
+  q8_0 needs, was already on: llama.cpp turns it on by itself with Metal). With the setting
+  on the context is 4,096 tokens, otherwise 2,048. Under 16 GB both slots share one
+  context's cells (4,096 q8_0 or 2,048 f16: the KV memory 2,048 f16 cells took before);
+  from 16 GB each slot gets its own. Switching the setting restarts the built-in engine on
+  every Mac.
 - **Cheaper OCR of other windows**: at most 400 ms of OCR per refresh, and a refresh after a
   typing pause doesn't capture a window it OCR'd less than a minute ago. Pictures are not
   downscaled.
 
-**Why.** MEASUREMENTS_TODO
+**Why.** Every change to the header used to cost the next keystroke a full prefill: on
+Qwen3-1.7B with a full 2,048-token section the first suggestion after a change took 1,055
+ms at p50 and 1,624 at p90 (`docs/MEASUREMENTS.md`, "Cross-app context: performance").
+Served with the old header it takes 108 / 179 ms; the old header is what the user had a
+second ago, so a few keystrokes of slightly stale context cost little. Prompts that differ
+only after the section share its cells, so a new screen text costs only its own tokens,
+and a second sequence in the same context is cheaper than a second context (no second
+compute buffer, shared prefixes). A field the user returns to after the two slots moved on
+would otherwise be prefilled again; a copy in memory restores in milliseconds, and ten
+minutes and the pool's own clearing keep it from outliving the text it holds. q8_0 saves
+the same keystrokes on both corpora and halves KV memory (n_ctx 4096 in q8_0: 399 MB on
+Qwen3-1.7B against 385 MB for 2048 in f16), which pays for the second slot and the larger
+context; it is no slower against long prompts (82 vs 89 ms at 4,096 tokens) but 6–10 ms
+slower at p50 on short ones, so people who don't use other apps' text keep f16. A smaller
+OCR picture took Vision as long and read fewer words (87% of 13 pt words at one pixel per
+point), so the OCR saving comes from doing less of it.
 
-**Cost.** COST_TODO
+**Cost.** With a full 2,048-token section the new header is ready only 3.1 s (p50) after a
+change if the user types without stopping, and keystrokes meanwhile take 122 / 220 ms
+(p50 / p90) instead of about 80 / 114, as one can wait for a 40 ms background step; the 2 s
+aimed for holds for sections the size the corpus has (under 0.3 s) or after a pause (2.1–2.4
+s). A few suggestions after a change still use the old text. Memory from 16 GB: two q8_0
+slots at 4,096 tokens take 26 MB more than one f16 slot did (639 vs 613 MB), plus up to 384
+MB of saved contexts; without other apps' text the second f16 slot adds 224 MB. Saved
+contexts duplicate the other-apps section they share (llama.cpp saves whole sequences).
+Recurrent and hybrid models (none in the catalog) keep one slot and still make the next
+keystroke wait. Switching the setting now reloads the model on Macs under 16 GB too.
