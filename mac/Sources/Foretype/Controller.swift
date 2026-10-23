@@ -17,6 +17,8 @@ final class Controller {
     let keys = KeyTap()
     let panel = GhostPanel()
     let screen = ScreenContextProvider()
+    /// Text from other apps' windows (opt-in, D42).
+    let pool = ContextPool()
     let speller = Speller()
     let pixelCaret = PixelCaretProvider()
     let hotkeys = Hotkeys()
@@ -71,6 +73,7 @@ final class Controller {
         old.onEvent = nil
         new.configure(coreSettingsJSON())
         new.setDetails(detailsJSON)
+        new.setContext(pool.currentJSON)
         hide()
         DispatchQueue.global(qos: .utility).async { old.shutdown() }
     }
@@ -87,6 +90,7 @@ final class Controller {
         screen.enabled = settings.useScreenContext
         screen.onUpdate = { [weak self] fieldKey, text in self?.screenTextArrived(fieldKey, text) }
         pixelCaret.onUpdate = { [weak self] fieldKey in self?.pixelCaretArrived(fieldKey) }
+        pool.onChange = { [weak self] json in self?.contextChanged(json) }
         keys.onKeyDown = { [weak self] in self?.tracker.keyDown() }
         keys.onAction = { [weak self] action in DispatchQueue.main.async { self?.perform(action) } }
         hotkeys.onAction = { [weak self] action in self?.hotkey(action) }
@@ -106,6 +110,7 @@ final class Controller {
         screen.enabled = screenEnabled
         engine.configure(coreSettingsJSON())
         engine.setDetails(detailsJSON)
+        updatePool()
         let ok = keys.start()
         if paused { keys.stop() } else { tracker.start() }
         return ok
@@ -130,11 +135,14 @@ final class Controller {
             pixelCaret.cancel()
             screen.enabled = false
             screen.reset()
+            // Pause, screen lock and sleep forget other apps' text too (D42).
+            updatePool()
             tracker.restorePrimedApps()
             engine.configure(coreSettingsJSON())
         } else {
             engine.configure(coreSettingsJSON())
             screen.enabled = screenEnabled
+            updatePool()
             if !keys.start() { Log.debug("key taps could not be turned back on") }
             tracker.start()
         }
@@ -143,6 +151,37 @@ final class Controller {
 
     /// Screen context reads the window with OCR; not while saving energy.
     private var screenEnabled: Bool { settings.useScreenContext && !saveEnergy && !isPaused }
+
+    /// Other apps' text: the user's setting, a model on this Mac, not paused. Their windows
+    /// are OCR'd only on Macs with 12 GB or more, with Screen Recording, and not while saving
+    /// energy. Main thread.
+    private func updatePool() {
+        let on = settings.useOtherApps && settings.backendIsOnDevice && !isPaused
+        var gate = ContextPool.Gate()
+        gate.neverRead = Set(settings.neverReadApps)
+        gate.onlyApps = { [settings] pid, bundle in settings.onlyAppsAllow(pid: pid, bundleId: bundle) }
+        gate.excluded = { [weak self] bundle in self?.contextExcluded(bundle) ?? true }
+        pool.configure(enabled: on, allowOCR: ContextPool.memoryAllowsOCR && !saveEnergy && ScreenContextProvider.hasPermission,
+                       gate: gate)
+    }
+
+    /// Apps the user switched suggestions off in, or paused Foretype in, are not read as
+    /// context. Apps off only by default (spreadsheets, editors, terminals) are: a sheet is
+    /// what an email quotes (D44).
+    private func contextExcluded(_ bundleId: String) -> Bool {
+        settings.disabledApps.contains(bundleId) || isSnoozed(bundleId)
+    }
+
+    /// Pool queue: other apps' text changed. Prefill the new header in the background so the
+    /// next keystroke doesn't wait for it.
+    private func contextChanged(_ json: String) {
+        engine.setContext(json)
+        let snap = latestSnapshot
+        lock.lock()
+        let stopped = paused
+        lock.unlock()
+        if !stopped, snap.fieldKey & 0xFFFF_FFFF != 0, !snap.textBefore.isEmpty { engine.warm(snap) }
+    }
 
     private var latestSnapshot: FieldSnapshot {
         lock.lock(); defer { lock.unlock() }
@@ -196,6 +235,7 @@ final class Controller {
         engine.submit(s)
         screen.note(.init(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame),
                     skip: !screenContextAllowed(s))
+        pool.note(pid: s.pid, windowTitle: s.windowTitle, windowFrame: s.windowFrame)
     }
 
     /// The pixel caret locator's view of a snapshot, when it should place the ghost text:
@@ -436,6 +476,7 @@ final class Controller {
 
     func applySettings() {
         screen.enabled = screenEnabled
+        updatePool()
         engine.configure(coreSettingsJSON())
         hide()
     }

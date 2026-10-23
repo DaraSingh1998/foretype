@@ -109,5 +109,21 @@
 			<string>%2$@ ऐप्स के लिए नोट्स</string>
 		</dict>
 	</dict>
+	<key>Never read: %@ apps</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%1$#@count@</string>
+		<key>count</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>कभी नहीं पढ़ा जाता: %2$@ ऐप</string>
+			<key>other</key>
+			<string>कभी नहीं पढ़े जाते: %2$@ ऐप्स</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

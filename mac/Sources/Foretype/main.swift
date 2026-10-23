@@ -15,6 +15,9 @@ if CommandLine.arguments.contains("--stats-selftest") {
 if CommandLine.arguments.contains("--geometry-selftest") {
     exit(ScreenGeometry.selfTest() ? 0 : 1)
 }
+if CommandLine.arguments.contains("--context-selftest") {
+    exit(ContextPool.selfTest() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--pause-selftest") {
     exit(PauseState.selfTest() ? 0 : 1)
 }

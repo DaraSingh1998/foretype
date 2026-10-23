@@ -41,6 +41,11 @@ protocol PreferencesHost: AnyObject {
     func resumeSuggestions()
     /// The battery or Low Power Mode settings changed.
     func powerSettingsChanged()
+    /// Text from other apps' windows on or off (the built-in engine may restart with a larger
+    /// context on 16 GB Macs).
+    func setUseOtherApps(_ on: Bool)
+    /// Picks an application for the never-read list.
+    func addNeverReadApp()
 }
 
 /// The Settings window (menu: Settings…, Cmd-,): everything in the menu-bar menu plus the
@@ -56,7 +61,8 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
     init(host: PreferencesHost) {
         let model = ModelPane(title: L("Model"), host: host)
         let statistics = StatisticsPane(title: L("Statistics"), host: host)
-        let panes: [PreferencesPane] = [GeneralPane(title: L("General"), host: host),
+        let general = GeneralPane(title: L("General"), host: host)
+        let panes: [PreferencesPane] = [general,
                                         PersonalizationPane(title: L("Personalization"), host: host),
                                         AboutYouPane(title: L("About You"), host: host),
                                         AppsPane(title: L("Apps"), host: host), model, statistics]
@@ -75,6 +81,7 @@ final class PreferencesWindowController: NSWindowController, NSWindowDelegate {
         window.toolbarStyle = .preference
         self.tabs = tabs
         self.panes = panes
+        general.showApps = { [weak tabs] in tabs?.selectedTabViewItemIndex = 3 }
         modelPane = model
         statsPane = statistics
         super.init(window: window)
@@ -279,6 +286,12 @@ final class GeneralPane: PreferencesPane {
     private let openAtLogin = NSButton(checkboxWithTitle: L("Open Foretype when you log in"), target: nil, action: nil)
     private let screenHint = PreferencesPane.note(Signing.staleGrantHint, width: 400)
     private var screenHintRow: NSGridRow?
+    private let otherApps = NSButton(checkboxWithTitle: L("Use text from other apps"), target: nil, action: nil)
+    private let neverReadSummary = NSTextField(labelWithString: "")
+    private let otherAppsStatus = NSTextField(labelWithString: "")
+    private var otherAppsStatusRow: NSGridRow?
+    /// Opens the Apps tab, where the never-read list is edited.
+    var showApps: (() -> Void)?
     private let instructionsSummary = NSTextField(labelWithString: "")
     private let autoCheck = NSButton(checkboxWithTitle: L("Check for updates every day"), target: nil, action: nil)
     private let autoInstall = NSButton(checkboxWithTitle: L("Install updates automatically"), target: nil, action: nil)
@@ -306,6 +319,15 @@ final class GeneralPane: PreferencesPane {
             p.target = self
             p.action = #selector(powerChanged(_:))
         }
+        otherApps.target = self
+        otherApps.action = #selector(otherAppsChanged)
+        neverReadSummary.textColor = .secondaryLabelColor
+        neverReadSummary.lineBreakMode = .byTruncatingTail
+        neverReadSummary.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
+        otherAppsStatus.font = .systemFont(ofSize: 11)
+        otherAppsStatus.textColor = .systemOrange
+        let editNeverRead = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editNeverRead))
+        editNeverRead.controlSize = .small
         for (b, sel) in [(sentenceEnd, #selector(changed(_:))), (screen, #selector(changed(_:))),
                          (emoji, #selector(changed(_:))), (autocorrect, #selector(changed(_:))), (typoGate, #selector(changed(_:))),
                          (midLine, #selector(changed(_:)))] {
@@ -364,6 +386,10 @@ final class GeneralPane: PreferencesPane {
             [NSGridCell.emptyContentView, Self.note(L("Reads the text around the field you are typing in, such as the message you are answering, with on-device OCR. The image is discarded right away."), width: w)],
             [NSGridCell.emptyContentView, Self.hstack([screenStatus, screenAllow, screenRelaunch])],
             [NSGridCell.emptyContentView, screenHint],
+            [Self.formLabel(L("Other apps:")), otherApps],
+            [NSGridCell.emptyContentView, Self.note(L("Suggestions can use what other windows show, on any display: a document, slides or a web page beside the email you are writing, and windows you looked at in the last 10 minutes. Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac sleeps; never sent to a server."), width: w)],
+            [NSGridCell.emptyContentView, Self.hstack([neverReadSummary, editNeverRead])],
+            [NSGridCell.emptyContentView, otherAppsStatus],
             [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
             [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
             [Self.formLabel(L("Version:")), versionLabel],
@@ -374,6 +400,7 @@ final class GeneralPane: PreferencesPane {
             [NSGridCell.emptyContentView, checkNow],
         ])
         screenHintRow = grid.cell(for: screenHint)?.row
+        otherAppsStatusRow = grid.cell(for: otherAppsStatus)?.row
         batteryRows = [battery, batteryLevel].compactMap { grid.cell(for: $0)?.row }
         updateRows = [autoCheck, autoInstall, updateNote, checkNow].compactMap { grid.cell(for: $0)?.row }
         availableRow = grid.cell(for: available)?.row
@@ -413,6 +440,20 @@ final class GeneralPane: PreferencesPane {
         openAtLogin.isEnabled = AppLocation.isBundledApp
         screenHint.isHidden = allowed || !s.useScreenContext || !Signing.isAdHocBundle
         screenHintRow?.isHidden = screenHint.isHidden
+        otherApps.state = s.useOtherApps ? .on : .off
+        let never = s.neverReadApps.count
+        neverReadSummary.stringValue = s.neverReadIsDefault ? L("Never read: password managers")
+            : LCount(never, "Never read: %@ apps", one: "Never read: %@ app")
+        // What this Mac and this backend allow.
+        if !s.backendIsOnDevice {
+            otherAppsStatus.stringValue = L("Off while a server makes suggestions: other apps\u{2019} text stays on this Mac.")
+        } else if !ContextPool.memoryAllowsOCR {
+            otherAppsStatus.stringValue = L("On this Mac (under 12 GB of memory), only text apps share through Accessibility is read, and less of it.")
+        } else {
+            otherAppsStatus.stringValue = ""
+        }
+        otherAppsStatus.isHidden = otherAppsStatus.stringValue.isEmpty || !s.useOtherApps
+        otherAppsStatusRow?.isHidden = otherAppsStatus.isHidden
         let global = s.instructions.replacingOccurrences(of: "\n", with: " ")
         let apps = s.appInstructions.values.filter { !$0.isEmpty }.count
         var summary = global.isEmpty ? L("No note for all apps") : "\u{201C}\(global)\u{201D}"
@@ -498,6 +539,10 @@ final class GeneralPane: PreferencesPane {
     }
 
     @objc private func allowScreen() { host?.openScreenRecordingSettings() }
+
+    @objc private func otherAppsChanged() { host?.setUseOtherApps(otherApps.state == .on) }
+
+    @objc private func editNeverRead() { showApps?() }
 
     @objc private func relaunch() { AppLocation.relaunch() }
 
@@ -690,11 +735,31 @@ final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
 
 final class AppsPane: PreferencesPane {
     private let list = NSStackView()
+    private let neverList = NSStackView()
     private let empty = PreferencesPane.note(L("You haven't changed any app yet. Add an app below, or choose \u{201C}Suggest in \u{2026}\u{201D} in the Foretype menu while that app is in front."))
     private let onlyApps = NSTextField(labelWithString: "")
 
     override func build() {
         add(Self.heading(L("Apps you changed")))
+        add(Self.scrolling(list, height: 160))
+        add(Self.hstack([ActionButton.make(L("Add an App\u{2026}")) { [weak self] in self?.host?.addAppException() }]))
+        add(Self.note(L("Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts.")), spacingAfter: 18)
+        add(Self.heading(L("Never read as context")))
+        add(Self.scrolling(neverList, height: 120))
+        add(Self.hstack([ActionButton.make(L("Add an App\u{2026}")) { [weak self] in self?.host?.addNeverReadApp() },
+                         ActionButton.make(L("Restore Defaults")) { [weak self] in
+                             guard let host = self?.host else { return }
+                             host.settings.neverReadApps = ContextPool.passwordManagers
+                             host.settingsChanged()
+                         }]))
+        add(Self.note(L("With \u{201C}Use text from other apps\u{201D} on, Foretype never reads these apps\u{2019} windows. Password managers are on the list to start with; apps where you turned suggestions off are never read either.")))
+        onlyApps.font = .systemFont(ofSize: 11)
+        onlyApps.textColor = .systemOrange
+        add(onlyApps)
+    }
+
+    /// A bordered, scrolling list of rows, `height` tall.
+    private static func scrolling(_ list: NSStackView, height: CGFloat) -> NSScrollView {
         list.orientation = .vertical
         list.alignment = .leading
         list.spacing = 0
@@ -715,14 +780,9 @@ final class AppsPane: PreferencesPane {
             list.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
             doc.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             doc.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
-            scroll.heightAnchor.constraint(equalToConstant: 200),
+            scroll.heightAnchor.constraint(equalToConstant: height),
         ])
-        add(scroll)
-        add(Self.hstack([ActionButton.make(L("Add an App\u{2026}")) { [weak self] in self?.host?.addAppException() }]))
-        add(Self.note(L("Remove returns an app to its default. Code editors, password managers, remote desktops and spreadsheets are off by default; terminals suggest only on AI-agent prompts.")))
-        onlyApps.font = .systemFont(ofSize: 11)
-        onlyApps.textColor = .systemOrange
-        add(onlyApps)
+        return scroll
     }
 
     override func refresh() {
@@ -746,11 +806,27 @@ final class AppsPane: PreferencesPane {
                 sep.widthAnchor.constraint(equalTo: list.widthAnchor).isActive = true
             }
         }
+        neverList.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        let never = s.neverReadApps
+        for (i, bundle) in never.enumerated() {
+            let row = appRow(bundle: bundle, state: "", off: true) { [weak self] in
+                guard let host = self?.host else { return }
+                host.settings.neverReadApps.removeAll { $0 == bundle }
+                host.settingsChanged()
+            }
+            neverList.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: neverList.widthAnchor).isActive = true
+            if i < never.count - 1 {
+                let sep = Self.separator()
+                neverList.addArrangedSubview(sep)
+                sep.widthAnchor.constraint(equalTo: neverList.widthAnchor).isActive = true
+            }
+        }
         onlyApps.stringValue = s.onlyApps.isEmpty ? "" : L("Development: limited to %@ (FORETYPE_ONLY_APPS)", s.onlyApps.joined(separator: ", "))
         onlyApps.isHidden = s.onlyApps.isEmpty
     }
 
-    private func appRow(bundle: String, state: String, off: Bool) -> NSView {
+    private func appRow(bundle: String, state: String, off: Bool, onRemove: (() -> Void)? = nil) -> NSView {
         var name = bundle
         var icon: NSImage?
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundle) {
@@ -772,9 +848,11 @@ final class AppsPane: PreferencesPane {
         names.spacing = 1
         let status = NSTextField(labelWithString: state)
         status.textColor = off ? .secondaryLabelColor : .systemGreen
-        let remove = ActionButton.make(L("Remove")) { [weak self] in self?.remove(bundle, off: off) }
+        let remove = ActionButton.make(L("Remove")) { [weak self] in
+            if let onRemove { onRemove() } else { self?.remove(bundle, off: off) }
+        }
         remove.controlSize = .small
-        remove.toolTip = L("Return %@ to its default", name)
+        remove.toolTip = onRemove == nil ? L("Return %@ to its default", name) : L("Let Foretype read %@", name)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let row = NSStackView(views: [image, names, spacer, status, remove])

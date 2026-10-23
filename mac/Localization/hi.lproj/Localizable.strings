@@ -344,3 +344,17 @@
 "Foretype (loading)" = "Foretype (लोड हो रहा है)";
 "Foretype (needs attention)" = "Foretype (ध्यान देने की ज़रूरत है)";
 "update available" = "अपडेट उपलब्ध";
+
+/* Text from other apps (ContextPool.swift, Settings ▸ General and Apps, the menu) */
+"Use Text from Other Apps" = "दूसरे ऐप्स के टेक्स्ट का उपयोग करें";
+"Off while a server makes suggestions" = "सर्वर से सुझाव मिलते समय बंद";
+"Other apps:" = "दूसरे ऐप्स:";
+"Use text from other apps" = "दूसरे ऐप्स के टेक्स्ट का उपयोग करें";
+"Suggestions can use what other windows show, on any display: a document, slides or a web page beside the email you are writing, and windows you looked at in the last 10 minutes. Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac sleeps; never sent to a server." = "सुझाव किसी भी डिस्प्ले पर दूसरी विंडो में दिख रही चीज़ों का उपयोग कर सकते हैं: आप जो ईमेल लिख रहे हैं उसके बगल में खुला दस्तावेज़, स्लाइड या वेब पेज, और पिछले 10 मिनट में देखी गई विंडो। यह केवल मेमोरी में रहता है और Foretype के पॉज़ होने, स्क्रीन लॉक होने या Mac के स्लीप में जाने पर भुला दिया जाता है; किसी सर्वर पर कभी नहीं भेजा जाता।";
+"Never read: password managers" = "कभी नहीं पढ़े जाते: पासवर्ड मैनेजर";
+"Off while a server makes suggestions: other apps’ text stays on this Mac." = "सर्वर से सुझाव मिलते समय बंद: दूसरे ऐप्स का टेक्स्ट इसी Mac पर रहता है।";
+"On this Mac (under 12 GB of memory), only text apps share through Accessibility is read, and less of it." = "इस Mac पर (12 GB से कम मेमोरी), केवल वही टेक्स्ट पढ़ा जाता है जो ऐप्स ऐक्सेसिबिलिटी से साझा करते हैं, और कम मात्रा में।";
+"Never read as context" = "संदर्भ के लिए कभी नहीं पढ़े जाने वाले ऐप्स";
+"With “Use text from other apps” on, Foretype never reads these apps’ windows. Password managers are on the list to start with; apps where you turned suggestions off are never read either." = "“दूसरे ऐप्स के टेक्स्ट का उपयोग करें” चालू होने पर भी Foretype इन ऐप्स की विंडो कभी नहीं पढ़ता। शुरुआत में सूची में पासवर्ड मैनेजर हैं; जिन ऐप्स में आपने सुझाव बंद किए हैं, वे भी कभी नहीं पढ़े जाते।";
+"Let Foretype read %@" = "Foretype को %@ पढ़ने दें";
+"Choose an app whose windows Foretype should never read." = "वह ऐप चुनें जिसकी विंडो Foretype को कभी नहीं पढ़नी चाहिए।";

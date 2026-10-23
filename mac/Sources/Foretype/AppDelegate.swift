@@ -24,6 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
     private var engineDetail = ""
     /// The model file the running engine loaded; nil with a server backend.
     private var loadedModelPath: String?
+    /// The running built-in engine's context size (`AppSettings.contextSize`).
+    private var loadedContextSize = 2048
     private var lastFrontApp: NSRunningApplication?
     private var trustTimer: Timer?
     private var signalSources: [DispatchSourceSignal] = []
@@ -171,6 +173,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
                 return
             }
             config["model_path"] = model
+            // 4,096 tokens on 16 GB Macs while other apps' text is on (D42), else 2,048.
+            config["n_ctx"] = settings.contextSize
+            loadedContextSize = settings.contextSize
             label = URL(fileURLWithPath: model).lastPathComponent
             loadedModelPath = model
         } else if settings.backend == "apple" {
@@ -465,6 +470,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             let grant = NSMenuItem(title: L("Allow Screen Recording\u{2026}"), action: #selector(openScreenRecording), keyEquivalent: "")
             grant.target = self
             menu.addItem(grant)
+        }
+        let others = NSMenuItem(title: L("Use Text from Other Apps"), action: #selector(toggleOtherApps), keyEquivalent: "")
+        others.target = self
+        others.state = settings.useOtherApps ? .on : .off
+        menu.addItem(others)
+        if settings.useOtherApps, !settings.backendIsOnDevice {
+            let off = NSMenuItem(title: L("Off while a server makes suggestions"), action: nil, keyEquivalent: "")
+            off.isEnabled = false
+            off.indentationLevel = 1
+            menu.addItem(off)
         }
 
         if let app = lastFrontApp, let bundle = app.bundleIdentifier {
@@ -864,6 +879,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
 
     @objc private func toggleScreenContext() {
         settings.useScreenContext.toggle()
+        settingsChanged()
+    }
+
+    @objc private func toggleOtherApps() {
+        setUseOtherApps(!settings.useOtherApps)
+    }
+
+    func setUseOtherApps(_ on: Bool) {
+        settings.useOtherApps = on
+        // On 16 GB Macs the built-in engine runs with a larger context while it is on.
+        if settings.backend == "local", controller != nil, loadedContextSize != settings.contextSize {
+            Log.debug("other apps \(on ? "on" : "off"): engine restarts with n_ctx \(settings.contextSize)")
+            startEngine()
+        }
+        settingsChanged()
+    }
+
+    func addNeverReadApp() {
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSOpenPanel()
+        panel.message = L("Choose an app whose windows Foretype should never read.")
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.allowedContentTypes = [.application]
+        guard panel.runModal() == .OK, let url = panel.url, let bundle = Bundle(url: url)?.bundleIdentifier else { return }
+        if !settings.neverReadApps.contains(bundle) { settings.neverReadApps.append(bundle) }
         settingsChanged()
     }
 

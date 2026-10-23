@@ -98,6 +98,42 @@ final class AppSettings {
         set { d.set(newValue, forKey: "useScreenContext") }
     }
 
+    /// Use text from other apps' windows (D42): off by default, separate from screen
+    /// context. FORETYPE_OTHER_APPS=1 or 0 overrides it for testing (the stored value is left
+    /// alone; the dev build shares its defaults with the installed app).
+    var useOtherApps: Bool {
+        get {
+            if let env = ProcessInfo.processInfo.environment["FORETYPE_OTHER_APPS"] { return env == "1" }
+            return d.bool(forKey: "useOtherApps")
+        }
+        set { d.set(newValue, forKey: "useOtherApps") }
+    }
+
+    /// Apps whose windows are never read as context: password managers until the user
+    /// changes the list.
+    var neverReadApps: [String] {
+        get { d.stringArray(forKey: "neverReadApps") ?? ContextPool.passwordManagers }
+        set {
+            if newValue == ContextPool.passwordManagers { d.removeObject(forKey: "neverReadApps") } else { d.set(newValue, forKey: "neverReadApps") }
+        }
+    }
+
+    var neverReadIsDefault: Bool { d.object(forKey: "neverReadApps") == nil }
+
+    /// This Mac's memory in GB.
+    static var memoryGB: Int { Int(ProcessInfo.processInfo.physicalMemory >> 30) }
+
+    /// The other-apps section's budget in tokens (D42): 512 under 16 GB, 2,048 (provisional)
+    /// from 16 GB.
+    static var otherAppsTokens: Int { memoryGB >= 16 ? 2048 : 512 }
+
+    /// The built-in engine's context: 4,096 tokens from 16 GB while other apps' text is on,
+    /// so its 2,048-token section fits; 2,048 otherwise (no more KV memory than without it).
+    var contextSize: Int { useOtherApps && AppSettings.memoryGB >= 16 ? 4096 : 2048 }
+
+    /// Other apps' text only ever goes to a model on this Mac: never to a server (D42).
+    var backendIsOnDevice: Bool { backend == "local" || backend == "apple" }
+
     var askedForScreenRecording: Bool {
         get { d.bool(forKey: "askedForScreenRecording") }
         set { d.set(newValue, forKey: "askedForScreenRecording") }
@@ -197,7 +233,8 @@ final class AppSettings {
          // never reads an app this list rejects, is the only filter.
          "only_apps": onlyApps.contains { pid_t($0) != nil } ? [] : onlyApps,
          "personalize": personalize, "personalize_strength": personalizeStrength,
-         "emoji": emoji, "autocorrect": autocorrect, "typo_gate": typoGate, "mid_line": midLine]
+         "emoji": emoji, "autocorrect": autocorrect, "typo_gate": typoGate, "mid_line": midLine,
+         "other_apps_tokens": AppSettings.otherAppsTokens]
     }
 
     func coreJSON() -> String {
