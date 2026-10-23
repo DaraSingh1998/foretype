@@ -742,7 +742,8 @@ next compaction under that key still drops the other key's frames.
   differs from what the serving slot holds only in text read from screens, it is served
   with the serving slot's header (in the same field: its whole header, other-apps section
   and screen text; in another field: only its other-apps section), and its own prompt is
-  prefilled into the other slot between keystrokes, about 40 ms at a time. The next request
+  prefilled into the other slot between keystrokes, about 40 ms at a time (120 ms once the
+  user has stopped for a second). The next request
   whose prompt is in that slot is served from it. Prompts that share the other-apps section
   share its cells. Warm-ups (focus changes, new screen text, a new pool) go the same way.
   Recurrent models keep one slot and prefill as before.
@@ -760,7 +761,8 @@ next compaction under that key still drops the other key's frames.
   on the context is 4,096 tokens, otherwise 2,048. Under 16 GB both slots share one
   context's cells (4,096 q8_0 or 2,048 f16: the KV memory 2,048 f16 cells took before);
   from 16 GB each slot gets its own. Switching the setting restarts the built-in engine on
-  every Mac.
+  every Mac. The section stays 512 tokens under 16 GB: 1,024 saved exactly as much on the
+  multi-window corpus.
 - **Cheaper OCR of other windows**: at most 400 ms of OCR per refresh, and a refresh after a
   typing pause doesn't capture a window it OCR'd less than a minute ago. Pictures are not
   downscaled.
