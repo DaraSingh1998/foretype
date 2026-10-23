@@ -5,6 +5,22 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Text from other apps (opt-in) (2026-10-23)
+- New setting, off by default: **Use text from other apps** (Settings ▸ General, and in the
+  menu). Suggestions can then use what other windows show, on any display: the document,
+  spreadsheet, slides or web page beside the email you are writing, and windows you looked
+  at in the last 10 minutes. Text is read through Accessibility, and on Macs with 12 GB of
+  memory or more also with on-device OCR where an app shares no text.
+- Kept in memory only and forgotten when Foretype pauses, the screen locks or the Mac
+  sleeps. Never used with a server backend. Password managers are never read; the list is in
+  Settings ▸ Apps, where you can add any app. Apps where you turned Foretype off, private
+  browsing windows and password fields are never read either.
+- Only the passages that match what you are writing go into the suggestion's context, up to
+  about 2,000 characters on Macs under 16 GB (more from 16 GB, where turning the setting on
+  restarts the model with a larger context). On a test set written to quote another window,
+  the default model saves 61% of keystrokes with it and 42% without (screen context on).
+- Suggestions no longer echo the prompt's own section markers (`[End of screen t…`).
+
 ## 0.1.4 (2026-10-23)
 
 ### Whole first suggestions after a long context (2026-10-23)

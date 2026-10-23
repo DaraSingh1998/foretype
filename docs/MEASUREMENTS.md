@@ -877,7 +877,7 @@ compute buffers, Metal allocations.
 ```bash
 scripts/bench-context.sh            # every installed catalog model, n_ctx 2048 4096 8192
 R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/Models"
-$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both-screen   # "both" before Phase C
 $R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 4096
 ```
 
@@ -948,6 +948,82 @@ window; with a field known, the capture now skips instead. Not checked by eye: a
 full-screen app on the BenQ with this branch (the full-screen capture of D43 was checked
 in WhatsApp Web, next section), a window across both
 displays (covered by the self-test's display matching), and switching Spaces.
+
+## Cross-app context: the real section (2026-10-23)
+
+Phases B and C (`feat/context-pool`, D44): the other app's text now reaches the prompt as
+the core's own other-apps section (`ft_engine_set_context`, passages ranked into a token
+budget, `[Also open: App — Title]` at the head of the prompt) instead of Phase A's stand-in,
+which pasted it into the screen text. `ft-replay --context-mode other|both` sends each
+document's other window as a pool with one window on screen; `other-screen|both-screen`
+are Phase A's stand-in, rerun on the same build. Same corpus and conditions as the
+baseline (21 documents, n_ctx 2048, 4 words, greedy, prefetch, instant user, no
+instructions, budget 512 tokens), Apple M3 Pro, 18 GB, macOS 27.0.1, AC power, one run at
+a time.
+
+| Model | None | Focused | Other: stand-in → section | Both: stand-in → section | Both, 3 distractors | Section changes (both) |
+|---|---:|---:|---:|---:|---:|---:|
+| Qwen3-0.6B Q8_0 | 34.7%* | 38.3%* | 56.8% → 56.8% | 58.4% → **58.8%** | 58.4% | 21 |
+| Qwen3-1.7B Q4_K_M (default) | 38.7% | 41.6% | 59.5% → 59.0% | 60.9% → **61.1%** | 61.3% | 21 (one per document) |
+| Gemma 4 E2B Q4_K_M | 40.7%* | 43.7%* | 59.1% → 58.7% | 60.9% → **60.9%** | 60.7% | 21 |
+| Qwen3-4B Q4_K_M | 40.7%* | 44.8%* | 61.0% → 61.1% | 62.7% → **62.9%** | 62.8% | 21 |
+
+\* From the Phase A table (not rerun: nothing in those paths changed); 1.7B's none and
+focused rerun here gave Phase A's numbers exactly.
+
+- **Same gain as the best case, with the machinery a real pool needs.** The section saves
+  as much as pasting the right window into the prompt did: within −0.5 and +0.1 points for
+  the other window alone, +0.0 to +0.4 with the focused window's text too (the realistic
+  case: screen context on), now within a budget, ranked, and with windows that have nothing
+  to do with the text in the pool. Every model gains 17–21 points over the focused window's
+  text alone.
+- **Distractors don't hurt.** With three other documents' windows in the pool as windows
+  viewed 2, 4 and 6 minutes ago, every model stays within 0.4 points (1.7B 61.3%): a recently viewed window needs words in
+  common with the text, and the corpus's windows share few. The section changed 23 times in
+  21 documents: each document's own window is in it from the start, so the two extra
+  changes are distractor passages that began to match.
+- **When the right window was only viewed earlier** (`--other-recent`: its window one
+  minute old, with the three distractors), 1.7B saves 59.7%: its passages come in once the
+  first matching words are typed, so the opening words miss them, and the section changed
+  39 times (about twice per document: empty, then the matching window).
+- **The 16 GB budget changes nothing here**: 2,048 tokens at n_ctx 4096 gives the same
+  61.3% and the same 23 changes as 512 at 2048, because the selection is the same: each
+  document's window (111–286 tokens) and the few distractor passages that match fit either
+  budget; the rest score below the threshold.
+- **Under a tight budget the ranking keeps most of the gain.** 1.7B, both, three
+  distractors: 128 tokens (about one passage, a third to a half of a document's window)
+  saves 53.5%, 256 tokens 59.5%, 512 tokens 61.3%, against 41.6% with no other window. The
+  section changed 29, 25 and 23 times in 21 documents: with less room, a better passage
+  displaces the first one more often as the text goes on.
+- **The format hardly matters**: an `[End of other windows]` line after the section, the
+  label `[Text in another window: …]`, or the screen section's own markers moved the 1.7B
+  results by at most 0.3 points (other 59.0–59.3%, both 61.1–61.3%). The section keeps the
+  shortest form, with the fewest markers to echo.
+- **The token estimate** (`others::estimate_tokens`, which sizes the budget before the
+  tokenizer is at hand), against the tokenizers on the corpus's 21 sections (`ft-replay
+  --token-cost`): Qwen3 0.93 of the estimate in all, 1.05 at most for one section; Gemma 4
+  0.95 and 1.02. A count of characters (3.5 a token) had been 0.97 in all but 1.56 for a
+  sheet of figures, as Qwen3 spends a token per digit.
+- First-suggestion latency rises with the larger first prefill (both: 201 → 212 ms p50 on
+  1.7B; with distractors 261 ms, the passages they add); per-keystroke latency is unchanged.
+
+In the app (`scripts/e2e-context.sh`, nothing typed, Qwen3-1.7B, dev build restricted to
+TextEdit): with a ferry timetable open beside a draft about it, the first refresh read the
+timetable through Accessibility in 62 ms, and the draft's first prompt carried it
+(`other apps section: ~87 tokens (budget 2048): TextEdit — ctx-source.txt#0: "Ferry
+timetable, Zanzibar crossing / …"`; 2,048 because this Mac has 18 GB). That run also showed
+a busy app's window being marked as no longer on screen when a refresh couldn't read it in
+time; such windows now stay visible with their text. With `FORETYPE_ONLY_APPS` naming no
+running app, refreshes read 0 windows.
+
+```bash
+R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/Models"
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both --distractors 3 [--other-recent]
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both --distractors 3 --other-tokens 128   # or 256, 512
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both --distractors 3 --other-tokens 2048 --n-ctx 4096
+$R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --token-cost
+```
 
 ## WhatsApp Web in full-screen Chrome (2026-10-23)
 

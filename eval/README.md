@@ -54,7 +54,10 @@ each written while another app shows what it quotes. Besides `id`, `register`, `
 
 The `text` repeats figures, dates, names and steps from `context` (and answers `screen`), so
 the gap between `--context-mode focused` and `both` is what reading the other app is worth
-at best. Every item's `context` plus `screen` fits the 1,500-character screen budget.
+at best. `both` sends `context` as the pool of other apps' text (one window on screen; the
+core's other-apps section) and `screen` as screen context; `both-screen` is Phase A's
+stand-in, both through the screen context (every item fits its 1,500-character budget).
+`--distractors N` adds other items' `context` as recently viewed windows.
 
     core/target/release/ft-replay MODEL.gguf --corpus eval/corpus-multiwindow.jsonl --context-mode both
     scripts/bench-context.sh

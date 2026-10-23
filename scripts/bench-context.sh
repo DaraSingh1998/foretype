@@ -6,7 +6,9 @@
 #
 #   scripts/bench-context.sh [N_CTX...]        (default: 2048 4096 8192)
 #   FORETYPE_MODELS_DIR                        (default ~/Library/Application Support/Foretype/Models)
-#   MODES="none both"                          (default: none focused other both)
+#   MODES="none both"                          (default: none focused other both; other and both
+#                                              go through the other-apps section since Phase C,
+#                                              other-screen and both-screen are Phase A's stand-in)
 #
 # Waits while another ft-replay runs, and marks a result "(shared GPU)" if one started
 # during it. Run on mains power with other GPU-heavy apps closed.

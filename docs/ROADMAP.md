@@ -14,7 +14,9 @@ from Mac MVP to Linux"), adjusted as the work went.
 | 6. Linux shell | Deferred: macOS only for now (D22) | |
 
 Since Phase 4: the pixel caret locator (D31, `feat/pixel-caret`); pause and power-aware
-pausing (D39, `feat/pause`); a waiting update shown in the menu and Settings (D40).
+pausing (D39, `feat/pause`); a waiting update shown in the menu and Settings (D40); text
+from other apps, opt-in (D42, D44, `feat/context-pool`; Phase D and E of the plan below are
+still to do).
 
 ## Cross-app context (planned 2026-10-23)
 
@@ -28,8 +30,8 @@ minutes in memory only, password managers never read by default, off for server 
 | Phase | Status | What |
 |---|---|---|
 | A. Baseline and multi-monitor audit | Done (`feat/context-baseline`) | `eval/corpus-multiwindow.jsonl` (21 items) and `ft-replay --context-mode`, `--n-ctx`, `--ctx-bench`; keystrokes saved with no, focused-window and other-app context, first-suggestion latency, prefill and memory at n_ctx 2048/4096/8192 for every catalog model (`docs/MEASUREMENTS.md`); multi-monitor coordinate fixes with `--geometry-selftest`; the FORETYPE_ONLY_APPS hook point for reading (`docs/ARCHITECTURE.md`) |
-| B. Context collector | Next | Text of other apps' windows on every display: Accessibility text first (no Screen Recording needed, exact), OCR of the window as the fallback; a recently-viewed pool (10 minutes, memory only, cleared on pause, lock and sleep); the never-read list (password managers), per-app opt-out, FORETYPE_ONLY_APPS, secure input; off for server backends; its own setting. On Macs under 12 GB, Accessibility text only: no OCR of other windows (D42) |
-| C. Relevance and prompt | Planned | Rank the pool's passages against the text being written (BM25, in the core), a prompt section of its own (labelled by app and window, after the focused window's text, before the body) within a token budget (D42: 512 tokens at n_ctx 2048 on Macs under 12 GB; provisionally 2,048 at n_ctx 4096 on 16 GB and up, to tune on the corpus), counted in tokens and trimmed first when a prompt would overflow, and `ft_engine_set_context` so the shell sends context separately from each keystroke's snapshot; measure on the multi-window corpus |
+| B. Context collector | Done (`feat/context-pool`): `ContextPool.swift`, Settings ▸ General and Apps, `--context-selftest`, `scripts/e2e-context.sh` (D44) | Text of other apps' windows on every display: Accessibility text first (no Screen Recording needed, exact), OCR of the window as the fallback; a recently-viewed pool (10 minutes, memory only, cleared on pause, lock and sleep); the never-read list (password managers), per-app opt-out, FORETYPE_ONLY_APPS, secure input; off for server backends; its own setting. On Macs under 12 GB, Accessibility text only: no OCR of other windows (D42) |
+| C. Relevance and prompt | Done (`feat/context-pool`): `core/src/others.rs`, `ft_engine_set_context`, `ft-replay --context-mode other` and `both` with `--distractors`, `--other-recent`, `--other-tokens` (D44) | Rank the pool's passages against the text being written (BM25, in the core), a prompt section of its own (labelled by app and window, after the focused window's text, before the body) within a token budget (D42: 512 tokens at n_ctx 2048 on Macs under 12 GB; provisionally 2,048 at n_ctx 4096 on 16 GB and up, to tune on the corpus), counted in tokens and trimmed first when a prompt would overflow, and `ft_engine_set_context` so the shell sends context separately from each keystroke's snapshot; measure on the multi-window corpus |
 | D. Performance | Planned | Keep a bigger header off the typing path: prefill a changed context on a second KV sequence in the background and switch when ready (double buffering); cache KV states per context (`llama_state_seq_*`); q8_0 KV cache and flash attention (memory and long-context decode; with q8_0, n_ctx 4096 on an 8 GB Mac costs today's KV memory, and its section may grow to 1,024 tokens if Phase C shows it helps); cheaper OCR (`.fast` level, only changed regions, fewer refreshes); re-run `scripts/bench-context.sh` against the Phase A numbers |
 | E. UX and docs | Planned | The setting, the never-read list and a "what Foretype sees" view in Settings; onboarding text; README, REFERENCE and privacy notes; what 8 GB Macs get (no OCR of other windows, a smaller budget) explained in Settings |
 

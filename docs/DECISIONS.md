@@ -622,3 +622,57 @@ window's pixels, with no other window, Foretype's overlay or the pointer.
 across two displays is clipped to the one under the field). A window that leaves full
 screen keeps the display path until Foretype quits; it still works, as the display filter
 captures windows that aren't full screen too. Measured only on macOS 27 with Chrome.
+
+## D44. Other apps' text: what is read, and a sticky section at the head of the prompt (2026-10-23)
+
+**Decision.** How Phases B and C carry out D42:
+- **Reading.** Windows on screen on any display, visible when a quarter of them is not
+  covered, plus the window focus just left (covered or not), read through Accessibility
+  first; OCR (Vision `.fast`) only for windows that give under 200 characters, on 12 GB+
+  Macs with Screen Recording, never while saving energy. At most 8 windows per refresh, 50
+  ms per app, 6,000 characters per window, 12 windows in the pool. Refreshes on window or
+  app switches and typing pauses (2 s, at most every 20 s), never per keystroke.
+- **Gates.** Apps the user switched suggestions off in, or paused Foretype in, are not
+  read; apps that are off only by default in the compatibility database (spreadsheets, code
+  editors, terminals, remote desktops) are, and the password managers they include are on
+  the never-read list. Windows that forbid capture and private browsing windows (by title:
+  Incognito, InPrivate, Private Browsing, Private Window) are skipped; nothing is read while
+  secure input is on.
+- **Prompt.** The other-apps section is the prompt's first section, before the screen text.
+  The core ranks ~300-character passages with BM25 against the committed text (its last 300
+  characters doubled), the screen text and the title; windows on screen get a prior, so the
+  window beside the field is offered before anything matches, and recently viewed windows
+  need words in common. The selection is replaced only when another scores 25% plus one
+  good term match higher, a passage left the pool or it no longer fits.
+- **Budget.** Counted with a fitted estimate before the tokenizer is at hand (letters five
+  to a token, digits, punctuation and non-ASCII characters one each), within
+  `other_apps_tokens` and what `n_ctx` − 64 leaves after the rest of the header and a body
+  reserve; a prompt that still overflows runs without the section. 512 tokens and n_ctx
+  2048 under 16 GB (Macs of 12–15 GB too, where D42 gave no budget), 2,048 and n_ctx 4096
+  from 16 GB, the larger context only while the setting is on (the built-in engine restarts
+  when it is switched).
+- `FORETYPE_OTHER_APPS=1|0` switches it for one process without touching the saved setting.
+
+**Why.** A spreadsheet or a code editor is exactly what an email quotes ("contractors cost
+$68,900"); turning suggestions off in an app says nothing about whether its windows may
+inform suggestions elsewhere, but an app the user turned Foretype off in is one they want
+left alone. The window just left is the one the user is about to quote, and is often
+covered by the window they switched to. At the head of the prompt the section survives
+moving between fields while the pool is the same, and the screen text that changes on every
+field comes after it; it must then change rarely, since every change re-prefills the whole
+prompt (Phase A: 1.5 s for a full 2,048-token window on Qwen3-1.7B), hence the sticky
+selection and the warm-up as soon as the pool changes. On the multi-window corpus the real
+section saves as much as Phase A's best case (`docs/MEASUREMENTS.md`, "Cross-app context: the
+real section"); the Phase A stand-in, the other window pasted into the screen text, had no
+budget, no ranking and no distractors. A character count would have let a sheet of figures
+(Qwen3 spends a token per digit) run 56% over its budget; the fitted estimate is at most 5%
+under the tokenizer on the corpus. Title keywords are the only sign of a private window
+that browsers give other apps.
+**Cost.** A private window whose title doesn't say so is read. A passage the user is
+writing about but that shares no words with the text yet (a recently viewed window) waits
+for the first matching words. On 16 GB Macs switching the setting reloads the model, and
+the first suggestion after a pool change can wait for up to 2,048 more tokens of prefill
+until Phase D moves it off the typing path. Accessibility text is what apps choose to
+expose: Electron apps without their accessibility tree, canvas-drawn documents and Google
+Docs without screen-reader support give nothing, and on 8 GB Macs there is no OCR to fall
+back on.

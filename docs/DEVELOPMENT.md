@@ -46,6 +46,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | Screen geometry across displays (global and Cocoa coordinates, displays left of, above and below the primary, mixed 1x/2x scales, cards at a display's top edge) | `mac/.build/release/Foretype --geometry-selftest` | nothing (made-up layouts; no second display) |
 | About You store (JSON for the core, sealing, wrong key, defaults) | `mac/.build/release/Foretype --about-selftest` | nothing (key in memory; never the Keychain or the real file) |
 | Pause and power rules (decisions, Resume Anyway, migration, saved pause) | `mac/.build/release/Foretype --pause-selftest` | nothing (a defaults suite of its own) |
+| Other apps' text pool (10-minute expiry, the 12-window cap, what is sent and when, the never-read and FORETYPE_ONLY_APPS gates, capture-forbidding and private windows, covered windows) | `mac/.build/release/Foretype --context-selftest` | nothing (made-up windows) |
 | Translations (every key, same placeholders) | `python3 scripts/check-localization.py` | nothing |
 | About You fills in TextEdit (email, phone from its typed start, name after Regards, no match, nothing in the log) | `FORETYPE_MODEL=... scripts/e2e-about-you.sh` | Accessibility, user idle (fictional details from `FORETYPE_ABOUT_YOU`; the stored ones are untouched) |
 | Typing aids in TextEdit (emoji, autocorrect, typo gate, mid-line) | `FORETYPE_MODEL=... scripts/e2e-typing-aids.sh` | Accessibility, user idle |
@@ -58,6 +59,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
 | Terminal end-to-end | `FORETYPE_MODEL=... scripts/e2e-terminal.sh` | Accessibility, user idle |
 | Fresh Chrome end-to-end (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-chrome-fresh.sh` | Accessibility, user idle |
+| Text from other apps end-to-end (nothing typed): a second TextEdit document's text reaches the prompt | `FORETYPE_MODEL=... scripts/e2e-context.sh` | Accessibility, user idle, TextEdit not running |
 | Pause through the URL scheme: no work while paused, model freed, resume, timed pause ends by itself; CPU, wakeups and memory per phase (nothing typed unless `TYPE=1`) | `FORETYPE_MODEL=... [TYPE=1] [SAMPLE=20] scripts/e2e-pause.sh` | Accessibility for `build/Foretype.app` (signed with the Foretype identity), user idle |
 | Inline ghost text while typing in a chat composer with no AX caret (wrap, new line, list, new field) | `FORETYPE_MODEL=... scripts/e2e-inline-caret.sh [ce\|textarea]` | Accessibility and Screen Recording, user idle (throwaway Chrome profile; the page types into itself) |
 | Cache rollback | `ft-replay MODEL --corpus eval/corpus.jsonl --check-cache [--long]` | a model |
@@ -102,7 +104,8 @@ $R "$M" --corpus eval/corpus.jsonl --instructions notes.json            # other 
 swiftc -O tools/spell-map/main.swift mac/Sources/Foretype/Speller.swift -o build/spell-map
 build/spell-map eval/corpus.jsonl > build/spell-map.json                # the app's spell verdicts
 $R "$M" --corpus eval/corpus.jsonl --spell build/spell-map.json         # typo gate + autocorrect
-$R "$M" --corpus eval/corpus-multiwindow.jsonl --context-mode both      # other app's text + focused window (none|focused|other|both)
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --context-mode both      # other app's text + focused window (none|focused|other|both; other-screen|both-screen = Phase A's stand-in)
+$R "$M" --corpus eval/corpus-multiwindow.jsonl --context-mode both --distractors 3 [--other-recent] [--other-tokens N]
 $R "$M" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 8192 # long-context latency and memory, one n_ctx per process
 scripts/bench-context.sh                                                # both, for every installed model and n_ctx 2048/4096/8192
 ```
@@ -227,6 +230,13 @@ aborts after 2 s.
   reaches a shell; every entered line lands in `build/e2e-terminal/typed-lines.txt`).
   Checks: no suggestion on an ordinary line, the force hotkey (current line only), agent
   prompt suggestions on a `> ` line, snooze.
+- `e2e-context.sh`: types nothing. Refuses to run while TextEdit is open (its other
+  documents would be read too). Opens two documents written to `build/e2e-context/` side by
+  side (a ferry timetable and a draft about it; TextEdit restores no other window and the
+  script checks it shows none), then starts Foretype with `FORETYPE_ONLY_APPS=com.apple.TextEdit`
+  and `FORETYPE_OTHER_APPS=1`, puts the caret at the end of the draft through Accessibility
+  and waits for the core's `other apps section:` debug line naming the timetable document.
+  Closes both documents unchanged and quits TextEdit.
 - `e2e-chrome-fresh.sh`: types nothing. Starts a separate Chrome with a throwaway profile on
   `tools/spike/probe/fixtures/testpage.html` and restricts Foretype to that process's pid
   (the user's own Chrome has the same bundle ID), raises it and waits up to 10 s for a

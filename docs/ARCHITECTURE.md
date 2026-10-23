@@ -17,10 +17,13 @@ Foretype has two halves joined by a small C ABI:
  FocusTracker   AX thread: AXObserver + post-keystroke ─┐
                 re-read burst + 0.5 s poll               │ Snapshot JSON (ft_engine_submit)
  ScreenContext  window capture + Vision OCR ─────────────┤ (+ screen_context text)
+ ContextPool    other apps' windows: AX text, OCR ───────┤ pool JSON (ft_engine_set_context),
+                (opt-in, own queue, memory only)         │ only when it changes
                                                          ▼
                                                  policy gate ─── compat/apps.json rules
                                                  recorder ────── encrypted history (opt-in)
                                                  session ─────── type-through, backspace, cache, accept
+                                                 others ──────── passages ranked (BM25) into a budget
                                                  context ─────── byte-stable header + text before caret
                                                  worker thread ─ Runner: llama.cpp engine | HTTP server
                                                          │ Event JSON (callback)
@@ -38,6 +41,7 @@ Foretype has two halves joined by a small C ABI:
 | `core/src/engine.rs` | In-process llama.cpp: KV-cache sync, token healing, greedy decoding, personal bias |
 | `core/src/backend.rs` | `llama-server` and OpenAI-compatible HTTP backends |
 | `core/src/context.rs` | Prompt builder |
+| `core/src/others.rs` | Other apps' text: passages, ranking, token budget, the sticky selection |
 | `core/src/words.rs` | Fragment splitting, word counting and limiting |
 | `core/src/session.rs` | Suggestion reuse: type-through, backspace, accept, cache, dismiss |
 | `core/src/policy.rs` | The gate, compatibility DB types, agent-prompt detection |
@@ -109,7 +113,8 @@ In order; the first rule that applies decides:
 10. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
    prefetch → emit (`cache`). Skipped mid-line (the key doesn't hold the text after the
    caret).
-11. Build the prompt (personal examples are chosen once per field and cached) and enqueue a
+11. Build the prompt (personal examples are chosen once per field and cached; the other-apps
+    section is selected for this text, see *Other apps' text* below) and enqueue a
     `Complete` job; emit an empty `pending` event so the shell hides the stale ghost.
 
 `warm` enqueues a zero-token prefill of a field's prompt only if nothing is queued, and
@@ -134,10 +139,14 @@ never while paused.
 - **Debounce**: if `debounce_ms > 0` (the shell sets 80 ms on battery) and the job is
   mid-word, wait that long; a newer keystroke cancels the job.
 - **Complete** → session `set` → emit `suggestion` (`source: model`, `ms`, `prefilled`,
-  `stop`).
+  `stop`). A prompt that leaves under 64 tokens of the context free (`GenError::TooLong`)
+  is run again without its other-apps section (`Prompt::others` bytes at the front), and a
+  warm-up likewise. A suggestion that starts echoing a header marker (`[End of screen t`,
+  `[Also open: …`; `context::strip_marker_echo`) is cut there, the prefetch's too.
 - **Prefetch** (when `settings.prefetch`; the shell enables it on mains power only):
   complete the prompt for `text_before + suggestion` and `remember` it in the session cache.
-  It is cancelled as soon as any job is queued.
+  It reuses the current other-apps section without selecting again (the next keystroke's
+  prompt starts from it). It is cancelled as soon as any job is queued.
 
 ### Engine (`engine.rs`)
 
@@ -194,6 +203,13 @@ never while paused.
 ### Prompt format (`context.rs`)
 
 ```
+[Also open: Microsoft Word — Q3 Budget.docx]     ← other apps' passages (others.rs), within
+Total Q3 spend was $412,600 against …               a token budget; windows in first-seen
+…                                                   order, passages in document order, "…"
+Contractors: $68,900 (budget $52,000)               where text was left out
+[Also open: Safari — Pricing (example.com)]
+...
+
 [Text visible on screen]                         ← screen_context, last ≤1,500 chars, lines
 ...                                                 starting with "[" dropped
 [End of screen text]
@@ -220,8 +236,9 @@ fragment = " no"                                 ← typed partial word + its le
   (letters, digits, `'`, `’`, `-`, `_`) plus the single space before it. After a space the
   fragment is `" "`; after punctuation or a newline it is empty. Base-model BPE attaches
   spaces to the following word, so a prompt never ends in a bare space.
-- Everything that changes rarely (screen text, examples, header) comes first; everything
-  that changes per keystroke comes last.
+- Everything that changes rarely (other apps' text, screen text, examples, header) comes
+  first; everything that changes per keystroke comes last. The other-apps section heads it:
+  it survives moving to another field of the same pool, and its selection is sticky.
 - The writer's notes are the user's custom instructions. They start as the defaults in
   `core/data/default-instructions.json` (`instructions.rs`, `ft_default_instructions`): one
   note for every app and, by bundle ID, optional notes per kind of app (none ship). The
@@ -230,6 +247,40 @@ fragment = " no"                                 ← typed partial word + its le
 - The `shell` backend's Apple model is instruction-tuned, so `AppleModel.swift` gives it
   fixed instructions of its own (continue the text where it stops, at most `max_words`
   words, nothing else) and sends this prompt after "Continue this text:".
+
+### Other apps' text (`others.rs`)
+
+The shell sends the pool of other windows' text with `ft_engine_set_context` when it
+changes (D42); `Core::set_context` ignores it with a `llama-server` or `openai` backend.
+`OtherApps::set_passages` cuts each window's text (≤ 12,000 characters) into passages of
+about 300 characters (`chunk`: lines trimmed, empty lines and lines starting with "[" dropped,
+long lines split at sentence ends and then spaces, short lines packed with their line
+breaks), indexes their terms (lowercase runs of `words::is_letter`, 2+ characters or any
+number, minus stopwords, an English plural `s` dropped) and gives each window a weight: 1.0
+on screen, 0.8 falling to 0.5 over 10 minutes for a recently viewed one, plus a prior of 0.6
+per passage for windows on screen. At most 600 passages.
+
+`build_prompt` (submit and warm; the prefetch reuses the section):
+- **Budget**: `settings.other_apps_tokens` (the shell sends 512 under 16 GB, 2,048 from 16
+  GB), cut to `n_ctx` − 64 − the rest of the header − a body reserve of `max_body_chars` / 3,
+  all counted with `others::estimate_tokens` (ASCII letters and spaces five to a token, one
+  per digit, punctuation mark, line break, run of spaces and non-ASCII character; on the
+  corpus's other-app texts Qwen3's tokenizer comes to 0.93 of it, 1.05 at most).
+- **Query** (`Query::new`): the committed body window's terms, those of its last 300
+  characters again, the screen text's at 0.4 and the window title's at 0.5, saturated
+  (k3 = 1.5).
+- **Score**: BM25 (k1 1.2, b 0.75) plus the window's prior, times its weight; passages under
+  0.5 are never picked. The best that fit are taken greedily (each passage costs its
+  tokens, 3 for a line break or "…", its window's label line once).
+- **Stickiness**: the selection is recomputed only when the pool, the query (committed words,
+  screen text, title) or the budget changed, and replaced only when the best one scores over
+  1.25 × the current one's + 1, a passage it holds left the pool, it no longer fits, or there
+  is none yet. `OtherApps::changes` counts replacements (each costs a full prefill;
+  `ft-replay` prints them).
+- **Render**: `[Also open: App — Title (host)]` per window (brackets in names become
+  parentheses), windows in the order they first came into the pool, passages in document
+  order with a "…" line between ones that aren't adjacent, a blank line at the end.
+  `Prompt::others` is its length.
 
 ### Your details (`details.rs`)
 
@@ -359,6 +410,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_dismiss(engine, field_key, text_before)` | Esc |
 | `ft_engine_configure(engine, settings_json)` | Replace settings |
 | `ft_engine_set_details(engine, details_json)` | The user's own details (below); returns false if the JSON doesn't parse |
+| `ft_engine_set_context(engine, context_json)` | Other apps' text (below), sent only when the pool changes; `{"passages": []}` clears it; ignored with a server backend; false if the JSON doesn't parse |
 | `ft_engine_set_completer(engine, callback, ctx)` | Completer for the `shell` backend (request JSON in, malloc'd text out) |
 | `ft_engine_compat_rule(engine, bundle_id)` | Rule JSON for an app |
 | `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization |
@@ -374,10 +426,15 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 `only_apps`, `deadline_ms` (300), `max_body_chars` (1600), `unload_after_s` (300),
 `debounce_ms` (0), `prefetch` (true), `personalize` (false), `personalize_strength` (1),
 `personal_examples` (true), `emoji` (true), `autocorrect` (true), `typo_gate` (true),
-`mid_line` (false), `beam_width` (1).
+`mid_line` (false), `beam_width` (1), `other_apps_tokens` (512).
 
 **UserDetails** (`ft_engine_set_details`): `name`, `email`, `phone`, `company`, `job_title`,
 `address`, `website` (strings, empty = unset or switched off), `in_prompt` (false).
+
+**Context** (`ft_engine_set_context`): `{"passages": [{"app", "bundle_id", "window_title",
+"url_host" (the host only, never the URL), "text", "captured_at" (seconds since 1970: when a
+window not on screen was last seen), "visible" (on screen now, any display), "display" (the
+shell's index, informational)}]}`.
 
 **Snapshot** (`submit`/`warm`): `revision`, `field_key`, `bundle_id`, `app_name`,
 `window_title`, `url`, `role`, `subrole`, `role_description`, `description` (label or
@@ -416,6 +473,7 @@ never logs the text. The shell must ignore events whose `revision` is not its la
 | `foretype.ax` | `FocusTracker`: CFRunLoop with AXObserver sources, timers, all AX reads (80 ms global messaging timeout) |
 | `foretype.keys` | `KeyTap`: both event taps; callbacks never block or call Accessibility |
 | `foretype.screen` (queue) | Screen capture completion and Vision OCR |
+| `foretype.context` (queue) | `ContextPool`: other apps' windows read through Accessibility (and OCR), the pool's expiry timer, `ft_engine_set_context` |
 | `foretype.caret` (queue) | Pixel caret captures and detection (blocking on ScreenCaptureKit; at typing pauses, or one capture for a new field, line or wrap) |
 | `foretype.engine` (Rust) | Inference |
 
@@ -565,7 +623,11 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   the model or server changes. `setPaused(true)` hides the panel and stops the key taps,
   the tracker, pending pixel-caret and screen captures (and forgets the screen text), puts
   the Chromium/Electron flags back (`restorePrimedApps`) and sends `paused` to the core;
-  `setPaused(false)` reverses it. `coreSettings` adds the runtime part of the core's
+  `setPaused(false)` reverses it. The context pool follows `updatePool()`: on with the
+  setting, an on-device backend (built-in or Apple) and no pause; its OCR only on 12 GB+
+  with Screen Recording and not saving energy; a pause (the user's, power, sleep, lock,
+  display sleep) clears it. A pool change goes to the core and the latest field is warmed
+  with the new section; a new engine gets the current pool. `coreSettings` adds the runtime part of the core's
   settings: `paused`, and for `saveEnergy` greedy decoding, no prefetch, an 80 ms mid-word
   debounce and `unload_after_s` 60 (otherwise beam 3, prefetch, no debounce, 300 s); screen
   context is off while saving energy. Per-app pauses (`snooze`) end at a time or, with
@@ -579,6 +641,33 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   Skipped for secure input, secure fields and apps where suggestions are off. The image is
   discarded after OCR. The capture scale is the window's own display's
   (`SCContentFilter.pointPixelScale`), so a window on a 1x display isn't captured at 2x.
+- **`ContextPool.swift`**: text from other apps' windows (opt-in, D42, D44). `note()` (AX
+  thread, every snapshot) schedules a refresh 0.3 s after the focused window or app changes
+  (only the newest switch runs) and 2 s into a typing pause at most every 20 s (a keystroke
+  cancels it). A refresh on `foretype.context`: nothing while secure input is on;
+  `CGWindowListCopyWindowInfo` (on-screen, layer 0, front to back) gives every display's
+  windows, each visible when 8×8 sample points find a quarter of it uncovered by the ones
+  in front; the frontmost app's focused window is left out (asked only if the gate allows
+  the app). For each allowed app (`Gate.allows`: not Foretype, not on the never-read list,
+  `FORETYPE_ONLY_APPS`, not an app the user switched off or paused), its AX windows are
+  matched to the visible CG windows by frame, a window that forbids capture
+  (`kCGWindowSharingState` 0) or whose title says private browsing is skipped, and
+  `windowText` reads it within 50 ms for the app (messaging timeout 50 ms): breadth-first
+  over at most 300 elements with one `AXUIElementCopyMultipleAttributeValues` (role,
+  subrole, children) each, skipping secure fields and controls; an `AXWebArea`'s text
+  through text markers (the markers at its visible corners via `AXTextMarkerForPosition`,
+  else the whole range), else the largest `AXTextArea`'s visible range widened to 1,500
+  characters, else its static texts and fields; ≤ 6,000 characters, at most 8 windows. A
+  window with under 200 characters is OCR'd instead when allowed (12 GB+, Screen
+  Recording, not saving energy): `SCShareableContent` by window ID, `WindowCapture`,
+  Vision `.fast` without language correction (at most 3 windows a refresh), rows by
+  `ScreenContextProvider.assemble`; a 64×64 grayscale hash keeps an unchanged window's text. The window that had focus at the
+  previous refresh is read too, covered or not. `Store` (pure, `--context-selftest`) merges
+  a refresh (windows read now are visible; the rest no longer), keeps 12 windows at most and
+  each for 10 minutes after it was last seen (a timer drops them), and builds the JSON; it
+  is sent (`onChange`) only when its signature (texts, titles, visibility, a recent
+  window's last-seen time) changed. `configure` turns it on or off (off clears it and sends
+  an empty pool) and drops windows of apps the gate now rejects. Nothing is written to disk.
 - **`ScreenGeometry.swift`**: the two coordinate spaces as pure functions. Global (Quartz)
   coordinates have their origin at the primary display's top-left with y down; AX
   positions, `CGDisplayBounds` and ScreenCaptureKit's `SCWindow.frame` use them. Cocoa
@@ -626,8 +715,11 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   change. `--about-selftest` checks the JSON and the sealing with a key in memory.
 - **`Settings.swift`**: `AppSettings` (UserDefaults: batteryMode, lowPowerMode, pauseBelowBattery, lengthWords,
   stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
-  useScreenContext, personalize, strength, backend, backendURL, backendModel, modelPath,
-  onboarded), `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
+  useScreenContext, useOtherApps (`FORETYPE_OTHER_APPS` overrides it), neverReadApps (the
+  password managers until changed), personalize, strength, backend, backendURL,
+  backendModel, modelPath, onboarded; `otherAppsTokens` and `contextSize` from the Mac's
+  memory: 512 tokens and n_ctx 2048 under 16 GB, 2,048 and n_ctx 4096 from 16 GB while
+  other apps' text is on; `AppDelegate` restarts the built-in engine when that changes), `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
   `backend-api-key`), `HistoryStore` (`~/Library/Application Support/Foretype/history.bin`),
   `ModelLocator`.
 - **`Stats.swift`**: `UsageStats`, the words-saved counts: per accept, kind (Tab or
@@ -651,7 +743,7 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   setup checklist (Accessibility, Screen Recording, model), custom instructions, the
   menu-bar menu (keystrokes saved today, why and until when it is paused, Pause ▸ or
   Resume / Resume Anyway, length and sentence end, per-app toggle and Pause in *app* ▸,
-  screen context, personalization, instructions, model with sizes on disk and Delete a
+  screen context, text from other apps, personalization, instructions, model with sizes on disk and Delete a
   Model, server, Settings, setup, updates). The status item's menu is attached only while
   it opens, so the button sees the click first: Option-click toggles the pause. The
   `foretype://` URL scheme (`CFBundleURLTypes`, bundled app only) takes `pause`,
@@ -713,33 +805,27 @@ data), Google Docs' and Chrome's own setting names in the tip cards.
 `scripts/check-localization.py` checks that every key in the code has a translation with
 the same placeholders.
 
-## Cross-app context: hook points for Phase B
+## Cross-app context: where the gates are
 
-The collector of `docs/ROADMAP.md` ("Cross-app context", D42) reads windows of apps other
-than the focused one. Where it must plug in:
+Text from other apps (`docs/ROADMAP.md`, "Cross-app context", D42, D44) is read only by
+`ContextPool`, and every check happens before any text is read:
 
-- **Which apps may be read.** `AppSettings.onlyAppsAllow(pid:bundleId:)` is today's gate
-  for the focused app (`FocusTracker` never reads or primes an app it rejects, and
-  `Controller.screenContextAllowed` checks it before OCR). The collector must call it for
-  every candidate window's owner (`SCWindow.owningApplication` pid and bundle ID, or the AX
-  application's pid) *before* reading any text, by AX or OCR, so that with
-  `FORETYPE_ONLY_APPS` set a development build reads nothing outside the listed apps,
-  including as context. The core's `only_apps` can't do this: it only filters snapshots by
-  bundle ID (and is empty when the list holds a pid), and context text would reach it
-  already read. A test that needs a source app lists it too
-  (`FORETYPE_ONLY_APPS=com.apple.mail,com.microsoft.Word`).
-- In the same place: the never-read list (password managers by default), the user's
-  per-app opt-outs and disabled apps, secure input (`IsSecureEventInputEnabled`) and
-  Foretype's own windows; the feature's setting; the backend (no reading at all for
-  `llama-server` and `openai`); and the Mac's memory (under 12 GB, Accessibility text only,
-  never OCR of other windows; the core keeps the section to 512 tokens there, D42).
-- **Coordinates.** Windows on every display come from `SCShareableContent` in global
-  coordinates; use `ScreenGeometry` for anything that meets `NSScreen` or `NSWindow`.
-  `onScreenWindowsOnly` lists each display's current Space only, so windows on other Spaces
-  (and minimized ones) are invisible: the recently-viewed pool has to keep what was read
-  while they were on screen.
-- **Lifetime.** `ScreenContextProvider.reset()` (pause) is where the pool is cleared too,
-  along with screen lock and sleep (`SessionMonitor`).
+- **Which apps.** `ContextPool.Gate.allows(pid:bundleId:)`: not Foretype's own process,
+  not on the never-read list, allowed by `FORETYPE_ONLY_APPS` (`AppSettings.onlyAppsAllow`,
+  by bundle ID or pid, as for the focused app), and not an app where the user switched
+  suggestions off or paused Foretype. The frontmost app is asked for its focused window only
+  when the gate allows it. A test that needs a source app lists it too
+  (`FORETYPE_ONLY_APPS=com.apple.mail,com.microsoft.Word`). The core's `only_apps` can't do
+  this: it filters snapshots by bundle ID, and context text would reach it already read.
+- **Which windows.** `Gate.allowsWindow`: not one that forbids capture, not a private
+  browsing window whose title says so; secure fields are skipped inside a window, and
+  nothing is read while secure input is on.
+- **Whether at all.** The setting, an on-device backend (the core ignores the pool with a
+  server backend too), no pause (pause, lock, sleep and display sleep clear the pool), and
+  for OCR the Mac's memory (12 GB+), Screen Recording and not saving energy.
+- **Coordinates.** CG window bounds and AX frames are both global (top-left origin);
+  `ScreenGeometry` gives the display index. Windows on other Spaces and minimized ones are
+  not on screen: the pool keeps what was read while they were.
 
 ## Data and privacy
 
@@ -747,6 +833,7 @@ than the focused one. Where it must plug in:
 |---|---|
 | Text of the focused field | In memory; into the prompt. Never logged unless `FORETYPE_DEBUG` (suggestions only) |
 | Screen text (OCR) | In memory per field; image discarded immediately |
+| Other apps' text (opt-in) | In memory only (at most 12 windows, each 10 minutes after it was last seen), forgotten on pause, lock, sleep and when the setting goes off; into the prompt of an on-device model only, never a server's; OCR images discarded at once; never logged except passage beginnings in `FORETYPE_DEBUG` builds' core lines |
 | Writing history (opt-in) | `history.bin`, encrypted, key in the Keychain; deleted from the menu |
 | Your details (About You) | `about-you.bin`, encrypted, key in the Keychain; in the core's memory for fills; in the prompt only with the writer line on and a local model; never logged: debug logs name a fill's detail, not its value, and both the core (`UserDetails::redact`) and the shell (`Log.mask`) print every run of 4+ letters or digits of a value as `***` in other logged text, since a model suggestion can echo a detail from the document; Clear All deletes file and key |
 | Contacts | Your own card, read once when you click Fill from My Card |

@@ -62,9 +62,8 @@ away right after recognition and the text is only kept in memory.
   Screen Context** in the menu). Without the permission everything else still works.
 - Capture is skipped for secure fields, secure input, and apps where suggestions are off.
 - Only the focused window is read, on whichever display it is, at that display's
-  resolution. Other apps' windows (a document or a web page beside the email) are not read
-  yet; that is planned as a separate, opt-in setting (`docs/ROADMAP.md`, "Cross-app
-  context").
+  resolution. Other apps' windows (a document or a web page beside the email) are read
+  only with **Use text from other apps**, a setting of its own (below).
 - It refreshes when a new field gets focus and after a 1.5 s typing pause at most every 15 s,
   never per keystroke, because new screen text changes the prompt header and costs a full
   prefill. The new header is prefilled in the background as soon as OCR finishes.
@@ -74,6 +73,52 @@ away right after recognition and the text is only kept in memory.
 On a chat-reply sample (`scripts/fixtures/chat-*.txt`), screen context raised keystrokes saved
 from 29% to 66% and characters per Tab from 3.2 to 5.2, at the same latency. The reply was
 written to refer to the visible messages, so treat this as a best case.
+
+### Text from other apps (opt-in)
+
+With **Use text from other apps** (Settings ▸ General, or the menu; off by default),
+suggestions can quote what other windows show: a document, slides, a spreadsheet or a web
+page beside the email you are writing, on any display, and windows you looked at in the
+last 10 minutes (decisions D42 and D44).
+
+- **What is read.** Windows on screen on every display (the current Space of each), counted
+  as visible when at least a quarter of them is uncovered, and the window you just switched
+  away from, covered or not. Each is read through Accessibility: a document's text area (the
+  part on screen and some around it), a web page through text markers (the part on screen
+  when the browser says where), else the window's texts in order; up to 6,000 characters,
+  at most 50 ms per app, on a queue of its own. Where an app gives almost nothing through
+  Accessibility, the window is captured and read with Vision's fast OCR, only on Macs with
+  12 GB of memory or more, with Screen Recording allowed, and not while saving energy; an
+  unchanged window isn't read again. The window you are typing in is never part of it (its
+  text is the field and the screen context).
+- **When.** When focus moves to another window or app (0.3 s later) and after a 2 s typing
+  pause at most every 20 s; never per keystroke.
+- **Kept** in memory only, at most 12 windows; a window no longer on screen is kept 10
+  minutes after it was last seen. Everything is forgotten when Foretype pauses (also while
+  the Mac sleeps, the screen is locked or the display sleeps) and when the setting goes off.
+- **Never read**: the never-read list (Settings ▸ Apps; password managers to start with:
+  1Password, Apple Passwords, Keychain Access, Bitwarden, Dashlane, LastPass, KeePassXC,
+  Keeper, Enpass, Strongbox, Proton Pass, NordPass, MacPass, Secrets), apps where you turned
+  suggestions off or paused Foretype, Foretype's own windows, windows that forbid capture,
+  private browsing windows whose title says so (Incognito, InPrivate, Private Browsing),
+  secure fields, and nothing at all while secure input is on. Apps that are off only by
+  default (spreadsheets, code editors, terminals) are read: a sheet is what an email quotes.
+- **Never with a server**: with a llama-server or OpenAI-compatible backend nothing is read,
+  and the core ignores any text it is sent. The Apple on-device model gets it.
+- **In the prompt.** The core cuts each window's text into passages of about 300
+  characters and, for each prompt, ranks them against what you are writing (BM25 over the
+  text before the caret, the last 300 characters counting double, plus the focused window's
+  screen text and title); windows on screen outrank recently viewed ones, which need words
+  in common with your text. The best passages that fit the budget go first in the prompt,
+  under `[Also open: App — Window title]`. The budget is 512 tokens on Macs under 16 GB (the
+  engine keeps its 2,048-token context) and 2,048 from 16 GB, where the engine runs with a
+  4,096-token context while the setting is on (turning it on or off restarts the built-in
+  engine there). The section also leaves room for the rest of the prompt; one that still
+  doesn't fit is sent without it. The selection changes only when another one is clearly
+  better, since every change costs a full prefill; the new text is prefilled in the
+  background as soon as it arrives.
+- On the multi-window corpus it saves as much typing as pasting the other window into the
+  screen context did (`docs/MEASUREMENTS.md`, "Cross-app context: the real section").
 
 ### Personalization (opt-in)
 
@@ -199,11 +244,12 @@ shows every setting in six tabs; changes apply at once, the same way as from the
 
 - **General**: pause and resume, the power rules (on battery, low battery, Low Power Mode),
   length (2, 4, 7 or 10 words), stop at the end of a sentence, screen context (with the
-  Screen Recording status), custom instructions.
+  Screen Recording status), text from other apps, custom instructions.
 - **Personalization**: learn from my writing, strength, what was learned, delete history.
 - **About You**: your own details for exact fills, the writer line, fill from Contacts.
 - **Apps**: every app you switched off (or switched on where it is off by default), with
-  Remove to return it to its default.
+  Remove to return it to its default; the never-read list for text from other apps, with
+  Add an App…, Remove and Restore Defaults.
 - **Model**: the catalog and every other GGUF in the Models folder, each with its size on
   disk, Use, Download, Cancel, Resume and Delete; the folder's total disk use; the server
   settings.
@@ -475,6 +521,11 @@ Settings… and setup. Option-click the icon to pause or resume.
   from a click on the real menu). Notarization and a real feed still need a Developer ID
   certificate, notary credentials and Sparkle keys (`RELEASING.md`). The release workflow
   is an untested template.
+- Text from other apps is checked end to end only in TextEdit (`scripts/e2e-context.sh`,
+  Accessibility text) and by `--context-selftest` (the pool's rules, fast OCR of a rendered
+  window); reading browsers through text markers, Word, Keynote, Preview and Electron apps,
+  and the OCR fallback on a live window are untested, as is the Settings ▸ Apps never-read
+  list beyond rendering.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by
   replays against a local llama-server.
