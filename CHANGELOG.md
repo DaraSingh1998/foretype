@@ -5,6 +5,14 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Whole first suggestions after a long context (2026-10-23)
+- The first suggestion after a lot of new text (a long screen context, a long document
+  before the caret) often stopped after one word: its 300 ms time limit started while the
+  GPU was still reading the end of the text. The limit now starts once the text is read.
+  With Qwen3-1.7B and 1,800 tokens of context, 15 of 21 first suggestions were cut short
+  before and none now, in about the same total time (`docs/MEASUREMENTS.md`). Typing
+  otherwise is unchanged (41.9% of keystrokes saved on the corpus, before and after).
+
 ### Full-screen windows and several displays (2026-10-23)
 - In a window in full screen (its own Space), such as WhatsApp Web in full-screen Chrome,
   suggestions showed in a card (⇥ …) instead of after the caret. macOS refuses to capture a
@@ -39,7 +47,8 @@ the release notes are taken from it.
   what they quote (a budget in Word, a launch plan in Keynote, a pricing page, a quote in
   Preview). `ft-replay --context-mode none|focused|other|both` replays them with no screen
   text, the focused window's, the other app's or both; `--ctx-bench` measures the first
-  suggestion, prefill, typing latency and memory with a full context window, and `--n-ctx`
+  suggestion (its prefill, generation, words and whether the time limit cut it), typing
+  latency and memory with a full context window, and `--n-ctx`
   sets its size. `scripts/bench-context.sh` runs it all for every installed model. The
   baseline is in `docs/MEASUREMENTS.md`; the plan is in `docs/ROADMAP.md` (D42).
 

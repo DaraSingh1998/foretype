@@ -863,13 +863,14 @@ compute buffers, Metal allocations.
   Decided (D42): 8 GB Macs get the feature with Accessibility text only, a 512-token
   other-app section and n_ctx kept at 2048, so no extra KV memory; with a q8_0 KV cache
   (Phase D) n_ctx 4096 would cost what 2048 costs today.
-- `prefill_ms` as the engine reports it stops when the last batch is submitted: llama.cpp
-  runs that batch on the GPU asynchronously and waits for it at the first logits read, so
-  its time shows up as generation (first suggestion minus prefill: 4B at 2048, 741 ms). The
-  engine's 300 ms generation deadline therefore starts before a cold prefill has finished
-  and can cut the first suggestion after a long prefill short (1.7B at 2048 and 8192: the
-  generation phase ran into the deadline). The table uses the first suggestion's total time
-  for that reason. Phase D: call `LlamaContext::synchronize()` at the end of the prefill.
+- `prefill_ms` as the engine reported it here stopped when the last batch was submitted:
+  llama.cpp runs that batch on the GPU asynchronously and waits for it at the first logits
+  read, so its time showed up as generation (first suggestion minus prefill: 4B at 2048,
+  741 ms). The engine's 300 ms generation deadline therefore started before a cold prefill
+  had finished and cut the first suggestion after a long prefill short (1.7B at 2048 and
+  8192: the generation phase ran into the deadline). The table uses the first suggestion's
+  total time for that reason. Fixed since: the engine waits for the GPU at the end of the
+  prefill (*Prefill timed in full* below).
 - The app itself, measured on 2026-10-22 (*Pause and power*), was 3.3–3.4 GB resident with
   Gemma 4 E2B, in line with this table's 3.3 GB for the engine alone.
 
@@ -879,6 +880,52 @@ R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/M
 $R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --context-mode both
 $R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 4096
 ```
+
+### Prefill timed in full (2026-10-23)
+
+`Engine::sync` now calls `LlamaContext::synchronize()` after the prompt's last batch, so
+`prefill_ms` includes that batch's GPU time and the 300 ms generation deadline starts once
+the prompt is read (efb4043). The same runs as above (`scripts/bench-context.sh` with
+`MODES=both`, Qwen3-1.7B at n_ctx 2048, 4096 and 8192, Qwen3-4B at 2048), before (a366aa0:
+the old engine, with `--ctx-bench` reporting the first suggestion's generation phase, its
+words and deadline cuts) and after (efb4043), one run after another on AC power. *Generation*
+is the first suggestion's time after `prefill_ms`; *cut* counts the first suggestions (of
+21) that stopped at the deadline.
+
+| Model | n_ctx | First suggestion p50 / p90 | Prefill p50 | Generation p50 | Words p50 | Cut |
+|---|---:|---:|---:|---:|---:|---:|
+| Qwen3-1.7B | 2048 | 1,549 / 1,561 → 1,595 / 1,747 ms | 1,241 → 1,526 ms | 309 → 64 ms | 1 → 4 | 15 → 0 |
+| | 4096 | 3,376 / 3,525 → 3,504 / 3,772 ms | 3,183 → 3,386 ms | 182 → 71 ms | 4 → 4 | 0 → 0 |
+| | 8192 | 7,664 / 7,730 → 7,653 / 7,874 ms | 7,354 → 7,566 ms | 313 → 85 ms | 2 → 4 | 14 → 0 |
+| Qwen3-4B | 2048 | 3,911 / 4,311 → 4,034 / 4,241 ms | 3,193 → 3,909 ms | 719 → 119 ms | 1 → 4 | 21 → 0 |
+
+- **The first suggestion after a long prefill is whole again, in about the same time.**
+  Before, most of them stopped after one or two words: the generation phase began with the
+  GPU still on the last batch, and with the deadline counted from there, little or none of
+  it was left for generating. Now every one runs to its 4 words, and where they were cut
+  before the total changes by −11 to +123 ms (at most 3%): the GPU time that was counted
+  as generation is counted as prefill, and the extra words cost 50–100 ms. At 4096 nothing
+  was cut before either
+  (3,671 tokens leave a last batch of 87 after seven of 512, so little was left to wait
+  for), and the +128 ms there is the difference between runs: a second pair, run one
+  after the other, gave 3,356 / 3,399 ms before and 3,361 / 3,553 ms after (prefill
+  3,170 → 3,278 ms, generation 187 → 70 ms).
+- **True prefill rates**: Qwen3-1.7B 1,204, 1,084 and 970 tok/s at 2048, 4096 and 8192
+  (reported before: 1,478, 1,154, 997), Qwen3-4B 470 (573). They match what the table
+  above derived from the first suggestion's total (1,190, 1,080, 960; 460). Decode per
+  generated token, which counted the GPU wait before, is now 12.7–17.0 ms on 1.7B (was
+  38–104) and 24.0 ms on 4B (719).
+- **Typing doesn't change**: a keystroke's prefill is a few tokens, done long before the
+  deadline matters. `eval/corpus.jsonl` with Qwen3-1.7B: 41.9% → 41.9% keystrokes saved,
+  3.68 → 3.68 characters per Tab, 1,985 → 1,986 accepts, model p50 / p90 79 / 109 →
+  79 / 114 ms, first suggestion 62 / 93 → 63 / 97 ms, 3,063 → 3,066 model calls; the old
+  engine again: 41.9%, 1,985 accepts, 80 / 121 ms, 64 / 105 ms, 3,064 calls. The
+  multi-window corpus with both contexts: Qwen3-1.7B 60.9% → 60.9% (first suggestion
+  199 / 231 → 205 / 226 ms); Qwen3-4B 62.5% → 62.7% (within the 0.3 points runs repeat
+  to), its first suggestion 389 / 499 → 479 / 555 ms: on 4B the header's prefill (up to
+  290 tokens) is slow enough that waiting for its last batch used to eat into the
+  deadline. Keystroke latency differs by up to 10% between runs here (other work on the
+  Mac), so only the keystrokes saved compare closely.
 
 ### A second display above the main one (by log and screenshot)
 

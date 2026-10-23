@@ -43,9 +43,10 @@ What Phase A found (details in `docs/MEASUREMENTS.md`, "Cross-app context baseli
   (Gemma 4 E2B: no change).
 - Memory: +0.22 GB at n_ctx 4096 and +0.67 GB at 8192 for Qwen3-0.6B and 1.7B (the 8 GB
   models), half that with a q8_0 KV cache.
-- The engine's 300 ms generation deadline starts before llama.cpp has finished the last
-  prefill batch, so a long cold prefill can cut the first suggestion short (Phase D: call
-  `synchronize()` after prefill).
+- The engine's 300 ms generation deadline started before llama.cpp had finished the last
+  prefill batch, so a long cold prefill cut the first suggestion short (Qwen3-1.7B, 1,835
+  tokens: 15 of 21 stopped after one word). Fixed: the engine waits for the GPU at the end
+  of the prefill; none are cut, in about the same time.
 - Multi-monitor: on the developer's Mac the second display is above the built-in one, where
   screen context used the wrong capture scale and cards went below fields, and a window
   moved there after focus had another window of the same app captured instead; fixed and
