@@ -1244,6 +1244,28 @@ and C (*Cross-app context baseline*, *the real section*):
   (108 / 179 in the run above), 97 / 189 ms while prefilling, ready after 2.9 s. Qwen3-0.6B
   makes the 2 s target with the full section too (1.0 s).
 
+### In the app
+
+- **`scripts/e2e-context.sh` passes** on this branch (2f13e81, Qwen3-1.7B, dev binary limited
+  to TextEdit, nothing typed): the source document's passage reached the draft's prompt
+  (`other apps section: ~87 tokens (budget 2048)`), and the field's warm-up went through the
+  background path: `warm rev=1: 139 tokens to prefill in the background`, then
+  `background prefill: Ready … last_ready_ms: 698` (the first prefill after loading, Metal
+  kernels still warming up). Two earlier attempts stopped at the script's own check before
+  Foretype started, as TextEdit briefly showed two more windows titled "TextEdit"; the same
+  steps run by hand later showed only the two test documents.
+- **Refresh cost** (same run): a switch refresh read the other window through Accessibility
+  in 70 ms with 10 ms of CPU, a later one in 183 ms with 3 ms. One refresh found no text
+  through Accessibility while the model was loading and fell back to OCR: 2,858 ms of OCR
+  (374 ms CPU) for one window, Vision's first run in the process. The 400 ms budget only
+  stops further captures; it can't cut one short.
+- **Idle CPU is unchanged.** The dev binary as `e2e-context.sh` starts it (other apps' text
+  on, Qwen3-1.7B loaded, TextEdit closed so nothing is read), 20 s after `engine ready`,
+  then CPU time over three minutes: before (`ef47c37`, built in a temporary worktree) 400,
+  330 and 300 ms a minute; after (2f13e81) 330, 320 and 300 ms; resident 1.53 vs 1.55 GB.
+  A background prompt is only ever worked on between requests until it is ready; with none
+  the worker sleeps on its condition variable exactly as before.
+
 ### OCR of other windows (`Foretype --ocr-bench`)
 
 A rendered document window (1,000×720 points, 16 lines of figures, dates and names) read
