@@ -42,6 +42,14 @@ the release notes are taken from it.
   between frames); `scripts/e2e-inline-caret.sh` takes `WINDOW_POS` to open its window on
   another display.
 
+### Whole first suggestions after a long prompt (2026-10-23)
+- The first suggestion after a long prompt (a new field with a lot of text on screen, or
+  after the screen text changed) often stopped after one or two words: the 300 ms limit for
+  generating it started while the GPU was still reading the end of the prompt. The limit now
+  starts once the prompt is read, so that suggestion is as long as the others, in about the
+  same time (Qwen3-1.7B with a full 2,048-token prompt: 15 of 21 cut short before, none now;
+  `docs/MEASUREMENTS.md`).
+
 ### Measuring context from other apps (2026-10-23)
 - `eval/corpus-multiwindow.jsonl`: 21 replies and notes written while another app shows
   what they quote (a budget in Word, a launch plan in Keynote, a pricing page, a quote in
