@@ -115,9 +115,20 @@ final class AppSettings {
     }
 
     /// For this run only, never saved: personalization is on but the history's key couldn't
-    /// be read from the Keychain (`HistoryStore.Key.locked`), so nothing is learned or opened
-    /// until the user tries again.
+    /// be read from the Keychain (`HistoryStore.Key.locked`), or `historyKeyMismatch`, so
+    /// nothing is learned or opened until the user tries again.
     var historyLocked = false
+
+    /// For this run only: the key was read but opens none of the history file, which the core
+    /// then keeps as it is (D46). Comes with `historyLocked`; deleting the history ends it.
+    var historyKeyMismatch = false
+
+    /// Why the history is locked, for the alert and the Personalization pane.
+    var historyLockedNote: String {
+        historyKeyMismatch
+            ? L("The key in your Keychain doesn't open your writing history. Nothing is learned, and the history is kept as it is in case its key comes back. Delete it to start a new one.")
+            : L("Foretype couldn't read its key from the Keychain. Nothing is learned until it can, and your history is kept as it is. Try again later, or delete the history to start a new one.")
+    }
 
     /// Personalization as the core sees it: on, and its history open.
     var learning: Bool { personalize && !historyLocked }

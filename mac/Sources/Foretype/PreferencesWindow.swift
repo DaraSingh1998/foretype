@@ -767,6 +767,7 @@ final class PersonalizationPane: PreferencesPane {
     private let importButton = NSButton(title: L("Import Writing\u{2026}"), target: nil, action: nil)
     private let retry = NSButton(title: L("Try Again"), target: nil, action: nil)
     private var lockedRow: NSGridRow?
+    private var lockedNote: NSTextField?
 
     override func build() {
         learn.target = self
@@ -784,6 +785,8 @@ final class PersonalizationPane: PreferencesPane {
         instructionsSummary.lineBreakMode = .byTruncatingTail
         instructionsSummary.widthAnchor.constraint(lessThanOrEqualToConstant: 330).isActive = true
         let w: CGFloat = 400
+        let note = Self.note(host?.settings.historyLockedNote ?? "", width: w)
+        lockedNote = note
         let grid = Self.form([
             [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
             [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
@@ -792,7 +795,7 @@ final class PersonalizationPane: PreferencesPane {
             [Self.formLabel(L("Strength:")), strength],
             [NSGridCell.emptyContentView, Self.note(L("How strongly suggestions lean towards words you use often."), width: w)],
             [Self.formLabel(L("Learned:")), learned],
-            [NSGridCell.emptyContentView, Self.note(L("Foretype couldn't read its key from the Keychain. Nothing is learned until it can, and your history is kept as it is. Try again later, or delete the history to start a new one."), width: w)],
+            [NSGridCell.emptyContentView, note],
             [NSGridCell.emptyContentView, Self.hstack([importButton, delete, retry])],
             [NSGridCell.emptyContentView, Self.note(L("Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words."), width: w)],
         ])
@@ -815,6 +818,7 @@ final class PersonalizationPane: PreferencesPane {
         strength.isEnabled = s.personalize
         importButton.isEnabled = s.learning
         lockedRow?.isHidden = !s.historyLocked
+        lockedNote?.stringValue = s.historyLockedNote
         retry.isHidden = !s.historyLocked
         if !s.personalize {
             learned.stringValue = L("Nothing while this is off")

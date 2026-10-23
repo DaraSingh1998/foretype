@@ -18,6 +18,12 @@ the release notes are taken from it.
   details, with Try Again; Clear All still deletes them.
 - Keychain writes update the item in place instead of deleting it and adding it again, so
   a write that fails can't leave no key at all.
+- A writing history that doesn't open with the key in your Keychain is no longer written
+  to. Before, Foretype read nothing from it but kept adding to the same file, and its next
+  clean-up rewrote the file without the old entries, so the right key could never read them
+  again. Now such a history is locked and kept exactly as it is: nothing is learned or
+  imported, and the Personalization menu and Settings say "Writing history is locked" with
+  a note that the key doesn't open it. Delete Writing History… starts a new one.
 
 ### Settings fit the screen (2026-10-23)
 - Settings ▸ General had grown taller than a MacBook screen: the update switches and Check

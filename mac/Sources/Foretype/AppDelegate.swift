@@ -216,6 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             return
         }
         if settings.backend == "apple" { engine.setCompleter(AppleModel.complete) }
+        // The key opens none of the history file (D46): the core keeps it as it is; lock it
+        // here too so the menu and Settings say so (the controller sends `learning` below).
+        if settings.learning, engine.historyKeyMismatch {
+            settings.historyLocked = true
+            settings.historyKeyMismatch = true
+        }
         // One system prompt, and only from the bundled app: a bare dev binary started from a
         // terminal would make macOS ask on behalf of the terminal.
         if settings.useScreenContext, Bundle.main.bundleIdentifier != nil,
@@ -924,8 +930,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             controller?.engine.openHistory(path: HistoryStore.path, keyHex: key)
         }
         settings.personalize = on
-        settings.historyLocked = false
+        settings.historyKeyMismatch = on && controller?.engine.historyKeyMismatch == true
+        settings.historyLocked = settings.historyKeyMismatch
         settingsChanged()
+        if settings.historyKeyMismatch { showHistoryLocked() }
     }
 
     /// Reads the history's key again (the Keychain may ask) and, if it is there now, opens
@@ -937,15 +945,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             return
         }
         controller?.engine.openHistory(path: HistoryStore.path, keyHex: key)
-        settings.historyLocked = false
+        settings.historyKeyMismatch = controller?.engine.historyKeyMismatch == true
+        settings.historyLocked = settings.historyKeyMismatch
         settingsChanged()
+        if settings.historyLocked { showHistoryLocked() }
     }
 
     private func showHistoryLocked() {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = L("Writing history is locked")
-        alert.informativeText = L("Foretype couldn't read its key from the Keychain. Nothing is learned until it can, and your history is kept as it is. Try again later, or delete the history to start a new one.")
+        alert.informativeText = settings.historyLockedNote
         alert.runModal()
         preferences?.refresh()
     }
@@ -1009,6 +1019,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
             // A locked history isn't open in the engine: remove its file here.
             if controller?.engine.clearHistory() != true || settings.historyLocked {
                 try? FileManager.default.removeItem(atPath: HistoryStore.path)
+            }
+            // Its key was readable, only the file wasn't its: with the file gone, start over.
+            if settings.historyKeyMismatch {
+                settings.historyKeyMismatch = false
+                retryHistory()
             }
         }
         preferences?.refresh()
