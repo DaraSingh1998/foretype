@@ -56,6 +56,12 @@ final class GhostPanel {
 
     var isVisible: Bool { panel.isVisible }
 
+    /// Where the panel is on screen, in global coordinates (as AppKit placed it), for the
+    /// debug log; nil while hidden.
+    var globalFrame: CGRect? {
+        panel.isVisible ? ScreenGeometry.globalRect(fromCocoa: panel.frame, primaryHeight: ScreenGeometry.primaryHeight()) : nil
+    }
+
     private static func cocoaRect(fromAX r: CGRect) -> CGRect {
         ScreenGeometry.cocoaRect(fromGlobal: r, primaryHeight: ScreenGeometry.primaryHeight())
     }

@@ -219,7 +219,10 @@ aborts after 2 s.
   `build/e2e/result.txt` and `build/e2e/foretype.log`. Expected document tail:
   `My suggestion is that we do the first part Thanks again for the notes, Let me\t know\t`
   with the 1.7B model (greedy decoding is deterministic). `FORETYPE_INSERTION=paste`
-  repeats it through paste insertion.
+  repeats it through paste insertion. `WINDOW_BOUNDS=LEFT,TOP,RIGHT,BOTTOM` (global points)
+  moves the document window, e.g. `100,-900,1000,-450` onto a display above the main one;
+  the log's `show=inline at X,Y` should equal `caret=… X,Y`. The screenshots use TextEdit's
+  `window 1`, which can be the empty Untitled window TextEdit opens at launch; trust the log.
 - `e2e-terminal.sh`: opens a Terminal window from a `.command` file running `tee` (nothing
   reaches a shell; every entered line lands in `build/e2e-terminal/typed-lines.txt`).
   Checks: no suggestion on an ordinary line, the force hotkey (current line only), agent
@@ -236,7 +239,8 @@ aborts after 2 s.
   pauses while it isn't: a first line that wraps, Enter and a second line, the field
   emptied, a numbered list, then a new field typed into 0.2 s after it takes focus.
   `FORETYPE_CARET=pixel` (the default here) forces the pixel caret as in apps with no AX
-  caret. The window title names the segment; the script logs it, screenshots the window
+  caret. `WINDOW_POS=X,Y` (global points) opens the window elsewhere, e.g. `100,-950` on a
+  display above the main one. The window title names the segment; the script logs it, screenshots the window
   region about every second and counts how each suggestion was drawn per segment (the
   `show=inline|card|mirror` debug field) and the card-to-inline jumps. Add `bg` to the page's
   hash (`composer.html#ce,bg`) to have it type in a background window, for Accessibility
@@ -329,7 +333,7 @@ when a result moves (or shows) the suggestion. `FORETYPE_LLAMA_LOGS=1` keeps lla
   history key when personalization is on in the binary's defaults domain. The binary blocks
   in `Keychain.get` until someone answers. Run development binaries with
   `FORETYPE_ABOUT_YOU='{}'` (empty details, the store untouched), as `e2e-inline-caret.sh`
-  does, and never type the password into a prompt a test raised.
+  and `e2e-textedit.sh` do, and never type the password into a prompt a test raised.
 - On macOS 27, system-wide `AXFocusedApplication` always fails (`cannotComplete`); the
   tracker uses `NSWorkspace.frontmostApplication` and `AXUIElementCreateApplication(pid)`.
 

@@ -15,8 +15,15 @@ the release notes are taken from it.
   cards went below the field whenever the field was on a display above the main one, and a
   card for a field at the top of a display below the main one could appear on the main
   display. Both now stay on the field's display.
+- Screen context could read the wrong window after the window you type in was moved (for
+  example dragged to another display): it looked for the window where it was when the
+  field got focus, and found another window of the same app there. It now reads the window
+  that holds the field, and nothing when none does; the window's position is read again
+  when the field moves.
 - `Foretype --geometry-selftest` checks the coordinate conversions on made-up layouts with
   displays left of, above, below and right of the main one, at 1x and 2x.
+- `FORETYPE_DEBUG` logs where the ghost panel is on screen (`show=inline at X,Y`) and which
+  window screen context captured, at what scale.
 
 ### Measuring context from other apps (2026-10-23)
 - `eval/corpus-multiwindow.jsonl`: 21 replies and notes written while another app shows

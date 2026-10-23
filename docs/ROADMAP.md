@@ -47,7 +47,11 @@ What Phase A found (details in `docs/MEASUREMENTS.md`, "Cross-app context baseli
   prefill batch, so a long cold prefill can cut the first suggestion short (Phase D: call
   `synchronize()` after prefill).
 - Multi-monitor: on the developer's Mac the second display is above the built-in one, where
-  screen context used the wrong capture scale and cards went below fields; fixed.
+  screen context used the wrong capture scale and cards went below fields, and a window
+  moved there after focus had another window of the same app captured instead; fixed and
+  checked on that display (ghost text, pixel caret, mirror card, capture scale).
+- With noise in the screen section the model echoed a header marker (`[End of screen t…`):
+  Phase C should keep section markers out of suggestions.
 - Windows on other Spaces aren't on screen, so ScreenCaptureKit's on-screen list (and
   Accessibility, for most apps) can't see them: the pool has to keep what was read while
   they were visible.

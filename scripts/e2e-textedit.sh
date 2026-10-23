@@ -6,6 +6,8 @@
 # focus, and every typing step aborts if focus leaves TextEdit.
 #
 # usage: FORETYPE_MODEL=/path/model.gguf scripts/e2e-textedit.sh [outdir]
+#        WINDOW_BOUNDS=LEFT,TOP,RIGHT,BOTTOM puts the document window there (global points,
+#        top-left origin), e.g. on a display above the main one (negative values).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/mac/.build/release/Foretype"
@@ -16,6 +18,9 @@ FIXTURE="$ROOT/scripts/fixtures/email.txt"
 mkdir -p "$OUT"
 LOG="$OUT/foretype.log"
 : "${FORETYPE_MODEL:?set FORETYPE_MODEL}"
+# Empty About You details: a development binary reading the saved ones would make the
+# Keychain ask for the login password (the key's access list names the installed app only).
+[ -n "${FORETYPE_ABOUT_YOU+set}" ] || export FORETYPE_ABOUT_YOU='{}'
 
 idle() { ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {printf "%d", $NF/1000000000; exit}'; }
 echo "waiting for ${IDLE}s of user inactivity..."
@@ -34,6 +39,7 @@ grep -q "engine ready" "$LOG" || { echo "engine did not start"; exit 1; }
 
 osascript -e 'tell application "TextEdit"' -e 'activate' -e 'make new document' \
   -e "set text of document 1 to (read POSIX file \"$FIXTURE\" as «class utf8»)" -e 'end tell' >/dev/null
+[ -n "${WINDOW_BOUNDS:-}" ] && osascript -e "tell application \"TextEdit\" to set bounds of window 1 to {$WINDOW_BOUNDS}" >/dev/null
 # AppleScript activation can be refused or delayed (cooperative activation, macOS 14+);
 # LaunchServices is more reliable. Allow up to 5 s for the first focus check.
 open -a TextEdit

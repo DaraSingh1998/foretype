@@ -880,6 +880,28 @@ $R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --con
 $R "$M/Qwen3-1.7B-Base.Q4_K_M.gguf" --corpus eval/corpus-multiwindow.jsonl --ctx-bench --n-ctx 4096
 ```
 
+### A second display above the main one (by log and screenshot)
+
+The developer's Mac: the built-in Retina display (1512×982 points, 2x) is the main one, a
+BenQ GW2490 (1920×1080, 1x) is arranged above it (global y −1080 to 0). Qwen3-1.7B, with
+`FORETYPE_ONLY_APPS`, on `feat/context-baseline`; `--geometry-selftest` converts both
+displays' global frames to exactly their `NSScreen` frames. The log line
+`show=… at X,Y` is the panel's frame as AppKit placed it.
+
+| Check | Result |
+|---|---|
+| TextEdit on the BenQ (`e2e-textedit.sh`, `WINDOW_BOUNDS=100,-900,1000,-450`) | 60 of 60 suggestions inline, the panel's origin equal to the caret's every time (caret 865,−674 → panel at 865,−674); Tab, accept-all, Esc and Option+Tab as on the main display |
+| Screen context of that window | Before: the window was captured at 2x. After it moved to the BenQ, the capture found the window by its frame at focus time and took TextEdit's empty Untitled window on the main display instead (81 characters of toolbar and ruler); right after, the model suggested `[End of screen t…`, echoing the header's marker. After the fixes: the moved window at 1x, 900×450 px |
+| Chrome composer on the BenQ (`e2e-inline-caret.sh ce`, `WINDOW_POS=100,-950`, pixel caret) | Caret found by its blink in 176 ms at 1x (width scale 1.00), then by single captures in 39–59 ms; 199 suggestions inline over three segments (wrap 109, new line 72, list 29; the run stopped there when the keyboard or mouse was used); screen context 1000×600 px at 1x |
+| Mirror card on the BenQ | Above the field: panel at 157,−791, field top −762. The old rule (y < 0 → below) would have put it under the field |
+
+In one of the two runs with the new window matching, the moved window was missing from
+ScreenCaptureKit's list at the moment of capture and the fallback still took the nearest
+window; with a field known, the capture now skips instead. Not checked by eye: a
+full-screen app on the BenQ (`fix/display-above-main`, not merged, handles
+ScreenCaptureKit's −3811 error for native full-screen windows), a window across both
+displays (covered by the self-test's display matching), and switching Spaces.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

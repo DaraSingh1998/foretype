@@ -567,7 +567,8 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   context is off while saving energy. Per-app pauses (`snooze`) end at a time or, with
   `Date.distantFuture`, when the app's last process quits.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
-  every 15 s: `SCShareableContent` → the focused window (matched by pid and frame) →
+  every 15 s: `SCShareableContent` → the focused window (the app's window holding the
+  field's centre, `ScreenGeometry.windowIndex`; none if no window does) →
   `SCScreenshotManager.captureImage` → Vision `.accurate` OCR → lines grouped into rows,
   rows inside the field dropped, rows nearest the field kept (rows above first, budget
   1,400 characters) in reading order. The new text is prefilled with `warm` right away.
@@ -581,7 +582,9 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   display left of or above the primary has negative global x or y. `cocoaRect(fromGlobal:)`
   flips around the primary's height (the ghost panel's frame), `displayIndex(for:in:)` is
   the display showing most of a rect (or the nearest), `scale(for:in:)` its backing scale,
-  and `cardY` puts a card above a field unless that leaves the field's display. Never
+  `cardY` puts a card above a field unless that leaves the field's display, and
+  `windowIndex` picks the window holding a field (the tracker reads a window's frame on
+  focus, and again only when the field's frame changes, so it can lag a move). Never
   compare a global rect with an `NSScreen` frame. `--geometry-selftest` checks them on
   made-up layouts (displays left, above, below and right of the primary, 1x and 2x).
 - **`Hotkeys.swift`**: Carbon `RegisterEventHotKey`: Ctrl + key above Tab forces
