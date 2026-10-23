@@ -5,6 +5,20 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### A Keychain that says no no longer costs your writing history (2026-10-23)
+- Data safety: when Foretype couldn't read the key of your writing history from the
+  Keychain (you clicked Deny on a Keychain prompt, the keychain was locked, or the app's
+  signature had changed), it took that as "no key yet", made a new one and replaced the old
+  key, so the history written until then could never be read again. The same could happen
+  to your About You details. Now a new key is made only when the Keychain has none and
+  there is no history or details file it could open. Any other failed read leaves the key
+  and the file alone: the history (or the details) is **locked** for that run, nothing is
+  learned, opened or deleted, and the Personalization menu and Settings say "Writing
+  history is locked" with **Try Again**. Settings ▸ About You shows the same for your
+  details, with Try Again; Clear All still deletes them.
+- Keychain writes update the item in place instead of deleting it and adding it again, so
+  a write that fails can't leave no key at all.
+
 ### Settings fit the screen (2026-10-23)
 - Settings ▸ General had grown taller than a MacBook screen: the update switches and Check
   Now ran behind the Dock and couldn't be reached. Its settings are now in three tabs:

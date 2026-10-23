@@ -121,6 +121,24 @@ enum PreferencesSelfTest {
             }
             print("panes written to \(dir)")
         }
+
+        // A locked writing history and locked details: their notes and Try Again still fit.
+        host.settings.historyLocked = true
+        host.aboutYouLocked = true
+        for (i, pane) in prefs.panes.enumerated() where pane is PersonalizationPane || pane is AboutYouPane {
+            pane.refresh()
+            tabs.selectedTabViewItemIndex = i
+            tabs.fit(animated: false)
+            let name = pane.title ?? "?"
+            print(String(format: "%@ (locked): %.0f pt", name, pane.contentHeight))
+            check(inside(screen) && !pane.scrolls, "\(name) (locked): scrolls on a 13-inch MacBook Air")
+            if let dir {
+                let path = "\(dir)/\(i + 1)-\(name.replacingOccurrences(of: " ", with: "-"))-locked.png"
+                check((try? pane.png(dark: false)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+            }
+        }
+        host.settings.historyLocked = false
+        host.aboutYouLocked = false
         print(failures == 0 ? "settings self-test passed" : "settings self-test: \(failures) failed")
         return failures == 0
     }
@@ -143,6 +161,7 @@ private final class StandInHost: PreferencesHost {
 
     var engineStatus: String { "ready \u{2014} Qwen3-1.7B-Base.Q4_K_M.gguf" }
     var aboutYou: AboutYou { AboutYou() }
+    var aboutYouLocked = false
     var updates: UpdateController? { nil }
     var pauseDescription: String? { nil }
     var powerState: PowerState {
@@ -153,6 +172,7 @@ private final class StandInHost: PreferencesHost {
 
     func settingsChanged() {}
     func setPersonalize(_ on: Bool) {}
+    func retryHistory() {}
     func historyStats() -> (records: Int, words: Int)? { nil }
     func confirmDeleteHistory() {}
     func openInstructions() {}
@@ -166,6 +186,7 @@ private final class StandInHost: PreferencesHost {
     func addAppException() {}
     func setAboutYou(_ details: AboutYou) {}
     func confirmClearAboutYou() {}
+    func retryAboutYou() {}
     func pauseSuggestions(until: Date?) {}
     func resumeSuggestions() {}
     func powerSettingsChanged() {}

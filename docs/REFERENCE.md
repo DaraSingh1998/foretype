@@ -87,6 +87,11 @@ written to refer to the visible messages, so treat this as a best case.
   ChaCha20-Poly1305. The 256-bit key lives in your login Keychain and is only created or
   read when personalization is on. Nothing leaves the Mac. **Delete Writing History…**
   deletes the file, and suggestions are unbiased again immediately.
+- **Locked history:** if Foretype can't read the key (you denied a Keychain prompt, the
+  keychain is locked, or the key is missing while a history file exists), it never makes a
+  new key over your history. Learning stays off for that run and nothing is recorded or
+  deleted; the Personalization menu and Settings say "Writing history is locked", with
+  **Try Again**. Deleting the history and trying again starts a new one.
 - **How it is used:** no fine-tuning. Words you use often (at least twice, ignoring very
   common English words) get a small logit boost: whole-word tokens at a word start, and
   completions towards your words once you have typed their first letters. Up to two short
@@ -122,7 +127,9 @@ asks for Contacts access once, only when you click it).
   the Mac. Never filled in secure fields or apps where suggestions are off. Debug logs show
   only which detail was offered, never its value, and mask any piece of your details in
   other logged text (a model suggestion can echo one from the document). **Clear All…**
-  deletes the file and key.
+  deletes the file and key. If the key can't be read while the file exists (a denied
+  Keychain prompt, a locked keychain), the details are locked: the pane says so, the fields
+  can't be edited, nothing is saved over the file, and **Try Again** reads it again.
 
 ### Custom instructions
 
@@ -431,7 +438,8 @@ Settings… and setup. Option-click the icon to pause or resume.
 - `Foretype --ocr-selftest` renders a fake chat window and checks OCR and row assembly;
   `Foretype --font-selftest` checks the width-based font matcher and the ghost text's font
   from the text before the caret (a soft wrap, mixed sizes, a zoomed document), `Foretype
-  --stats-selftest` the statistics counts, day buckets and reset, and `Foretype
+  --stats-selftest` the statistics counts, day buckets and reset, `Foretype
+  --keychain-selftest` the Keychain key rules against an in-memory Keychain, and `Foretype
   --caret-selftest` the pixel caret detectors on rendered text (no permissions needed).
   `scripts/caret-measure.sh` compares the pixel caret with the Accessibility caret in a test
   document (TextEdit by default) without typing anything.

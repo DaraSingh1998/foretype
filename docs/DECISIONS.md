@@ -630,3 +630,25 @@ window's pixels, with no other window, Foretype's overlay or the pointer.
 across two displays is clipped to the one under the field). A window that leaves full
 screen keeps the display path until Foretype quits; it still works, as the display filter
 captures windows that aren't full screen too. Measured only on macOS 27 with Chrome.
+
+## D45. A failed Keychain read never replaces a key (2026-10-23)
+
+**Decision.** `Keychain.get` tells errSecItemNotFound apart from every other failure. The
+writing history's key and the About You key are created only when the Keychain has no item
+*and* there is no file (or an empty one) the key could have opened. Any other result (the
+user denied or cancelled a prompt, the keychain is locked, interaction isn't allowed, the
+app's signature changed, a malformed item, or a file without its key) locks that store for
+the run: nothing is recorded, opened, saved or deleted, and the user gets a non-blocking
+note with Try Again (the Personalization menu and pane, the About You pane). `Keychain.set`
+updates the item in place and adds one only when there is none.
+**Why.** Before, any failed read counted as "no key yet": a new key was made and written
+with delete-then-add, so one click on Deny (or a rebuild that changed the dev build's
+signature) made the existing history and details unreadable for good. The file is the
+user's data; the key is the only way to read it. Not being able to learn for a while is
+cheap, losing months of writing is not. Delete-then-add also left no key at all whenever
+the add failed. A locked store doesn't ask the Keychain again on every engine restart:
+one prompt per run, then only when the user asks.
+**Cost.** A history file whose key really is gone (deleted by hand in Keychain Access, a new
+Mac without the item) stays locked until the user deletes the history; the note says so.
+A details file that decrypts to nothing with a readable key is still treated as empty and
+overwritten on the next save (the key wasn't the problem there).

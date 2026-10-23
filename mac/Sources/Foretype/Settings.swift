@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// User settings persisted in UserDefaults and mirrored into the core as JSON.
 final class AppSettings {
@@ -115,6 +114,14 @@ final class AppSettings {
         set { d.set(newValue, forKey: "personalize") }
     }
 
+    /// For this run only, never saved: personalization is on but the history's key couldn't
+    /// be read from the Keychain (`HistoryStore.Key.locked`), so nothing is learned or opened
+    /// until the user tries again.
+    var historyLocked = false
+
+    /// Personalization as the core sees it: on, and its history open.
+    var learning: Bool { personalize && !historyLocked }
+
     /// 0 gentle, 1 balanced, 2 strong.
     var personalizeStrength: Int {
         get { d.object(forKey: "personalizeStrength") as? Int ?? 1 }
@@ -139,8 +146,8 @@ final class AppSettings {
 
     /// API key for a server backend, kept in the Keychain (only read when a server is used).
     var backendAPIKey: String {
-        get { Keychain.get("backend-api-key").flatMap { String(data: $0, encoding: .utf8) } ?? "" }
-        set { Keychain.set("backend-api-key", newValue.data(using: .utf8), label: "Foretype server API key") }
+        get { Keychain.login.get("backend-api-key").data.flatMap { String(data: $0, encoding: .utf8) } ?? "" }
+        set { Keychain.login.set("backend-api-key", newValue.data(using: .utf8), label: "Foretype server API key") }
     }
 
     var onboarded: Bool {
@@ -196,57 +203,12 @@ final class AppSettings {
          // The core filters by bundle ID and can't express a pid entry; then the tracker, which
          // never reads an app this list rejects, is the only filter.
          "only_apps": onlyApps.contains { pid_t($0) != nil } ? [] : onlyApps,
-         "personalize": personalize, "personalize_strength": personalizeStrength,
+         "personalize": learning, "personalize_strength": personalizeStrength,
          "emoji": emoji, "autocorrect": autocorrect, "typo_gate": typoGate, "mid_line": midLine]
     }
 
     func coreJSON() -> String {
         String(data: try! JSONSerialization.data(withJSONObject: coreDict), encoding: .utf8)!
-    }
-}
-
-/// Generic-password items for this app in the login Keychain.
-enum Keychain {
-    private static let service = "dev.foretype.Foretype"
-
-    static func get(_ account: String) -> Data? {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account, kSecReturnData as String: true]
-        var out: CFTypeRef?
-        return SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess ? out as? Data : nil
-    }
-
-    @discardableResult
-    static func set(_ account: String, _ data: Data?, label: String) -> Bool {
-        let q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
-                                kSecAttrAccount as String: account]
-        SecItemDelete(q as CFDictionary)
-        guard let data, !data.isEmpty else { return true }
-        var add = q
-        add[kSecValueData as String] = data
-        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        add[kSecAttrLabel as String] = label
-        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
-    }
-}
-
-/// The personalization history's location and its encryption key, kept in the Keychain.
-/// The key is only created or read when personalization is on.
-enum HistoryStore {
-    static var path: String {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Foretype/history.bin").path
-    }
-
-    /// The 256-bit key as hex, created on first use.
-    static func keyHex() -> String? {
-        if let data = Keychain.get("history-key"), data.count == 32 {
-            return data.map { String(format: "%02x", $0) }.joined()
-        }
-        var key = Data(count: 32)
-        let ok = key.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) } == errSecSuccess
-        guard ok, Keychain.set("history-key", key, label: "Foretype writing history key") else { return nil }
-        return key.map { String(format: "%02x", $0) }.joined()
     }
 }
 

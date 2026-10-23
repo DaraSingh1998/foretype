@@ -107,6 +107,9 @@
 /* Alerts and the import panel (AppDelegate.swift) */
 "Couldn't create the encryption key" = "एंक्रिप्शन कुंजी नहीं बनाई जा सकी";
 "Foretype needs a key in your Keychain to store your writing history encrypted." = "आपका लेखन इतिहास एंक्रिप्टेड रूप में सहेजने के लिए Foretype को आपके कीचेन में एक कुंजी चाहिए।";
+"Writing history is locked" = "लेखन इतिहास लॉक है";
+"Foretype couldn't read its key from the Keychain. Nothing is learned until it can, and your history is kept as it is. Try again later, or delete the history to start a new one." = "Foretype कीचेन से इसकी कुंजी नहीं पढ़ सका। जब तक वह इसे पढ़ नहीं पाता, कुछ नहीं सीखा जाएगा और आपका इतिहास जैसा है वैसा ही रहेगा। बाद में दोबारा कोशिश करें, या नया इतिहास शुरू करने के लिए इसे डिलीट करें।";
+"Try Again" = "दोबारा कोशिश करें";
 "Choose text files or folders with your own writing" = "अपने लेखन वाली टेक्स्ट फ़ाइलें या फ़ोल्डर चुनें";
 "Import failed" = "इंपोर्ट विफल हुआ";
 "Delete your writing history?" = "अपना लेखन इतिहास डिलीट करें?";
@@ -263,6 +266,7 @@
 "Foretype forgets the details you entered in About You. This can't be undone." = "“आपके बारे में” में डाला गया आपका विवरण Foretype भूल जाएगा। इसे पहले जैसा नहीं किया जा सकता।";
 "Couldn't save your details" = "आपका विवरण सहेजा नहीं जा सका";
 "Foretype needs a key in your Keychain to store your details encrypted. They are used until you quit." = "आपका विवरण एंक्रिप्टेड रूप में सहेजने के लिए Foretype को आपके कीचेन में एक कुंजी चाहिए। Foretype बंद करने तक इनका उपयोग होता रहेगा।";
+"Your details are locked: Foretype couldn't read their key from the Keychain. They are kept as they are until it can. Try again, or clear them to start over." = "आपका विवरण लॉक है: Foretype कीचेन से इसकी कुंजी नहीं पढ़ सका। जब तक वह इसे पढ़ नहीं पाता, विवरण जैसा है वैसा ही रहेगा। दोबारा कोशिश करें, या नए सिरे से शुरू करने के लिए इसे मिटाएँ।";
 
 /* Next to the ghost text when it is one of the user's details (Controller.swift) */
 "your name" = "आपका नाम";

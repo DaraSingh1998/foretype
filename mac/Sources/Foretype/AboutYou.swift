@@ -109,51 +109,63 @@ struct AboutYou: Codable, Equatable {
 
 /// `~/Library/Application Support/Foretype/about-you.bin`: the details as JSON, sealed with
 /// ChaCha20-Poly1305 under a 256-bit key kept in the Keychain (account `about-you-key`). The
-/// key is created on the first save and read only when the file exists.
+/// key is created on the first save and read only when the file exists. While the file
+/// exists, a failed read never leads to a new key: the details are locked instead.
 enum AboutYouStore {
     static var url: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Foretype/about-you.bin")
     }
 
-    private static let account = "about-you-key"
+    static let account = "about-you-key"
 
     static var exists: Bool { FileManager.default.fileExists(atPath: url.path) }
 
-    /// The saved details, or empty ones (no file, no key, or a file that doesn't decrypt).
-    static func load() -> AboutYou {
-        guard let box = try? Data(contentsOf: url), let key = Keychain.get(account), key.count == 32,
-              let plain = open(box, key: key), let v = try? JSONDecoder().decode(AboutYou.self, from: plain) else {
+    /// The saved details: empty with no file (or a file that doesn't decrypt), nil when the
+    /// file exists but its key can't be read (locked: nothing may be saved over it).
+    static func load(_ keychain: Keychain = .login, url: URL = url) -> AboutYou? {
+        guard let box = try? Data(contentsOf: url), !box.isEmpty else { return AboutYou() }
+        guard let key = keychain.get(account).data, key.count == 32 else { return nil }
+        guard let plain = open(box, key: key), let v = try? JSONDecoder().decode(AboutYou.self, from: plain) else {
             return AboutYou()
         }
         return v
     }
 
-    /// Saves `v` encrypted; with no values left it deletes the file and the key instead.
+    enum SaveResult { case saved, locked, failed }
+
+    /// Saves `v` encrypted; with no values left it deletes the file and the key instead. A new
+    /// key is made only when the Keychain has none and there is no file; any other failed
+    /// read is `.locked`, and the file and the key stay as they are.
     @discardableResult
-    static func save(_ v: AboutYou) -> Bool {
-        if v.isEmpty { return delete() }
-        var key = Keychain.get(account) ?? Data()
-        if key.count != 32 {
+    static func save(_ v: AboutYou, _ keychain: Keychain = .login, url: URL = url) -> SaveResult {
+        if v.isEmpty { return delete(keychain, url: url) ? .saved : .failed }
+        let key: Data
+        switch keychain.get(account) {
+        case let .found(data) where data.count == 32:
+            key = data
+        case .notFound where !fileHoldsData(url.path):
             key = Data(SymmetricKey(size: .bits256).withUnsafeBytes { Array($0) })
-            guard Keychain.set(account, key, label: "Foretype About You key") else { return false }
+            guard keychain.set(account, key, label: "Foretype About You key") else { return .failed }
+        default:
+            return .locked
         }
-        guard let plain = try? JSONEncoder().encode(v), let box = seal(plain, key: key) else { return false }
+        guard let plain = try? JSONEncoder().encode(v), let box = seal(plain, key: key) else { return .failed }
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try box.write(to: url, options: [.atomic])
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            return true
+            return .saved
         } catch {
-            return false
+            return .failed
         }
     }
 
-    /// Removes the file and its key.
+    /// Removes the file and its key (the user cleared their details).
     @discardableResult
-    static func delete() -> Bool {
+    static func delete(_ keychain: Keychain = .login, url: URL = url) -> Bool {
         try? FileManager.default.removeItem(at: url)
-        return Keychain.set(account, nil, label: "") && !exists
+        return keychain.set(account, nil, label: "") && !FileManager.default.fileExists(atPath: url.path)
     }
 
     static func seal(_ plain: Data, key: Data) -> Data? {

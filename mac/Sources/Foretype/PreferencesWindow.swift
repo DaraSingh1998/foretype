@@ -11,6 +11,8 @@ protocol PreferencesHost: AnyObject {
     /// Pushes changed settings into the core (`Controller.applySettings`).
     func settingsChanged()
     func setPersonalize(_ on: Bool)
+    /// Reads a locked history's key again (`AppSettings.historyLocked`).
+    func retryHistory()
     func historyStats() -> (records: Int, words: Int)?
     func confirmDeleteHistory()
     func openInstructions()
@@ -27,8 +29,12 @@ protocol PreferencesHost: AnyObject {
     /// The user's own details (Settings ▸ About You). A change applies at once and is saved
     /// encrypted shortly after.
     var aboutYou: AboutYou { get }
+    /// The details file exists but its key couldn't be read: nothing can be edited or saved
+    /// until `retryAboutYou` reads it or the user clears the details.
+    var aboutYouLocked: Bool { get }
     func setAboutYou(_ details: AboutYou)
     func confirmClearAboutYou()
+    func retryAboutYou()
     /// Sparkle, configured in release builds only (`isConfigured`).
     var updates: UpdateController? { get }
     /// Pausing: why and until when (`pauseDescription` is nil while not paused).
@@ -759,6 +765,8 @@ final class PersonalizationPane: PreferencesPane {
     private let strength = NSSegmentedControl(labels: AppSettings.strengthNames, trackingMode: .selectOne, target: nil, action: nil)
     private let learned = NSTextField(labelWithString: "")
     private let importButton = NSButton(title: L("Import Writing\u{2026}"), target: nil, action: nil)
+    private let retry = NSButton(title: L("Try Again"), target: nil, action: nil)
+    private var lockedRow: NSGridRow?
 
     override func build() {
         learn.target = self
@@ -769,6 +777,8 @@ final class PersonalizationPane: PreferencesPane {
         let delete = NSButton(title: L("Delete Writing History\u{2026}"), target: self, action: #selector(deleteHistory))
         importButton.target = self
         importButton.action = #selector(importWriting)
+        retry.target = self
+        retry.action = #selector(retryHistory)
         let edit = NSButton(title: L("Edit\u{2026}"), target: self, action: #selector(editInstructions))
         instructionsSummary.textColor = .secondaryLabelColor
         instructionsSummary.lineBreakMode = .byTruncatingTail
@@ -782,10 +792,12 @@ final class PersonalizationPane: PreferencesPane {
             [Self.formLabel(L("Strength:")), strength],
             [NSGridCell.emptyContentView, Self.note(L("How strongly suggestions lean towards words you use often."), width: w)],
             [Self.formLabel(L("Learned:")), learned],
-            [NSGridCell.emptyContentView, Self.hstack([importButton, delete])],
+            [NSGridCell.emptyContentView, Self.note(L("Foretype couldn't read its key from the Keychain. Nothing is learned until it can, and your history is kept as it is. Try again later, or delete the history to start a new one."), width: w)],
+            [NSGridCell.emptyContentView, Self.hstack([importButton, delete, retry])],
             [NSGridCell.emptyContentView, Self.note(L("Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words."), width: w)],
         ])
         grid.row(at: 2).topPadding = 8
+        lockedRow = grid.row(at: 7)
         add(grid)
     }
 
@@ -801,9 +813,13 @@ final class PersonalizationPane: PreferencesPane {
         learn.state = s.personalize ? .on : .off
         strength.selectedSegment = min(max(s.personalizeStrength, 0), 2)
         strength.isEnabled = s.personalize
-        importButton.isEnabled = s.personalize
+        importButton.isEnabled = s.learning
+        lockedRow?.isHidden = !s.historyLocked
+        retry.isHidden = !s.historyLocked
         if !s.personalize {
             learned.stringValue = L("Nothing while this is off")
+        } else if s.historyLocked {
+            learned.stringValue = L("Writing history is locked")
         } else if let h = host.historyStats() {
             learned.stringValue = LCount(h.records, "%@ texts", one: "%@ text") + ", " + LCount(h.words, "%@ words", one: "%@ word")
         } else {
@@ -821,6 +837,8 @@ final class PersonalizationPane: PreferencesPane {
 
     @objc private func deleteHistory() { host?.confirmDeleteHistory() }
 
+    @objc private func retryHistory() { host?.retryHistory() }
+
     @objc private func importWriting() { host?.importWriting() }
 
     @objc private func editInstructions() { host?.openInstructions() }
@@ -835,6 +853,7 @@ final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
     private let contactsNote = PreferencesPane.note(L("Fills only the empty fields. macOS asks once for access to Contacts."), width: 400)
     private var fields: [AboutYou.Field: NSTextField] = [:]
     private var uses: [AboutYou.Field: NSButton] = [:]
+    private var lockedRows: [NSGridRow] = []
 
     override func build() {
         for b in [enabled, inPrompt] {
@@ -845,9 +864,12 @@ final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
         fromContacts.action = #selector(fillFromContacts)
         let clear = NSButton(title: L("Clear All\u{2026}"), target: self, action: #selector(clearAll))
         let w: CGFloat = 400
+        let retry = NSButton(title: L("Try Again"), target: self, action: #selector(retryLocked))
         var rows: [[NSView]] = [
             [NSGridCell.emptyContentView, enabled, NSGridCell.emptyContentView],
             [NSGridCell.emptyContentView, Self.note(L("When you type \u{201C}My email is\u{201D}, \u{201C}Call me on\u{201D} or end a letter with \u{201C}Regards,\u{201D}, Foretype offers your own detail, exactly, as ghost text. Tab inserts it. Stored encrypted on this Mac (key in your Keychain); nothing leaves it."), width: w), NSGridCell.emptyContentView],
+            [NSGridCell.emptyContentView, Self.note(L("Your details are locked: Foretype couldn't read their key from the Keychain. They are kept as they are until it can. Try again, or clear them to start over."), width: w), NSGridCell.emptyContentView],
+            [NSGridCell.emptyContentView, Self.hstack([retry]), NSGridCell.emptyContentView],
         ]
         for f in AboutYou.Field.allCases {
             let t = NSTextField(string: "")
@@ -868,9 +890,10 @@ final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
             [NSGridCell.emptyContentView, contactsNote, NSGridCell.emptyContentView],
         ]
         let grid = Self.form(rows)
-        for r in [0, 1] + Array(rows.count - 4 ..< rows.count) {
+        for r in [0, 1, 2, 3] + Array(rows.count - 4 ..< rows.count) {
             grid.mergeCells(inHorizontalRange: NSRange(location: 1, length: 2), verticalRange: NSRange(location: r, length: 1))
         }
+        lockedRows = [grid.row(at: 2), grid.row(at: 3)]
         let contacts = MeCard.available
         fromContacts.isHidden = !contacts
         contactsNote.isHidden = !contacts
@@ -881,14 +904,20 @@ final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
     override func refresh() {
         guard let host else { return }
         let v = host.aboutYou
+        // Locked: nothing to edit until the saved details can be read (Clear All still works).
+        let open = !host.aboutYouLocked
+        for row in lockedRows { row.isHidden = open }
         enabled.state = v.enabled ? .on : .off
+        enabled.isEnabled = open
         inPrompt.state = v.inPrompt ? .on : .off
-        inPrompt.isEnabled = v.enabled
+        inPrompt.isEnabled = open && v.enabled
+        fromContacts.isEnabled = open
         for f in AboutYou.Field.allCases {
             // Leave the field the user is typing in alone.
             if let t = fields[f], t.currentEditor() == nil, t.stringValue != v[f] { t.stringValue = v[f] }
+            fields[f]?.isEnabled = open
             uses[f]?.state = v.uses(f) ? .on : .off
-            uses[f]?.isEnabled = v.enabled
+            uses[f]?.isEnabled = open && v.enabled
         }
     }
 
@@ -942,6 +971,8 @@ final class AboutYouPane: PreferencesPane, NSTextFieldDelegate {
     }
 
     @objc private func clearAll() { host?.confirmClearAboutYou() }
+
+    @objc private func retryLocked() { host?.retryAboutYou() }
 }
 
 // MARK: Apps

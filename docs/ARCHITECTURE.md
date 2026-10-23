@@ -618,8 +618,11 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   switch (on by default), per-detail switches; `coreJSON()` sends switched-off details empty),
   `AboutYouStore` (`~/Library/Application Support/Foretype/about-you.bin`: the JSON sealed
   with CryptoKit ChaCha20-Poly1305, mode 0600; 256-bit key in the Keychain account
-  `about-you-key`, created on the first save, read at launch only if the file exists;
-  emptying every field or Clear All deletes both), `MeCard` (Contacts' "me" card, read only
+  `about-you-key`, created on the first save only when the Keychain has none and there is
+  no file, read at launch only if the file exists; a file whose key can't be read loads as
+  locked (`load` returns nil, `save` returns `.locked`): `AppDelegate.aboutYouLocked`
+  disables the pane's fields and shows a note with Try Again (`retryAboutYou`); emptying
+  every field or Clear All deletes both), `MeCard` (Contacts' "me" card, read only
   when the user clicks Fill from My Card; hidden in a bare binary, which has no Contacts
   usage string). `AppDelegate` keeps the details in memory, sends them to the engine at
   once (`Controller.detailsJSON`, again after an engine swap) and saves 0.5 s after the last
@@ -627,9 +630,21 @@ never logs the text. The shell must ignore events whose `revision` is not its la
 - **`Settings.swift`**: `AppSettings` (UserDefaults: batteryMode, lowPowerMode, pauseBelowBattery, lengthWords,
   stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
   useScreenContext, personalize, strength, backend, backendURL, backendModel, modelPath,
-  onboarded), `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
-  `backend-api-key`), `HistoryStore` (`~/Library/Application Support/Foretype/history.bin`),
-  `ModelLocator`.
+  onboarded; `historyLocked` is for the run only, and `learning`, personalize and not
+  locked, is what the core gets as `personalize`), `ModelLocator`.
+- **`Keychain.swift`**: `Keychain` (service `dev.foretype.Foretype`; accounts `history-key`,
+  `about-you-key`, `backend-api-key`). `get` returns `.found`, `.notFound`
+  (errSecItemNotFound only) or `.failed(status)` (denied, cancelled, locked keychain, a
+  changed signature...); `set` updates the item in place and adds it only when there is
+  none, never delete-then-add. The Security calls sit behind `KeychainBackend`
+  (`Keychain.login` in the app). `HistoryStore` (`~/Library/Application
+  Support/Foretype/history.bin`): `key()` returns `.ready(hex)`, `.locked` or `.unavailable`
+  and makes a new key only on `.notFound` with no history file (or an empty one), so a
+  failed read never replaces the key (D45). At engine start a locked history sets
+  `historyLocked`: no history path or key goes to the core, it gets `personalize: false`, and
+  the Keychain isn't asked again that run until the user chooses Try Again
+  (`AppDelegate.retryHistory`). `--keychain-selftest` checks the rules against an in-memory
+  backend and a temporary folder, never the real items or files.
 - **`Stats.swift`**: `UsageStats`, the words-saved counts: per accept, kind (Tab or
   accept-all), words, characters and keystrokes saved (characters minus the one accept key
   press). Totals plus one bucket per local day for the last 30 days, as one JSON value in
