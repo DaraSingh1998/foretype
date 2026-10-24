@@ -64,6 +64,13 @@ final class AppSettings {
         set { d.set(newValue, forKey: "midLine") }
     }
 
+    /// Word alternatives (D50, experimental, off by default): a numbered card of other words
+    /// under the caret after a pause or on Option-0.
+    var alternatives: Bool {
+        get { d.bool(forKey: "alternatives") }
+        set { d.set(newValue, forKey: "alternatives") }
+    }
+
     /// What Esc does over a suggestion: dismiss and pause the field briefly (the default),
     /// switch the app off until the user switches apps, or nothing (Esc goes to the app).
     var escBehavior: EscBehavior {
@@ -323,6 +330,7 @@ final class AppSettings {
          "only_apps": onlyApps.contains { pid_t($0) != nil } ? [] : onlyApps,
          "personalize": learning, "personalize_strength": personalizeStrength,
          "emoji": emoji, "autocorrect": autocorrect, "typo_gate": typoGate, "mid_line": midLine,
+         "alternatives": alternatives,
          "other_apps_tokens": AppSettings.otherAppsTokens]
     }
 

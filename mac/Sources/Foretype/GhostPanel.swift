@@ -30,18 +30,30 @@ private final class GhostView: NSView {
 /// Draws the suggestion as gray "ghost" text right after the caret, matching the host
 /// field's font. When the caret position is unknown it falls back to a small "mirror"
 /// card above the field, as Cotypist does for Firefox. Mid-line suggestions (text follows
-/// the caret, so inline ghost text would overlap it) use a card just below the caret.
+/// the caret, so inline ghost text would overlap it) use a card just below the caret. Word
+/// alternatives (D50) get a numbered card of their own under the suggestion (`showPicker`).
 final class GhostPanel {
     private let panel: NSPanel
     private let view = GhostView()
+    private let pickerPanel: NSPanel
+    private let pickerView = GhostView()
     private var anchor: (caret: CGRect, font: NSFont)?
+    /// Where the suggestion is drawn (global coordinates), the caret it follows (none for the
+    /// mirror card) and its font: the alternatives card goes next to it.
+    private var drawn: (rect: CGRect, caret: CGRect?, font: NSFont)?
     /// What the panel last drew: `inline`, `card` (under the caret), `mirror` (above the
     /// field), `hint` or `hidden`. For the debug log.
     private(set) var mode = "hidden"
 
     init() {
-        panel = NonActivatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
-                                   backing: .buffered, defer: true)
+        panel = GhostPanel.makePanel(view)
+        pickerPanel = GhostPanel.makePanel(pickerView)
+        pickerView.card = true
+    }
+
+    private static func makePanel(_ view: NSView) -> NSPanel {
+        let panel = NonActivatingPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                       backing: .buffered, defer: true)
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
@@ -52,9 +64,11 @@ final class GhostPanel {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .stationary]
         panel.setAccessibilityElement(false)
         panel.contentView = view
+        return panel
     }
 
     var isVisible: Bool { panel.isVisible }
+    var isPickerVisible: Bool { pickerPanel.isVisible }
 
     /// Where the panel is on screen, in global coordinates (as AppKit placed it), for the
     /// debug log; nil while hidden.
@@ -130,6 +144,7 @@ final class GhostPanel {
                 view.card = false
                 view.text = attr
                 anchor = (caretRect, baseFont)
+                drawn = (axRect, caretRect, baseFont)
                 mode = "inline"
                 place(GhostPanel.cocoaRect(fromAX: axRect))
                 return
@@ -150,6 +165,7 @@ final class GhostPanel {
         view.card = true
         view.text = attr
         anchor = nil
+        drawn = (axRect, nil, cardFont)
         mode = "mirror"
         place(GhostPanel.cocoaRect(fromAX: axRect))
     }
@@ -169,6 +185,8 @@ final class GhostPanel {
         view.card = true
         view.text = attr
         anchor = nil
+        drawn = nil
+        hidePicker()
         mode = "hint"
         place(GhostPanel.cocoaRect(fromAX: axRect))
         hintGeneration += 1
@@ -194,6 +212,7 @@ final class GhostPanel {
         view.card = true
         view.text = attr
         anchor = nil
+        drawn = (axRect, caretRect, cardFont)
         mode = "card"
         place(GhostPanel.cocoaRect(fromAX: axRect))
     }
@@ -220,7 +239,91 @@ final class GhostPanel {
 
     func hide() {
         anchor = nil
+        drawn = nil
         mode = "hidden"
+        hidePicker()
         if panel.isVisible { panel.orderOut(nil) }
+    }
+
+    // MARK: Word alternatives (D50)
+
+    /// The alternatives card: a row per alternative (`items`, as they read with the word being
+    /// typed: `PickerState.display`) numbered with the key that takes it, the word that key
+    /// inserts first set apart; with no items, a line saying there are none. It sits under the
+    /// suggestion (under the caret line, or the mid-line card), above it when that would leave
+    /// the screen, and above a mirror card, which already sits over the field. Shown only
+    /// while a suggestion is.
+    func showPicker(_ items: [String]) {
+        guard let drawn, panel.isVisible else { return hidePicker() }
+        let font = NSFont.systemFont(ofSize: min(max(drawn.font.pointSize, 12), 15))
+        let attr = GhostPanel.pickerText(items, font: font)
+        let size = attr.size()
+        let w = ceil(size.width) + pickerView.padding.width * 2
+        let h = ceil(size.height) + pickerView.padding.height * 2
+        let line = drawn.caret.map { $0.union(drawn.rect) } ?? drawn.rect
+        let display = ScreenGeometry.display(for: line, in: displayBounds())
+        let below = line.maxY + 3, above = line.minY - h - 3
+        var y = mode == "mirror" ? above : below
+        if let display {
+            if y == below, below + h > display.maxY { y = above }
+            if y == above, above < display.minY { y = below }
+        }
+        let axRect = CGRect(x: drawn.caret?.minX ?? drawn.rect.minX, y: y, width: w, height: h)
+        pickerView.text = attr
+        let rect = GhostPanel.cocoaRect(fromAX: axRect)
+        pickerPanel.setFrame(rect, display: false)
+        pickerView.frame = NSRect(origin: .zero, size: rect.size)
+        pickerView.needsDisplay = true
+        if !pickerPanel.isVisible { pickerPanel.orderFrontRegardless() }
+    }
+
+    func hidePicker() {
+        if pickerPanel.isVisible { pickerPanel.orderOut(nil) }
+    }
+
+    /// Where the alternatives card is (global coordinates), for the debug log; nil while hidden.
+    var pickerFrame: CGRect? {
+        pickerPanel.isVisible ? ScreenGeometry.globalRect(fromCocoa: pickerPanel.frame, primaryHeight: ScreenGeometry.primaryHeight()) : nil
+    }
+
+    /// The alternatives card as a PNG, as `showPicker` draws it (`--alternatives-selftest DIR`).
+    static func pickerPNG(_ items: [String], fontSize: CGFloat, dark: Bool) -> Data? {
+        let view = GhostView()
+        view.card = true
+        let appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+        view.appearance = appearance
+        var data: Data?
+        (appearance ?? NSAppearance.currentDrawing()).performAsCurrentDrawingAppearance {
+            let attr = pickerText(items, font: .systemFont(ofSize: fontSize))
+            let size = attr.size()
+            view.text = attr
+            view.frame = NSRect(x: 0, y: 0, width: ceil(size.width) + view.padding.width * 2,
+                                height: ceil(size.height) + view.padding.height * 2)
+            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+            view.cacheDisplay(in: view.bounds, to: rep)
+            data = rep.representation(using: .png, properties: [:])
+        }
+        return data
+    }
+
+    /// The card's rows: "⌥1  word rest", the key faint, the word it takes first in full color.
+    static func pickerText(_ items: [String], font: NSFont) -> NSAttributedString {
+        let rows = NSMutableAttributedString()
+        let para = NSMutableParagraphStyle()
+        para.lineSpacing = 2
+        let faint = NSColor.tertiaryLabelColor, rest = NSColor.secondaryLabelColor
+        let keyFont = NSFont.monospacedDigitSystemFont(ofSize: font.pointSize * 0.85, weight: .regular)
+        guard !items.isEmpty else {
+            return NSAttributedString(string: L("No alternatives"), attributes: [.font: font, .foregroundColor: rest])
+        }
+        for (i, item) in items.enumerated() {
+            if i > 0 { rows.append(NSAttributedString(string: "\n")) }
+            rows.append(NSAttributedString(string: "\u{2325}\(i + 1)  ", attributes: [.font: keyFont, .foregroundColor: faint]))
+            let first = PickerState.firstWord(item)
+            rows.append(NSAttributedString(string: String(first), attributes: [.font: font, .foregroundColor: NSColor.labelColor]))
+            rows.append(NSAttributedString(string: String(item[first.endIndex...]), attributes: [.font: font, .foregroundColor: rest]))
+        }
+        rows.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: rows.length))
+        return rows
     }
 }

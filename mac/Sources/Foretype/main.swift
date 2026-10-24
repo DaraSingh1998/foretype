@@ -37,6 +37,11 @@ if let i = CommandLine.arguments.firstIndex(of: "--settings-selftest") {
 if CommandLine.arguments.contains("--esc-selftest") {
     exit(EscState.selfTest() ? 0 : 1)
 }
+// --alternatives-selftest [DIR]: the picker's state logic; DIR gets the card as PNGs.
+if let i = CommandLine.arguments.firstIndex(of: "--alternatives-selftest") {
+    let next = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
+    exit(PickerState.selfTest(dir: next.flatMap { $0.hasPrefix("-") ? nil : $0 }) ? 0 : 1)
+}
 if CommandLine.arguments.contains("--pause-selftest") {
     exit(PauseState.selfTest() ? 0 : 1)
 }

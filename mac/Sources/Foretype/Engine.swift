@@ -4,7 +4,10 @@ import Foundation
 enum EngineEvent {
     /// `replace`: text before the caret an accept deletes first (emoji, autocorrect), with
     /// `label` saying what it stands for; for a `details` fill, `label` names the detail.
-    case suggestion(revision: UInt64, text: String, source: String, ms: Double?, replace: String, label: String)
+    /// `alternatives`: word alternatives (D50), other phrases for the same text, each with its
+    /// own first word; source `alternatives` answers `requestAlternatives` (same text).
+    case suggestion(revision: UInt64, text: String, source: String, ms: Double?, replace: String, label: String,
+                    alternatives: [String])
     case status(state: String, detail: String)
 }
 
@@ -46,7 +49,8 @@ final class EngineBridge {
                                  source: o["source"] as? String ?? "",
                                  ms: (o["ms"] as? NSNumber)?.doubleValue,
                                  replace: o["replace"] as? String ?? "",
-                                 label: o["label"] as? String ?? ""))
+                                 label: o["label"] as? String ?? "",
+                                 alternatives: o["alternatives"] as? [String] ?? []))
         case "status":
             onEvent?(.status(state: o["state"] as? String ?? "", detail: o["detail"] as? String ?? ""))
         default:
@@ -71,6 +75,23 @@ final class EngineBridge {
         guard let data = String(cString: raw).data(using: .utf8),
               let o = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
         return (o["insert"] ?? "", o["remaining"] ?? "", o["replace"] ?? "")
+    }
+
+    /// Takes the next word of alternative `index` (0 for Option-1), which becomes the
+    /// suggestion; nil when there is no such alternative.
+    func acceptAlternative(_ index: Int) -> (insert: String, remaining: String, replace: String)? {
+        guard let handle, let raw = ft_engine_accept_alternative(handle, Int32(index)) else { return nil }
+        defer { ft_string_free(raw) }
+        guard let data = String(cString: raw).data(using: .utf8),
+              let o = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return nil }
+        return (o["insert"] ?? "", o["remaining"] ?? "", o["replace"] ?? "")
+    }
+
+    /// Asks for alternatives to the suggestion showing for `snap` (the latest snapshot): the
+    /// answer is a `.suggestion` event with source `alternatives`, at once or after a search.
+    func requestAlternatives(_ snap: FieldSnapshot) {
+        guard let handle else { return }
+        ft_engine_alternatives(handle, snap.coreJSON())
     }
 
     func dismiss(fieldKey: UInt64, textBefore: String) {

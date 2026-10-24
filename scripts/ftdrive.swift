@@ -4,7 +4,7 @@
 // was frontmost at the start does not come back within 2 s.
 //
 // usage: ftdrive type TEXT [interval_ms]
-//        ftdrive key tab|esc|opt-tab|accept-all|cmd-down|return|force|snooze|ctrl-c
+//        ftdrive key tab|esc|opt-tab|accept-all|cmd-down|return|force|snooze|ctrl-c|opt-0…opt-3
 //        ftdrive front   (prints the frontmost app's bundle ID)
 //        ftdrive front-pid (prints the frontmost app's pid)
 //        ftdrive raise PID (makes that process frontmost through AXFrontmost)
@@ -187,6 +187,11 @@ case "key":
     case "force": post(iso ? 10 : 50, flags: .maskControl)
     case "snooze": post(iso ? 10 : 50, flags: [.maskControl, .maskAlternate, .maskCommand])
     case "ctrl-c": post(8, flags: .maskControl)
+    // The number row's 0 to 3 with Option (word alternatives, D50).
+    case "opt-0": post(29, flags: .maskAlternate)
+    case "opt-1": post(18, flags: .maskAlternate)
+    case "opt-2": post(19, flags: .maskAlternate)
+    case "opt-3": post(20, flags: .maskAlternate)
     default: exit(2)
     }
 case "windows" where args.count == 3:
