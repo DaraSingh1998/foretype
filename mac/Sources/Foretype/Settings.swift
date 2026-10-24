@@ -64,6 +64,13 @@ final class AppSettings {
         set { d.set(newValue, forKey: "midLine") }
     }
 
+    /// What Esc does over a suggestion: dismiss and pause the field briefly (the default),
+    /// switch the app off until the user switches apps, or nothing (Esc goes to the app).
+    var escBehavior: EscBehavior {
+        get { d.string(forKey: "escBehavior").flatMap(EscBehavior.init(rawValue:)) ?? .pauseField }
+        set { d.set(newValue.rawValue, forKey: "escBehavior") }
+    }
+
     /// The note for every app: the default one until the user saves their own (an empty one
     /// too). Saving the default text again goes back to following the defaults, which may
     /// change in later versions.
@@ -261,8 +268,30 @@ final class AppSettings {
         d.set(own, forKey: "appInstructions")
     }
 
+    /// Extra instructions per website, added after the app's: keyed by host ("mail.google.com")
+    /// or by "*." and a domain for all its pages ("*.google.com"; `Site`). None by default.
+    var siteInstructions: [String: String] {
+        siteInstructionsForTesting ?? d.dictionary(forKey: "siteInstructions") as? [String: String] ?? [:]
+    }
+
+    /// --settings-selftest: website notes to show instead of the saved ones (never saved).
+    var siteInstructionsForTesting: [String: String]?
+
+    /// Saves a website's note; an empty one removes it.
+    func setSiteInstructions(_ text: String, for key: String) {
+        var sites = siteInstructions
+        sites[key] = text.isEmpty ? nil : text
+        if siteInstructionsForTesting != nil {
+            siteInstructionsForTesting = sites
+        } else if sites.isEmpty {
+            d.removeObject(forKey: "siteInstructions")
+        } else {
+            d.set(sites, forKey: "siteInstructions")
+        }
+    }
+
     var instructionsAreDefault: Bool {
-        d.object(forKey: "instructions") == nil && ownAppInstructions.isEmpty
+        d.object(forKey: "instructions") == nil && ownAppInstructions.isEmpty && siteInstructions.isEmpty
     }
 
     var modelPath: String? {
@@ -287,7 +316,8 @@ final class AppSettings {
     var coreDict: [String: Any] {
         ["length_words": lengthWords, "stop_at_sentence_end": stopAtSentenceEnd,
          "instructions": instructions,
-         "app_instructions": appInstructions, "disabled_apps": disabledApps, "enabled_apps": enabledApps,
+         "app_instructions": appInstructions, "site_instructions": siteInstructions,
+         "disabled_apps": disabledApps, "enabled_apps": enabledApps,
          // The core filters by bundle ID and can't express a pid entry; then the tracker, which
          // never reads an app this list rejects, is the only filter.
          "only_apps": onlyApps.contains { pid_t($0) != nil } ? [] : onlyApps,

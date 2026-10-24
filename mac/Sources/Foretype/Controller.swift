@@ -33,6 +33,9 @@ final class Controller {
     /// Apps paused on their own (Ctrl+Opt+Cmd + key above Tab, the menu's Pause in X), and
     /// until when; `Date.distantFuture` is until the app quits.
     private(set) var snoozed: [String: Date] = [:]
+    /// What Esc left quiet: a field for a few seconds, or an app until the user switches apps
+    /// (Settings ▸ Typing). Under `lock`.
+    private var esc = EscState()
     /// Everything stopped (`setPaused`). Read on the AX thread under `lock`.
     private var paused = false
     /// Main thread: what `setPaused` last applied.
@@ -41,6 +44,7 @@ final class Controller {
     /// applied with `applySettings` or `setPaused`.
     var saveEnergy = false
     private var quitObserver: NSObjectProtocol?
+    private var activateObserver: NSObjectProtocol?
 
     private let lock = NSLock()
     private var latest = FieldSnapshot()
@@ -105,6 +109,19 @@ final class Controller {
             if self.snoozed[bundle] == .distantFuture { self.snoozed[bundle] = nil }
             self.lock.unlock()
         }
+        // An app Esc switched off is on again once another app comes to the front (not
+        // Foretype's own windows).
+        let me = ProcessInfo.processInfo.processIdentifier
+        activateObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+                  app.processIdentifier != me else { return }
+            self.lock.lock()
+            self.esc.appActivated(app.bundleIdentifier)
+            self.lock.unlock()
+        }
+        keys.escBehavior = settings.escBehavior
         isPaused = paused
         self.paused = paused
         screen.enabled = screenEnabled
@@ -126,6 +143,7 @@ final class Controller {
         lock.lock()
         paused = on
         forcedField = 0
+        esc.reset()
         if on { latest = FieldSnapshot() }
         lock.unlock()
         if on {
@@ -197,6 +215,13 @@ final class Controller {
         return latest
     }
 
+    /// The app and page URL of the last field read (never one of Foretype's own windows), for
+    /// the Custom Instructions window's website note.
+    var lastField: (bundleId: String, url: String) {
+        let s = latestSnapshot
+        return (s.bundleId, s.url)
+    }
+
     private func rule(_ bundleId: String) -> [String: Any] {
         lock.lock()
         if let r = rules[bundleId] { lock.unlock(); return r }
@@ -231,8 +256,18 @@ final class Controller {
         s.force = forcedField != 0
         latest = s
         lock.unlock()
-        if isSnoozed(s.bundleId) {
+        lock.lock()
+        let quiet = s.force ? nil : esc.quiet(fieldKey: s.fieldKey, bundleId: s.bundleId, now: Date())
+        lock.unlock()
+        if isSnoozed(s.bundleId) || quiet == .app {
             DispatchQueue.main.async { [weak self] in self?.hide() }
+            return
+        }
+        if quiet == .field {
+            // Esc's pause in this field: the core still sees the text (personalization) but
+            // finds it dismissed and answers with nothing.
+            engine.dismiss(fieldKey: s.fieldKey, textBefore: s.textBefore)
+            engine.submit(s)
             return
         }
         // Never hand a secure field's text to the spell checker.
@@ -418,8 +453,14 @@ final class Controller {
             }
         case .dismiss:
             let snap = latestSnapshot
+            let behavior = keys.escBehavior
             engine.dismiss(fieldKey: snap.fieldKey, textBefore: snap.textBefore)
+            lock.lock()
+            esc.dismissed(behavior, fieldKey: snap.fieldKey, bundleId: snap.bundleId, now: Date())
+            lock.unlock()
             hide()
+            Log.debug(behavior == .offInApp ? "Esc: off in \(snap.appName) until another app comes to the front"
+                : "Esc: field paused for \(Int(EscState.fieldPause)) s")
         case .passTab:
             hide()
             Inserter.press(key: 48)
@@ -443,7 +484,7 @@ final class Controller {
         case .forceSuggest:
             guard snap.fieldKey != 0 else { return }
             let line = snap.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
-            lock.lock(); forcedField = snap.fieldKey; forcedLine = line; snoozed[snap.bundleId] = nil; lock.unlock()
+            lock.lock(); forcedField = snap.fieldKey; forcedLine = line; snoozed[snap.bundleId] = nil; esc.reset(); lock.unlock()
             Log.debug("force suggestions in \(snap.appName)")
             tracker.forceRead()
         case .snoozeApp:
@@ -459,8 +500,18 @@ final class Controller {
         hide()
     }
 
+    /// Resumes an app paused from the menu or the hotkey, or switched off by Esc.
     func unsnooze(_ bundleId: String) {
-        lock.lock(); snoozed[bundleId] = nil; lock.unlock()
+        lock.lock()
+        snoozed[bundleId] = nil
+        if esc.offApp == bundleId { esc.reset() }
+        lock.unlock()
+    }
+
+    /// The app Esc switched off until the user switches apps (`EscBehavior.offInApp`).
+    var escOffApp: String? {
+        lock.lock(); defer { lock.unlock() }
+        return esc.offApp
     }
 
     /// Settings plus runtime state (pause, power) as the core's JSON.
@@ -484,6 +535,11 @@ final class Controller {
     }
 
     func applySettings() {
+        let escBehavior = settings.escBehavior
+        if keys.escBehavior != escBehavior {
+            keys.escBehavior = escBehavior
+            lock.lock(); esc.reset(); lock.unlock()
+        }
         screen.enabled = screenEnabled
         updatePool()
         engine.configure(coreSettingsJSON())

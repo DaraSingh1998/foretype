@@ -534,6 +534,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
                 s.target = self
                 s.representedObject = bundle
                 menu.addItem(s)
+            } else if controller?.escOffApp == bundle {
+                // Esc switched it off (Settings ▸ Typing) until another app comes to the front.
+                let s = NSMenuItem(title: L("Off in %@ until you switch apps \u{2014} Resume", name), action: #selector(unsnooze(_:)),
+                                   keyEquivalent: "")
+                s.target = self
+                s.representedObject = bundle
+                menu.addItem(s)
             } else if on, controller != nil {
                 let appPause = NSMenuItem(title: L("Pause in %@", name), action: nil, keyEquivalent: "")
                 let am = NSMenu()
@@ -1212,14 +1219,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, Prefer
         preferences?.refresh()
     }
 
+    /// The notes for all apps, for the app the user was last in and, when its last field was on
+    /// a web page, for that website.
     func openInstructions() {
         let bundle = lastFrontApp?.bundleIdentifier
-        let w = InstructionsWindowController(global: settings.instructions, appName: lastFrontApp?.localizedName,
-                                             appBundle: bundle, appText: bundle.flatMap { settings.appInstructions[$0] } ?? "")
-        w.onSave = { [weak self] global, appText, bundle in
+        var sites: InstructionsWindowController.Sites?
+        if let field = controller?.lastField, field.bundleId == bundle, let site = Site.of(url: field.url) {
+            sites = .page(site, texts: settings.siteInstructions.filter { site.keys.contains($0.key) })
+        }
+        showInstructions(InstructionsWindowController(global: settings.instructions, appName: lastFrontApp?.localizedName, appBundle: bundle,
+                                                      appText: bundle.flatMap { settings.appInstructions[$0] } ?? "", sites: sites))
+    }
+
+    func editSiteInstructions(_ key: String) {
+        showInstructions(InstructionsWindowController(global: nil, appName: nil, appBundle: nil, appText: "",
+                                                      sites: .key(key, text: settings.siteInstructions[key] ?? "")))
+    }
+
+    private func showInstructions(_ w: InstructionsWindowController) {
+        w.onSave = { [weak self] saved in
             guard let self else { return }
-            self.settings.instructions = global
-            if let bundle { self.settings.setAppInstructions(appText, for: bundle) }
+            if let global = saved.global { self.settings.instructions = global }
+            if let app = saved.app { self.settings.setAppInstructions(app.text, for: app.bundle) }
+            for (key, text) in saved.sites { self.settings.setSiteInstructions(text, for: key) }
             self.settingsChanged()
         }
         instructionsWindow = w

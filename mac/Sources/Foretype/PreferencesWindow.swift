@@ -16,6 +16,8 @@ protocol PreferencesHost: AnyObject {
     func historyStats() -> (records: Int, words: Int)?
     func confirmDeleteHistory()
     func openInstructions()
+    /// Edits one website's note (Settings ▸ Personalization), by its key (`Site`).
+    func editSiteInstructions(_ key: String)
     func openScreenRecordingSettings()
     func isModelInUse(_ path: String) -> Bool
     func useModelFile(_ path: String)
@@ -673,10 +675,12 @@ final class TypingPane: PreferencesPane {
     private let autocorrect = NSButton(checkboxWithTitle: L("Offer a fix for a misspelled word"), target: nil, action: nil)
     private let typoGate = NSButton(checkboxWithTitle: L("Wait while a word looks misspelled"), target: nil, action: nil)
     private let midLine = NSButton(checkboxWithTitle: L("Suggest in the middle of a line (experimental)"), target: nil, action: nil)
+    private let esc = NSPopUpButton()
 
     override func build() {
         length.addItems(withTitles: AppSettings.lengthPresets.map(\.name))
-        for c in [length, sentenceEnd, emoji, autocorrect, typoGate, midLine] as [NSControl] {
+        esc.addItems(withTitles: EscBehavior.allCases.map(\.title))
+        for c in [length, sentenceEnd, emoji, autocorrect, typoGate, midLine, esc] as [NSControl] {
             c.target = self
             c.action = #selector(changed(_:))
         }
@@ -692,10 +696,14 @@ final class TypingPane: PreferencesPane {
             [NSGridCell.emptyContentView, Self.note(L("Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before."), width: w)],
             [NSGridCell.emptyContentView, midLine],
             [NSGridCell.emptyContentView, Self.note(L("Up to three words, shown in a small card under the caret."), width: w)],
+            [Self.formLabel(L("Esc:")), esc],
+            [NSGridCell.emptyContentView, Self.note(L("A pause keeps that field free of suggestions for %@ seconds. With no suggestion showing, Esc always goes to the app.",
+                                                      formatNumber(Int(EscState.fieldPause))), width: w)],
         ])
+        grid.row(at: 10).topPadding = 8
         add(grid, spacingAfter: 18)
         add(Self.separator())
-        add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere.")))
+        add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere.")))
     }
 
     override func refresh() {
@@ -706,6 +714,7 @@ final class TypingPane: PreferencesPane {
         autocorrect.state = s.autocorrect ? .on : .off
         typoGate.state = s.typoGate ? .on : .off
         midLine.state = s.midLine ? .on : .off
+        esc.selectItem(at: EscBehavior.allCases.firstIndex(of: s.escBehavior) ?? 0)
     }
 
     @objc private func changed(_ sender: NSControl) {
@@ -718,6 +727,7 @@ final class TypingPane: PreferencesPane {
         case autocorrect: s.autocorrect = autocorrect.state == .on
         case typoGate: s.typoGate = typoGate.state == .on
         case midLine: s.midLine = midLine.state == .on
+        case esc: s.escBehavior = EscBehavior.allCases[max(0, esc.indexOfSelectedItem)]
         default: return
         }
         host.settingsChanged()
@@ -866,6 +876,8 @@ final class PersonalizationPane: PreferencesPane {
     private let retry = NSButton(title: L("Try Again"), target: nil, action: nil)
     private var lockedRow: NSGridRow?
     private var lockedNote: NSTextField?
+    private let sites = AppList(minHeight: 36, maxHeight: 132)
+    private let noSites = PreferencesPane.note(L("No notes for single websites yet."))
 
     override func build() {
         learn.target = self
@@ -885,9 +897,12 @@ final class PersonalizationPane: PreferencesPane {
         let w: CGFloat = 400
         let note = Self.note(host?.settings.historyLockedNote ?? "", width: w)
         lockedNote = note
+        sites.widthAnchor.constraint(equalToConstant: w).isActive = true
         let grid = Self.form([
             [Self.formLabel(L("Instructions:")), Self.hstack([edit, instructionsSummary])],
-            [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps and for the app you were last in."), width: w)],
+            [NSGridCell.emptyContentView, Self.note(L("A note about you and how you write, for all apps, for the app you were last in and for the website you were on."), width: w)],
+            [Self.formLabel(L("Websites:")), sites],
+            [NSGridCell.emptyContentView, Self.note(L("Added after the app's note on that website. To add one, click into a field on the page, then choose Custom Instructions\u{2026} in the Foretype menu."), width: w)],
             [Self.formLabel(L("Your writing:")), learn],
             [NSGridCell.emptyContentView, Self.note(L("Off by default. Only fields where you accepted a suggestion are kept, only the text you typed there, at least 20 characters, never secure fields. Stored encrypted on this Mac (key in your Keychain); nothing leaves it."), width: w)],
             [Self.formLabel(L("Strength:")), strength],
@@ -897,9 +912,46 @@ final class PersonalizationPane: PreferencesPane {
             [NSGridCell.emptyContentView, Self.hstack([importButton, delete, retry])],
             [NSGridCell.emptyContentView, Self.note(L("Import adds text files you choose (.txt, .md), split into paragraphs, to learn your words."), width: w)],
         ])
-        grid.row(at: 2).topPadding = 8
-        lockedRow = grid.row(at: 7)
+        grid.row(at: 2).rowAlignment = .none
+        grid.cell(atColumnIndex: 0, rowIndex: 2).yPlacement = .top
+        grid.row(at: 4).topPadding = 8
+        lockedRow = grid.row(at: 9)
         add(grid)
+    }
+
+    /// One website's note: the site, the start of the note, Edit… and Remove.
+    private func siteRow(key: String, note: String) -> NSView {
+        let icon = NSImageView(image: NSImage(systemSymbolName: "globe", accessibilityDescription: nil)!)
+        icon.contentTintColor = .secondaryLabelColor
+        icon.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        let title = NSTextField(labelWithString: Site.describe(key))
+        title.lineBreakMode = .byTruncatingMiddle
+        let excerpt = NSTextField(labelWithString: note.replacingOccurrences(of: "\n", with: " "))
+        excerpt.font = .systemFont(ofSize: 10)
+        excerpt.textColor = .tertiaryLabelColor
+        excerpt.lineBreakMode = .byTruncatingTail
+        let names = NSStackView(views: [title, excerpt])
+        names.orientation = .vertical
+        names.alignment = .leading
+        names.spacing = 1
+        names.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        for l in [title, excerpt] { l.setContentCompressionResistancePriority(.defaultLow, for: .horizontal) }
+        let edit = ActionButton.make(L("Edit\u{2026}")) { [weak self] in self?.host?.editSiteInstructions(key) }
+        let remove = ActionButton.make(L("Remove")) { [weak self] in
+            guard let host = self?.host else { return }
+            host.settings.setSiteInstructions("", for: key)
+            host.settingsChanged()
+        }
+        for b in [edit, remove] { b.controlSize = .small }
+        remove.toolTip = L("Remove the note for %@", Site.describe(key))
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [icon, names, spacer, edit, remove])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.edgeInsets = NSEdgeInsets(top: 5, left: 8, bottom: 5, right: 8)
+        return row
     }
 
     override func refresh() {
@@ -911,6 +963,10 @@ final class PersonalizationPane: PreferencesPane {
         if s.instructionsAreDefault && !global.isEmpty { summary = L("Default: %@", summary) }
         if apps > 0 { summary += ", " + LCount(apps, "notes for %@ apps", one: "notes for %@ app") }
         instructionsSummary.stringValue = summary
+        // Hosts before whole domains, each alphabetically.
+        let keys = s.siteInstructions.keys.sorted { (Site.isDomainKey($0) ? 1 : 0, $0) < (Site.isDomainKey($1) ? 1 : 0, $1) }
+        noSites.preferredMaxLayoutWidth = 380
+        sites.setRows(keys.map { siteRow(key: $0, note: s.siteInstructions[$0] ?? "") }, empty: noSites)
         learn.state = s.personalize ? .on : .off
         strength.selectedSegment = min(max(s.personalizeStrength, 0), 2)
         strength.isEnabled = s.personalize

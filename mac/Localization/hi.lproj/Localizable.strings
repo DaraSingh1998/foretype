@@ -54,6 +54,7 @@
 "Ctrl-Option-Command + the key above Tab: 5 minutes" = "Ctrl-Option-Command + Tab के ऊपर वाली कुंजी: 5 मिनट";
 "Paused in %1$@ until %2$@ — Resume" = "%1$@ में %2$@ तक पॉज़ है — जारी रखें";
 "Paused in %@ until it quits — Resume" = "%@ में उसके बंद होने तक पॉज़ है — जारी रखें";
+"Off in %@ until you switch apps — Resume" = "दूसरे ऐप पर जाने तक %@ में बंद है — जारी रखें";
 "Personalization" = "वैयक्तिकरण";
 "Learn From My Writing" = "मेरे लेखन से सीखें";
 "%1$@, %2$@ learned" = "सीखे गए: %1$@, %2$@";
@@ -137,6 +138,11 @@
 "Who you are and how you write, for example “I'm a product manager. Keep it friendly and short; British spelling.”" = "आप कौन हैं और कैसे लिखते हैं, जैसे “मैं प्रोडक्ट मैनेजर हूँ। लहजा दोस्ताना और बात छोटी रखें; ब्रिटिश वर्तनी।”";
 "For %@" = "%@ के लिए";
 "Added after the note above whenever you type in %@." = "जब भी आप %@ में टाइप करते हैं, यह ऊपर वाले नोट के बाद जोड़ा जाता है।";
+"For this website" = "इस वेबसाइट के लिए";
+"Applies to:" = "किस पर लागू:";
+"Added after the notes above whenever you type on this website." = "जब भी आप इस वेबसाइट पर टाइप करते हैं, यह ऊपर वाले नोट्स के बाद जोड़ा जाता है।";
+"Added after the notes for all apps and for the app whenever you type on this website." = "जब भी आप इस वेबसाइट पर टाइप करते हैं, यह सभी ऐप्स वाले और ऐप वाले नोट के बाद जोड़ा जाता है।";
+"All of %@" = "पूरी %@ साइट";
 
 /* Model downloads (ModelManager.swift) */
 "Only model files in the Models folder can be deleted here." = "यहाँ केवल मॉडल फ़ोल्डर की मॉडल फ़ाइलें डिलीट की जा सकती हैं।";
@@ -206,6 +212,11 @@
 "Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before." = "दोनों आपकी भाषाओं में macOS की वर्तनी जाँच का उपयोग करते हैं, और नाम, संक्षिप्त रूप और आपके पहले लिखे शब्द छोड़ देते हैं।";
 "Suggest in the middle of a line (experimental)" = "पंक्ति के बीच में भी सुझाव दें (प्रायोगिक)";
 "Up to three words, shown in a small card under the caret." = "अधिकतम तीन शब्द, कर्सर के नीचे एक छोटे कार्ड में।";
+"Esc:" = "Esc:";
+"Dismiss and pause in this field briefly" = "हटाएँ और इस फ़ील्ड में थोड़ी देर रुकें";
+"Turn suggestions off in this app until I switch apps" = "दूसरे ऐप पर जाने तक इस ऐप में सुझाव बंद करें";
+"Leave Esc alone" = "Esc को न छुएँ";
+"A pause keeps that field free of suggestions for %@ seconds. With no suggestion showing, Esc always goes to the app." = "रुकने पर उस फ़ील्ड में %@ सेकंड तक कोई सुझाव नहीं आता। जब कोई सुझाव नहीं दिख रहा हो, तब Esc हमेशा ऐप को जाता है।";
 
 /* Settings ▸ Context */
 "Screen context:" = "स्क्रीन संदर्भ:";
@@ -218,11 +229,15 @@
 "Your writing:" = "आपका लेखन:";
 "Instructions:" = "निर्देश:";
 "Edit…" = "संपादित करें…";
-"A note about you and how you write, for all apps and for the app you were last in." = "आपके और आपकी लेखन-शैली के बारे में एक नोट, सभी ऐप्स के लिए और उस ऐप के लिए जिसमें आप पिछली बार थे।";
+"A note about you and how you write, for all apps, for the app you were last in and for the website you were on." = "आपके और आपकी लेखन-शैली के बारे में एक नोट: सभी ऐप्स के लिए, उस ऐप के लिए जिसमें आप पिछली बार थे, और उस वेबसाइट के लिए जिस पर आप थे।";
+"Websites:" = "वेबसाइटें:";
+"No notes for single websites yet." = "अभी किसी वेबसाइट के लिए कोई नोट नहीं।";
+"Added after the app's note on that website. To add one, click into a field on the page, then choose Custom Instructions… in the Foretype menu." = "उस वेबसाइट पर ऐप वाले नोट के बाद जोड़ा जाता है। नया जोड़ने के लिए पेज के किसी फ़ील्ड में क्लिक करें, फिर Foretype मेनू में कस्टम निर्देश… चुनें।";
+"Remove the note for %@" = "%@ का नोट हटाएँ";
 "No note for all apps" = "सभी ऐप्स के लिए कोई नोट नहीं";
 "Default: %@" = "डिफ़ॉल्ट: %@";
 "Restore Defaults" = "डिफ़ॉल्ट वापस लाएँ";
-"Tab takes the next word, the key above Tab takes the whole suggestion, Esc dismisses it and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere." = "Tab अगला शब्द लेता है, Tab के ऊपर वाली कुंजी पूरा सुझाव लेती है, Esc उसे हटा देता है और Option-Tab असली Tab टाइप करता है। Ctrl + Tab के ऊपर वाली कुंजी वहाँ भी सुझाव देती है जहाँ Foretype आमतौर पर चुप रहता है; Ctrl-Option-Command + वही कुंजी मौजूदा ऐप में Foretype को 5 मिनट के लिए पॉज़ करती है। हर जगह पॉज़ करने या जारी रखने के लिए मेनू बार आइकन पर Option-क्लिक करें।";
+"Tab takes the next word, the key above Tab takes the whole suggestion and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere." = "Tab अगला शब्द लेता है, Tab के ऊपर वाली कुंजी पूरा सुझाव लेती है और Option-Tab असली Tab टाइप करता है। Ctrl + Tab के ऊपर वाली कुंजी वहाँ भी सुझाव देती है जहाँ Foretype आमतौर पर चुप रहता है; Ctrl-Option-Command + वही कुंजी मौजूदा ऐप में Foretype को 5 मिनट के लिए पॉज़ करती है। हर जगह पॉज़ करने या जारी रखने के लिए मेनू बार आइकन पर Option-क्लिक करें।";
 
 /* Suggestion lengths and personalization strengths (Settings.swift) */
 "Short (2 words)" = "छोटा (2 शब्द)";
