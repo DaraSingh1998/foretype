@@ -174,7 +174,7 @@ fn header_parts(input: &ContextInput) -> (String, usize) {
     if !place.is_empty() {
         h.push_str(&format!("[Written in {place}]\n"));
     }
-    let notes = truncate_chars(input.instructions.trim(), 400);
+    let notes = truncate_chars(input.instructions.trim(), crate::instructions::NOTES_CAP);
     if !notes.is_empty() {
         h.push_str(&format!("[Writer's notes: {notes}]\n"));
     }

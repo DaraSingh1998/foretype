@@ -6,7 +6,8 @@ import AppKit
 /// with their rows and may scroll), a pane taller than the screen scrolls inside a window
 /// that stays clear of the menu bar and the Dock, on a display above the main one too, and
 /// the toolbar shows every tab. The Context pane is checked in each state of "Use text from
-/// other apps", and the setup window must fit too. With DIR, writes each pane as
+/// other apps", Personalization with website notes, and the setup and Custom Instructions
+/// windows must fit too. With DIR, writes each pane as
 /// DIR/<n>-<pane>-light.png and -dark.png (and setup.png). Run the bundled binary with
 /// `-AppleLanguages '(hi)'` to check Hindi.
 enum PreferencesSelfTest {
@@ -177,6 +178,56 @@ enum PreferencesSelfTest {
         }
         ContextPool.smallMemoryForTesting = false
 
+        // Website notes in Settings ▸ Personalization (shown, never saved): their list and its
+        // note still fit.
+        host.settings.siteInstructionsForTesting = [
+            "mail.google.com": "Short replies; sign off with \u{201C}Best\u{201D}.", "*.google.com": "Plain words, no jargon.",
+            "github.com": "Technical and precise; Markdown for code.",
+        ]
+        if let i = prefs.panes.firstIndex(where: { $0 is PersonalizationPane }) {
+            prefs.panes[i].refresh()
+            tabs.selectedTabViewItemIndex = i
+            tabs.fit(animated: false)
+            print(String(format: "Personalization (3 website notes): %.0f pt", prefs.panes[i].contentHeight))
+            check(inside(screen) && !prefs.panes[i].scrolls, "Personalization (website notes): scrolls on a 13-inch MacBook Air")
+            if let dir {
+                let path = "\(dir)/\(i + 1)-Personalization-websites.png"
+                check((try? prefs.panes[i].png(dark: false)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+            }
+        }
+        host.settings.siteInstructionsForTesting = nil
+
+        // The Custom Instructions window with all three notes (the website's with its popup:
+        // the host or the whole domain), and on one website's note from Settings.
+        let site = Site(host: "mail.google.com", domain: "google.com")
+        check(Site.of(url: "https://www.Mail.Google.com:443/mail/u/0/#inbox") == site, "Site.of: \(String(describing: Site.of(url: "https://mail.google.com/")))")
+        check(Site.of(url: "file:///Users/me/notes.html") == nil && Site.of(url: "") == nil, "Site.of: a page that isn't http(s)")
+        check(site.keys == ["mail.google.com", "*.google.com"] && Site(host: "google.com", domain: "google.com").keys == ["google.com", "*.google.com"]
+              && Site(host: "10.0.0.2", domain: "10.0.0.2").keys == ["10.0.0.2"], "Site.keys")
+        check(Site.describe("*.google.com") == L("All of %@", "google.com") && Site.describe("mail.google.com") == "mail.google.com", "Site.describe")
+        let windows = [
+            ("instructions", InstructionsWindowController(global: DefaultInstructions.shared.global, appName: "Google Chrome",
+                                                          appBundle: "com.google.Chrome", appText: "", sites: .page(site, texts: [:]))),
+            ("instructions-website", InstructionsWindowController(global: nil, appName: nil, appBundle: nil, appText: "",
+                                                                  sites: .key("*.google.com", text: "Plain words, no jargon."))),
+        ]
+        for (name, w) in windows {
+            guard let win = w.window, let c = win.contentView else { continue }
+            let h = w.contentHeight
+            let frameChrome = win.frame.height - c.frame.height
+            print(String(format: "%@ window: %.0f pt of %.0f (content %.0f)", name, h, air13.height - frameChrome, c.frame.height))
+            check(h <= air13.height - frameChrome, "\(name) window \(h) pt doesn't fit a 13-inch MacBook Air")
+            check(c.frame.height + 0.5 >= h, "\(name) window content \(c.frame.height) pt cuts off rows of \(h)")
+            let wide = c.subviews.first.map { $0.fittingSize.width } ?? 0
+            check(wide <= c.frame.width + 0.5, "\(name) window rows \(wide) pt wider than \(c.frame.width)")
+            if let dir {
+                for dark in [false, true] {
+                    let path = "\(dir)/\(name)-\(dark ? "dark" : "light").png"
+                    check((try? PreferencesPane.png(of: c, dark: dark)?.write(to: URL(fileURLWithPath: path))) != nil, "writing \(path)")
+                }
+            }
+        }
+
         // The setup window, with its optional mention of other apps' text.
         let setup = OnboardingWindowController(models: host.models, settings: host.settings)
         if let w = setup.window, let c = w.contentView {
@@ -235,6 +286,7 @@ private final class StandInHost: PreferencesHost {
     func historyStats() -> (records: Int, words: Int)? { nil }
     func confirmDeleteHistory() {}
     func openInstructions() {}
+    func editSiteInstructions(_ key: String) {}
     func openScreenRecordingSettings() {}
     func isModelInUse(_ path: String) -> Bool { false }
     func useModelFile(_ path: String) {}

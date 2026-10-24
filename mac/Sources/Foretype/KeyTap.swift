@@ -13,7 +13,8 @@ enum KeyAction {
 /// Two session event taps on one dedicated thread (Cotabby's design):
 /// - a permanent listen-only tap that notices typing and can never stall input;
 /// - a consuming tap that is enabled only while a suggestion is visible and swallows
-///   Tab (next word), the key above Tab (everything) and Esc (dismiss).
+///   Tab (next word), the key above Tab (everything) and Esc (dismiss, unless the user chose
+///   to leave Esc alone: `escBehavior`).
 /// Callbacks never block and never call Accessibility.
 final class KeyTap {
     /// Tap thread: the user pressed a key (not one of ours).
@@ -40,6 +41,13 @@ final class KeyTap {
     private var isVisible: Bool {
         lock.lock(); defer { lock.unlock() }
         return visible
+    }
+
+    private var _escBehavior = EscBehavior.pauseField
+    /// What Esc does over a suggestion (Settings ▸ Typing). Any thread.
+    var escBehavior: EscBehavior {
+        get { lock.lock(); defer { lock.unlock() }; return _escBehavior }
+        set { lock.lock(); _escBehavior = newValue; lock.unlock() }
     }
 
     /// Creates the taps, or after `stop` turns the listen tap back on. Returns false if the
@@ -145,7 +153,7 @@ final class KeyTap {
         case (me.tabKey, []): action = .acceptWord
         case (me.tabKey, [.maskAlternate]): action = .passTab
         case (me.acceptAllKey, []): action = .acceptAll
-        case (me.escKey, []): action = .dismiss
+        case (me.escKey, []) where EscState.consumes(me.escBehavior, suggestionVisible: true): action = .dismiss
         default: action = nil
         }
         guard let action else { return Unmanaged.passUnretained(event) }

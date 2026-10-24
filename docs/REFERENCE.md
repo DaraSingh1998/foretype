@@ -202,11 +202,29 @@ asks for Contacts access once, only when you click it).
 ### Custom instructions
 
 **Custom Instructions…** in the menu edits a note for all apps (who you are, tone,
-spelling) and one for the app you were last in, appended after it. Both go into the prompt
+spelling), one for the app you were last in and, when that app's last field was on a web
+page, one for its website, each appended after the one before. They go into the prompt
 header. The note for all apps starts as a short default ("Natural, clear writing that
 matches the tone of the text so far, with correct spelling and grammar."), which saved
 0.7 points more typing on the test corpus than no note. Change or clear it; **Restore
 Defaults** brings it back.
+
+A website's note applies to the page's host ("mail.google.com") or, chosen under
+**Applies to**, to every page of its domain ("All of google.com": google.com and every
+host under it). Those are two separate notes: on mail.google.com with both, the domain's
+comes first and the host's last. A leading "www." doesn't count, ports and paths are
+ignored, and only http and https pages have a website. The domain is the host's last two
+labels, three under a shared country second level such as co.uk or gov.in; on a hosting
+service where every subdomain is someone else's site (github.io, pages.dev, vercel.app,
+netlify.app, blogspot.com, ...) it is the host itself, so "All of" covers only the hosts
+under it. An IP address has no domain choice. Settings
+▸ Personalization lists every website note with **Edit…** and **Remove**; new ones are
+added from Custom Instructions… while the page is the last place you typed.
+
+The joined notes take at most 400 characters of the prompt. When they are longer, the less
+specific ones give way: the website's note is kept whole, then the app's, and the note
+before the first one that doesn't fit is cut at a word with "…" (text without spaces, such
+as Japanese, is cut anywhere).
 
 ### Typing aids
 
@@ -275,12 +293,12 @@ shows every setting in eight tabs; changes apply at once, the same way as from t
 - **General**: open at login, pause and resume, the power rules (on battery, low battery,
   Low Power Mode), the version and the update switches with Check Now.
 - **Typing**: length (2, 4, 7 or 10 words), stop at the end of a sentence, the typing aids
-  (emoji, autocorrect, typo gate, mid-line) and the keys.
+  (emoji, autocorrect, typo gate, mid-line), what Esc does and the keys.
 - **Context**: screen context, with the Screen Recording status; text from other apps, with
   its limits on this Mac or backend, what is in memory and What Foretype Sees…, and the
   never-read list (Add an App…, Remove, Restore Defaults).
-- **Personalization**: custom instructions, learn from my writing, strength, what was
-  learned, import, delete history.
+- **Personalization**: custom instructions, the website notes (Edit…, Remove), learn from
+  my writing, strength, what was learned, import, delete history.
 - **About You**: your own details for exact fills, the writer line, fill from Contacts.
 - **Apps**: every app you switched off (or switched on where it is off by default), with
   Remove to return it to its default.
@@ -464,11 +482,32 @@ Settings… and setup. Option-click the icon to pause or resume.
 |---|---|
 | Tab | insert the next word |
 | key above Tab (` or §) | insert the whole suggestion |
-| Esc | dismiss (no new suggestion until you type) |
+| Esc | dismiss; what else happens is set in Settings ▸ Typing (below) |
 | Option+Tab | a real Tab |
 | Ctrl + key above Tab | suggest here even where Foretype normally stays quiet (this line only) |
 | Ctrl+Opt+Cmd + key above Tab | pause suggestions in the current app for 5 minutes |
 | Option-click the menu-bar icon | pause or resume everywhere |
+
+### Esc
+
+With no suggestion showing, Esc always goes to the app: Foretype's key tap is off. Over a
+suggestion, Settings ▸ Typing ▸ Esc picks one of three behaviours (Cotypist's):
+
+- **Dismiss and pause in this field briefly** (the default): the suggestion goes and that
+  field stays quiet for 5 seconds, about three words at an average typing speed, so you can
+  type what Foretype guessed wrong without a new guess after every key. Other fields and
+  apps are not paused, and after the pause nothing comes back until you type: the dismissed
+  text gets no new suggestion. While the field is paused Foretype still reads it (Learn From
+  My Writing sees all of it), it only shows nothing.
+- **Turn suggestions off in this app until I switch apps**: the suggestion goes and
+  Foretype stops in every field of that app until another app comes to the front (its own
+  Settings and windows don't count). The menu shows "Off in *app* until you switch apps —
+  Resume" meanwhile; Resume, or Ctrl + the key above Tab, turns it back on.
+- **Leave Esc alone**: Foretype never takes Esc; it goes to the app, and the suggestion
+  stays until you type on.
+
+Ctrl + the key above Tab, pausing everywhere and choosing another behaviour end a field
+pause or an app switched off by Esc.
 
 ### Per-app behaviour
 

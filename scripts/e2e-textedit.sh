@@ -71,8 +71,12 @@ front; "$DRIVE" key tab; sleep 0.8
 mark "5 Esc dismisses, then Tab is a real Tab"
 front; "$DRIVE" type " Let me" 110 || exit 3
 sleep 1.0; front; "$DRIVE" key esc; sleep 0.5; front; "$DRIVE" key tab; sleep 0.6
-mark "6 Option+Tab passes a real Tab"
+# Esc's default (Settings ▸ Typing) keeps the field quiet for 5 s: "dismissed", no suggestion.
+mark "5b typing within the Esc pause gets no suggestion"
 front; "$DRIVE" type " know" 110 || exit 3
+sleep 1.0; shot 5b-esc-pause
+mark "6 after the pause, Option+Tab passes a real Tab"
+sleep 4.0; front; "$DRIVE" type " if" 110 || exit 3
 sleep 1.0; front; "$DRIVE" key opt-tab; sleep 0.6
 
 osascript -e 'tell application "TextEdit" to get text of document 1' >"$OUT/result.txt"

@@ -274,7 +274,7 @@ Contractors: $68,900 (budget $52,000)               where text was left out
 
 [Written by Priya Raman (Product Manager, Acme)]      ← the user's details (About You), local models only
 [Written in Mail — Re: planning (mail.example.com)]   ← app, window title (≤80), URL host
-[Writer's notes: …]                                   ← global + per-app instructions (≤400)
+[Writer's notes: …]                                   ← global + per-app + per-website instructions (≤400)
 
 Hi Priya,\n\nThanks for the                     ← body: text before the caret, up to the
                                                     partial word ("prefix")
@@ -299,7 +299,15 @@ fragment = " no"                                 ← typed partial word + its le
   `core/data/default-instructions.json` (`instructions.rs`, `ft_default_instructions`): one
   note for every app and, by bundle ID, optional notes per kind of app (none ship). The
   shell stores only what the user changed, so untouched notes follow the defaults of the
-  installed version; an empty note the user saved stays empty.
+  installed version; an empty note the user saved stays empty. Website notes
+  (`site_instructions`, none by default) follow the app's: `instructions::site_notes` takes
+  every key that applies to the snapshot's URL (`host_of`: lowercase, no port, user or
+  leading "www."; http and https only), a host key ("mail.google.com") on that host, a
+  domain key ("*.google.com") on the domain and every host under it, the broadest first.
+  `instructions::assemble` joins all apps, app and websites in at most 400 characters
+  (`NOTES_CAP`): from the last note back, each is kept whole while it fits, the first that
+  doesn't is cut at a word with "…" and anything before it is left out (D49). With no
+  website note the line is the same bytes as before.
 - The `shell` backend's Apple model is instruction-tuned, so `AppleModel.swift` gives it
   fixed instructions of its own (continue the text where it stops, at most `max_words`
   words, nothing else) and sends this prompt after "Continue this text:".
@@ -490,6 +498,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_history_stats` / `ft_engine_clear_history` / `ft_engine_import_history` / `ft_engine_open_history` | Personalization; stats are `{"records","words","locked"}` (`locked`: the key opens none of the file, kept read-only) |
 | `ft_model_catalog(ram_gb)` | Model list (no engine needed) |
 | `ft_default_instructions()` | The custom instructions a fresh install starts with, `{"global", "apps": {bundle: note}}` (`core/data/default-instructions.json`; no engine needed) |
+| `ft_site_of(url)` | The website of a page URL for keying its instructions, `{"host": "mail.google.com", "domain": "google.com"}`, or `null` when the page isn't http(s) (`instructions::site_of`, `base_domain`; no engine needed) |
 
 **CoreConfig** (`ft_engine_new`): `model_path`, `n_ctx` (2048: the longest prompt plus 64),
 `n_gpu_layers` (999), `n_threads` (4), `settings`, `history_path`, `history_key_hex`, `backend`
@@ -498,7 +507,8 @@ and the built-in engine's KV cache (D47): `kv_type` (`f16`; or `q8_0`), `slots` 
 `kv_cells` (0: `n_ctx` per slot), `saved_mb` (0), `flash_attn` (absent: llama.cpp decides).
 
 **Settings** (`ft_engine_configure`): `enabled`, `paused` (false), `length_words` (4), `stop_at_sentence_end`,
-`instructions`, `app_instructions` {bundle: text}, `disabled_apps`, `enabled_apps`,
+`instructions`, `app_instructions` {bundle: text}, `site_instructions` {host or "*." + domain:
+text}, `disabled_apps`, `enabled_apps`,
 `only_apps`, `deadline_ms` (300), `max_body_chars` (1600), `unload_after_s` (300),
 `debounce_ms` (0), `prefetch` (true), `personalize` (false), `personalize_strength` (1),
 `personal_examples` (true), `emoji` (true), `autocorrect` (true), `typo_gate` (true),
@@ -683,8 +693,8 @@ never logs the text. The shell must ignore events whose `revision` is not its la
 - **`KeyTap.swift`**: a permanent listen-only session tap (notices typing) and a consuming
   head-inserted session tap that is enabled only while a suggestion is visible (disabled 50
   ms after it hides, so the last synthetic key drains). Consumes Tab (next word), the key
-  above Tab (` on ANSI, § on ISO: accept all), Esc (dismiss), Option+Tab (real Tab), and
-  swallows their key-ups. Ignores events carrying the inserter's marker. Re-enables itself
+  above Tab (` on ANSI, § on ISO: accept all), Esc (dismiss, unless `escBehavior` is
+  `passThrough`: `EscState.consumes`), Option+Tab (real Tab), and swallows their key-ups. Ignores events carrying the inserter's marker. Re-enables itself
   on `tapDisabledByTimeout`. `stop()` (pause) turns both taps off, so macOS delivers no key
   events at all; `start()` turns the listen tap back on.
 - **`Inserter.swift`**: keystrokes posted at the annotated session tap with marker
@@ -717,7 +727,14 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   settings: `paused`, and for `saveEnergy` greedy decoding, no prefetch, an 80 ms mid-word
   debounce and `unload_after_s` 60 (otherwise beam 3, prefetch, no debounce, 300 s); screen
   context is off while saving energy. Per-app pauses (`snooze`) end at a time or, with
-  `Date.distantFuture`, when the app's last process quits.
+  `Date.distantFuture`, when the app's last process quits. Esc (`Esc.swift`, D49): a
+  dismiss records `EscState` under the lock: with `pauseField` the field stays quiet for
+  `EscState.fieldPause` (5 s), and each of its snapshots meanwhile is dismissed at its own
+  text and still submitted (the core answers `dismissed` after `observe`, so personalization
+  sees the text); with `offInApp` the app is treated like a snoozed one (nothing submitted)
+  until `didActivateApplication` brings another app, not Foretype, to the front. Force,
+  pause, the menu's Resume and a new behaviour reset it. `--esc-selftest` checks the state
+  logic.
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
   every 15 s: `SCShareableContent` → the focused window (the app's window holding the
   field's centre, `ScreenGeometry.windowIndex`; none if no window does) →
@@ -822,7 +839,8 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   once (`Controller.detailsJSON`, again after an engine swap) and saves 0.5 s after the last
   change. `--about-selftest` checks the JSON and the sealing with a key in memory.
 - **`Settings.swift`**: `AppSettings` (UserDefaults: batteryMode, lowPowerMode, pauseBelowBattery, lengthWords,
-  stopAtSentenceEnd, instructions, appInstructions, disabled/enabled apps,
+  stopAtSentenceEnd, escBehavior, instructions, appInstructions, siteInstructions,
+  disabled/enabled apps,
   useScreenContext, useOtherApps (`FORETYPE_OTHER_APPS` overrides it), neverReadApps (the
   password managers until changed), personalize, strength, backend, backendURL,
   backendModel, modelPath, onboarded; `otherAppsTokens` (512 tokens under 16 GB, 2,048
@@ -886,9 +904,13 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   The menu calls `refresh()` after its own changes so both stay in step.
 - **`OnboardingWindow.swift`**, **`InstructionsWindow.swift`**, **`AppDelegate.swift`**:
   setup checklist (Accessibility, Screen Recording, model, and an optional mention of text
-  from other apps that only links to Settings ▸ Context: setup never turns it on), custom instructions, the
+  from other apps that only links to Settings ▸ Context: setup never turns it on), custom instructions
+  (for all apps, the last app and, when its last field was on a web page, that website's
+  host or whole domain, `Controller.lastField` and `Site.of`; or one website's note from
+  Settings ▸ Personalization), the
   menu-bar menu (keystrokes saved today, why and until when it is paused, Pause ▸ or
-  Resume / Resume Anyway, length and sentence end, per-app toggle and Pause in *app* ▸,
+  Resume / Resume Anyway, length and sentence end, per-app toggle and Pause in *app* ▸ (or
+  "Off in *app* until you switch apps — Resume" after an Esc that switched it off),
   screen context, text from other apps, personalization, instructions, model with sizes on disk and Delete a
   Model, server, Settings, setup, updates). The status item's menu is attached only while
   it opens, so the button sees the click first: Option-click toggles the pause. The

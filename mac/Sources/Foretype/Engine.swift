@@ -202,6 +202,41 @@ struct ContextReport: Decodable, Equatable {
     var last: Last?
 }
 
+/// The website a page belongs to (`ft_site_of`): its `host` ("mail.google.com") and the
+/// `domain` its organisation shares ("google.com", the host itself when it has no shorter one).
+/// A website's instructions are kept under the host, or under "*." and the domain for every
+/// page of the domain (`AppSettings.siteInstructions`).
+struct Site: Decodable, Equatable {
+    let host: String
+    let domain: String
+
+    /// Nil for a page that isn't http(s).
+    static func of(url: String) -> Site? {
+        guard !url.isEmpty, let raw = ft_site_of(url) else { return nil }
+        defer { ft_string_free(raw) }
+        return try? JSONDecoder().decode(Site.self, from: Data(String(cString: raw).utf8))
+    }
+
+    /// The key for this host only, or for every page of the domain.
+    func key(wholeDomain: Bool) -> String { wholeDomain ? "*." + domain : host }
+
+    /// The keys a note for this page can be kept under: the host and the whole domain (on
+    /// google.com itself too, where the domain's also covers mail.google.com), or the host
+    /// alone for an IP address.
+    var keys: [String] {
+        let address = host.hasPrefix("[") || host.allSatisfy { $0.isNumber || $0 == "." }
+        return address ? [host] : [key(wholeDomain: false), key(wholeDomain: true)]
+    }
+
+    /// Whether a key covers more than one host ("*.google.com").
+    static func isDomainKey(_ key: String) -> Bool { key.hasPrefix("*.") }
+
+    /// How a key reads in Settings: "mail.google.com", or "All of google.com".
+    static func describe(_ key: String) -> String {
+        isDomainKey(key) ? L("All of %@", String(key.dropFirst(2))) : key
+    }
+}
+
 /// The custom instructions a fresh install starts with (`core/data/default-instructions.json`).
 struct DefaultInstructions: Decodable {
     let global: String
