@@ -146,10 +146,13 @@ are kept for if that changes; the core stays portable.
   other languages (English only), several identities picked per app, a signature block
   after the name (job title, company), phone numbers matched ignoring spaces and the
   country code. (One set of details with exact fills and a writer line landed.)
-- **Product**: more languages (English and Hindi so far). (Settings window, statistics,
-  model manager polish, downloads that resume after a relaunch, adding an app from the
-  Settings window, the Apple on-device fallback, localization, per-website instructions
-  and the Esc setting landed.)
+- **Product**: more languages (English and Hindi so far); Cotypist's other Labs feature,
+  synonyms for selected text; word alternatives keys that never type a character (the
+  number-row Option keys do on some layouts), and a hands-on check of the alternatives card
+  in Chrome, Mail and with the pixel caret. (Settings window, statistics, model manager
+  polish, downloads that resume after a relaunch, adding an app from the Settings window,
+  the Apple on-device fallback, localization, per-website instructions, the Esc setting
+  and word alternatives (experimental, D50) landed.)
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.
@@ -184,6 +187,10 @@ are kept for if that changes; the core stays portable.
   Web in full-screen Chrome on a display above the main one (`docs/MEASUREMENTS.md`).
 - About You fills only at the end of a line, from English cue phrases, and only when what
   was typed is the start of the stored value exactly as written (case aside).
+- Word alternatives (experimental): only from the built-in engine; on battery only on
+  Option-0; Option-1 to 3 can't type their layout's character while the card shows (# on a
+  British keyboard). The card is checked as rendered by `--alternatives-selftest`, not yet
+  live in an app (`scripts/e2e-alternatives.sh`).
 - OpenAI-compatible servers save about half as much typing as llama-server or the built-in
   engine (no token healing).
 - Ad-hoc builds lose the Accessibility and Screen Recording grants on every rebuild. Releases

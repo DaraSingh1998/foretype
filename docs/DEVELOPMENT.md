@@ -52,6 +52,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | Keychain keys (not found vs denied, cancelled, locked or transient errors; a new key only with no item and no file; update in place, never delete-then-add; About You locked load and save; the server API key: a failed read sends no key, keeps the item and isn't repeated by refreshes, an empty field writes nothing, a typed key updates in place) | `mac/.build/release/Foretype --keychain-selftest` | nothing (an in-memory Keychain and a temporary folder; never the real items, history or details) |
 | Pause and power rules (decisions, Resume Anyway, migration, saved pause) | `mac/.build/release/Foretype --pause-selftest` | nothing (a defaults suite of its own) |
 | Esc behaviours (the tap takes Esc only over a suggestion and never when left alone; the 5-second field pause, only for that field, restarted by a second Esc; an app switched off until another app comes to the front; reset) | `mac/.build/release/Foretype --esc-selftest` | nothing (made-up times and fields) |
+| Word alternatives card (shows after the 0.8 s pause only with alternatives, another key restarts the pause, Esc keeps it closed for that suggestion, Option-0 shows, closes or asks and only an awaited answer opens it, Option-N only for rows shown, nothing to pick after an accept; rows read as whole words, Hindi too) | `mac/.build/release/Foretype --alternatives-selftest [DIR]` (DIR gets the card as PNGs, light and dark) | nothing (made-up times and revisions) |
 | Other apps' text pool (10-minute expiry, the 12-window cap, what is sent and when, the never-read and FORETYPE_ONLY_APPS gates, capture-forbidding and private windows, covered windows) | `mac/.build/release/Foretype --context-selftest` | nothing (made-up windows) |
 | Settings window layout (every pane fits a 13-inch MacBook Air, Context in each state of other apps' text, Personalization with website notes; a tall pane scrolls in a window kept on screen, also on a display above; every tab in the toolbar; the setup window fits and grows to its rows; the Custom Instructions window with all three notes, and on one website's note, fits); `DIR` gets a PNG of each pane, light and dark, and of the setup and Custom Instructions windows | `mac/.build/release/Foretype --settings-selftest [DIR]`; Hindi: `build/Foretype.app/Contents/MacOS/Foretype --settings-selftest DIR -AppleLanguages '(hi)'` | nothing (reads the settings, never writes them; the windows are never shown) |
 | What Foretype Sees (every state's notes, the window and passage rows, Never Read This App and Forget All Now reach their handlers, rows kept while nothing changes, fits a 13-inch Air with 12 windows); `DIR` gets a PNG per state, light and dark | `mac/.build/release/Foretype --context-view-selftest [DIR]`; Hindi: the bundled binary with `-AppleLanguages '(hi)'` | nothing (made-up windows and report; never shown) |
@@ -67,6 +68,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 | Engine swap in one process (a new core loads while the old one is loaded and is freed on another thread, twice, as when the model, the server or other apps' context size changes) | `core/target/release/ft-replay MODEL --restart-check` | a model |
 | TextEdit end-to-end | `FORETYPE_MODEL=... scripts/e2e-textedit.sh` | Accessibility, user idle |
 | Terminal end-to-end | `FORETYPE_MODEL=... scripts/e2e-terminal.sh` | Accessibility, user idle |
+| Word alternatives end-to-end (TextEdit) | `FORETYPE_MODEL=... scripts/e2e-alternatives.sh` | Accessibility, user idle, mains power |
 | Fresh Chrome end-to-end (nothing typed) | `FORETYPE_MODEL=... scripts/e2e-chrome-fresh.sh` | Accessibility, user idle |
 | Text from other apps end-to-end (nothing typed): a second TextEdit document's text reaches the prompt | `FORETYPE_MODEL=... scripts/e2e-context.sh` | Accessibility, user idle, TextEdit not running |
 | What Foretype Sees live (nothing typed): the dev bundle shows a second TextEdit document's window and its passage in the last prompt; `build/e2e-context-view/report.png` is the window | `scripts/e2e-context-view.sh` | Accessibility for `build/Foretype.app`, user idle, TextEdit not running |
@@ -107,6 +109,9 @@ $R "$M" --corpus eval/corpus.jsonl --only sw- --cpu                     # no Met
 $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 4 --chars 200   # cache reuse == fresh context?
 $R "$M" --corpus eval/corpus.jsonl --check-cache --docs 3 --long        # same, prompts past 512 tokens
 $R "$M" --corpus eval/corpus.jsonl --beam 3                             # phrase beam search
+$R "$M" --corpus eval/corpus.jsonl --beam 3 --alternatives              # word alternatives on, suggestion only (must match --beam 3)
+$R "$M" --corpus eval/corpus.jsonl --beam 3 --alternatives --oracle     # + takes a right alternative (upper bound)
+$R "$M" --corpus eval/corpus.jsonl --beam 1 --alternatives --on-demand  # battery: asks when the suggestion is wrong
 $R "$M" --corpus eval/corpus.jsonl --mid-line-eval --typed 1            # mid-line word accuracy
 $R "$M" --corpus eval/corpus-hi.jsonl                                   # Hindi (Devanagari); corpus-hinglish.jsonl too
 $R "$M" --corpus eval/corpus-hi.jsonl --token-cost                      # chars per token, tokens per word
@@ -246,6 +251,13 @@ aborts after 2 s.
   moves the document window, e.g. `100,-900,1000,-450` onto a display above the main one;
   the log's `show=inline at X,Y` should equal `caret=… X,Y`. The screenshots use TextEdit's
   `window 1`, which can be the empty Untitled window TextEdit opens at launch; trust the log.
+- `e2e-alternatives.sh` (D50): new unsaved document; with Show Alternatives on for that
+  process only (`-alternatives YES`), types a line and pauses (the card shows by itself:
+  `alternatives card: N` in the log), Option+1 (`accept alternative 1`) then Tab, Option+0
+  right after typing (card at once, or `alternatives asked for` and the answer), Option+0
+  again (closes), Option+0 and Esc (closes only the card), Esc again (dismiss). Needs mains
+  power. Writes `build/e2e-alternatives/` (log, result, screenshots with 120 pt below the
+  window for the card).
 - `e2e-terminal.sh`: opens a Terminal window from a `.command` file running `tee` (nothing
   reaches a shell; every entered line lands in `build/e2e-terminal/typed-lines.txt`).
   Checks: no suggestion on an ordinary line, the force hotkey (current line only), agent
