@@ -119,6 +119,9 @@ pub struct GenOptions {
     pub personal_strength: f32,
     /// Phrases searched at once (1 = greedy). Truncating models only; others stay greedy.
     pub beam_width: usize,
+    /// Also return the other phrases the beam search considered (`Completion::alternatives`,
+    /// D50). Bookkeeping only: no extra decoding, and the best phrase is chosen as without it.
+    pub alternatives: bool,
 }
 
 impl Default for GenOptions {
@@ -129,6 +132,7 @@ impl Default for GenOptions {
             stop_at_sentence_end: true,
             personal_strength: 0.0,
             beam_width: 1,
+            alternatives: false,
         }
     }
 }
@@ -271,6 +275,10 @@ pub struct Completion {
     pub prefill_ms: f64,
     pub total_ms: f64,
     pub stop: &'static str,
+    /// With `GenOptions::alternatives` and a beam search: the other phrases it considered,
+    /// best first, in the same form as `text` (blank ones left out; `alternatives::distinct`
+    /// picks the ones to offer).
+    pub alternatives: Vec<String>,
 }
 
 /// llama.cpp's backend, one per process. llama-cpp-2 refuses a second `LlamaBackend::init`
@@ -1092,11 +1100,32 @@ impl Engine {
         best.into_iter().map(|(id, v)| (LlamaToken(id as i32), v - lse)).collect()
     }
 
+    /// Whether token `id` can't continue the word before it: the end of the text, or a piece
+    /// that starts with a space, a newline or punctuation (not an apostrophe or a hyphen).
+    fn starts_after_word(&self, id: usize) -> bool {
+        if self.eog[id] {
+            return true;
+        }
+        let piece = &self.pieces[id];
+        match piece.first() {
+            None => false,
+            Some(&b) if b < 0x80 => !words::is_word_char(b as char),
+            // A piece that starts inside a multi-byte character continues one.
+            Some(_) => std::str::from_utf8(piece).ok().and_then(|p| p.chars().next()).is_some_and(|c| !words::is_word_char(c)),
+        }
+    }
+
     /// Phrase beam search (TabType reports Cotypist uses a 9-wide one): keeps the
     /// `beam_width` most likely continuations, decoded together in one batch per step, and
     /// returns the phrase with the best average log-probability. The first word may differ
     /// from the greedy one. The prompt's sequence is never written, so nothing needs
-    /// rolling back. Returns (bytes generated, stop reason, decode steps).
+    /// rolling back. Returns (bytes generated, stop reason, decode steps, alternatives).
+    ///
+    /// With `opts.alternatives` the other phrases come back too, best first, each with the
+    /// reason it ended: every finished or unfinished phrase but the best, and every beam the
+    /// search let go at the end of a word (none of its children kept: the phrase so far is
+    /// whole words, as its own best next token starts a new one). That is bookkeeping on what
+    /// the search computes anyway; the best phrase is chosen from exactly the same candidates.
     fn beam_search(
         &mut self,
         prompt: &Prompt,
@@ -1104,11 +1133,13 @@ impl Engine {
         opts: &GenOptions,
         cancel: &dyn Fn() -> bool,
         t_gen: Instant,
-    ) -> Result<(Vec<u8>, &'static str, usize), GenError> {
+    ) -> Result<(Vec<u8>, &'static str, usize, Vec<(Vec<u8>, &'static str)>), GenError> {
         let width = opts.beam_width.clamp(1, MAX_BEAMS);
         let fragment = prompt.fragment.as_bytes();
         let max_tokens = opts.max_words * 3 + 8 + fragment.len();
         let mut finished: Vec<(Vec<u8>, f32, usize, &'static str)> = Vec::new();
+        // Beams let go at a word end (alternatives only): (bytes, score, tokens).
+        let mut dropped: Vec<(Vec<u8>, f32, usize)> = Vec::new();
         let mut bank = 0usize;
         let base = self.slots.len();
         let prompt_seq = self.slots[self.active].seq;
@@ -1157,18 +1188,27 @@ impl Engine {
             steps += 1;
             // Children of every beam, best first.
             let mut children: Vec<(usize, LlamaToken, f32)> = Vec::new();
+            // Per beam: its best child starts a new word (alternatives only).
+            let mut word_end = vec![false; beams.len()];
             for (i, b) in beams.iter().enumerate() {
-                for (tok, lp) in self.top_k(self.ctx.get_logits_ith(i as i32), &b.out, prompt, opts, width) {
+                let kids = self.top_k(self.ctx.get_logits_ith(i as i32), &b.out, prompt, opts, width);
+                if opts.alternatives {
+                    word_end[i] = kids.first().is_some_and(|(t, _)| self.starts_after_word(t.0 as usize));
+                }
+                for (tok, lp) in kids {
                     children.push((i, tok, b.score + lp));
                 }
             }
             children.sort_by(|a, b| b.2.total_cmp(&a.2));
             let next_bank = 1 - bank;
             let mut next: Vec<Beam> = Vec::new();
+            // Per beam: a child of it lives on, as a beam or a finished phrase.
+            let mut kept = vec![false; beams.len()];
             for (parent, tok, score) in children {
                 if next.len() >= width {
                     break;
                 }
+                kept[parent] = true;
                 let p = &beams[parent];
                 let id = tok.0 as usize;
                 if let Some((reason, keep)) = self.stop_before(id, &p.out, fragment, opts) {
@@ -1187,7 +1227,10 @@ impl Engine {
                 out.extend_from_slice(&self.pieces[id]);
                 next.push(Beam { tokens, out, score, seq });
             }
-            for b in &beams {
+            for (i, b) in beams.iter().enumerate() {
+                if opts.alternatives && !kept[i] && word_end[i] && b.out.len() > fragment.len() {
+                    dropped.push((b.out.clone(), b.score, b.tokens.len()));
+                }
                 let _ = self.ctx.clear_kv_cache_seq(Some(b.seq as u32), None, None);
             }
             beams = next;
@@ -1207,14 +1250,24 @@ impl Engine {
             let _ = self.ctx.clear_kv_cache_seq(Some(b.seq as u32), None, None);
         }
         result?;
-        let best = finished
-            .into_iter()
-            .filter(|(out, _, _, _)| out.len() >= fragment.len())
-            .max_by(|a, b| mean_score(a.1, a.2).total_cmp(&mean_score(b.1, b.2)));
-        Ok(match best {
-            Some((out, _, _, reason)) => (out, reason, steps),
-            None => (Vec::new(), "noCandidate", steps),
-        })
+        let mut pool: Vec<_> = finished.into_iter().filter(|(out, _, _, _)| out.len() >= fragment.len()).collect();
+        let best = pool
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| mean_score(a.1, a.2).total_cmp(&mean_score(b.1, b.2)))
+            .map(|(i, _)| i);
+        let Some(best) = best else {
+            return Ok((Vec::new(), "noCandidate", steps, Vec::new()));
+        };
+        let (out, _, _, reason) = pool.swap_remove(best);
+        let mut others = Vec::new();
+        if opts.alternatives {
+            // A dropped beam ends at a word: nothing of it to cut ("words").
+            pool.extend(dropped.into_iter().map(|(o, s, n)| (o, s, n, "words")));
+            pool.sort_by(|a, b| mean_score(b.1, b.2).total_cmp(&mean_score(a.1, a.2)));
+            others = pool.into_iter().map(|(o, _, _, r)| (o, r)).collect();
+        }
+        Ok((out, reason, steps, others))
     }
 
     pub fn complete(
@@ -1252,12 +1305,14 @@ impl Engine {
         let mut stop = "maxTokens";
         let mut idx = self.logits_index();
 
+        let mut others: Vec<(Vec<u8>, &'static str)> = Vec::new();
         let result = if opts.beam_width > 1 && self.beams {
             // Beams live in their own sequences: the cache still holds exactly the prompt.
-            self.beam_search(prompt, tokens.len(), opts, cancel, t_gen).map(|(o, s, n)| {
+            self.beam_search(prompt, tokens.len(), opts, cancel, t_gen).map(|(o, s, n, a)| {
                 out = o;
                 stop = s;
                 generated = n;
+                others = a;
             })
         } else {
             loop {
@@ -1314,23 +1369,19 @@ impl Engine {
         }
         result?;
 
-        let mut text = String::new();
-        if out.len() >= fragment.len() {
-            let shown = &out[fragment.len()..];
-            let valid = match std::str::from_utf8(shown) {
-                Ok(s) => s,
-                Err(e) => std::str::from_utf8(&shown[..e.valid_up_to()]).unwrap_or(""),
-            };
-            let trimmed = if stop == "maxTokens" || stop == "deadline" {
-                words::drop_partial_last_word(valid)
-            } else {
-                valid
-            };
-            text = trimmed.trim_end_matches([' ', '\t']).to_string();
-            if !prompt.suffix.is_empty() {
-                text = before_suffix(&text, &prompt.suffix).to_string();
-            }
-        }
+        let text = shown_text(&out, fragment, stop == "maxTokens" || stop == "deadline", &prompt.suffix);
+        // An unfinished phrase ("beams" too: the search stopped early) may end mid-word: its
+        // last word goes, and with a single word there is nothing whole to offer.
+        let alternatives = others
+            .iter()
+            .filter_map(|(o, r)| {
+                let unfinished = matches!(*r, "maxTokens" | "deadline" | "beams");
+                if unfinished && words::count_words(&shown_text(o, fragment, false, "")) < 2 {
+                    return None;
+                }
+                Some(shown_text(o, fragment, unfinished, &prompt.suffix)).filter(|t| !t.trim().is_empty())
+            })
+            .collect();
         Ok(Completion {
             text,
             prompt_tokens: tokens.len(),
@@ -1339,7 +1390,29 @@ impl Engine {
             prefill_ms,
             total_ms: ms(t0),
             stop,
+            alternatives,
         })
+    }
+}
+
+/// What generated bytes `out` show after the caret: the typed `fragment` cut off, valid UTF-8
+/// only, a last word generation may have cut short dropped (`cut`), trailing spaces trimmed,
+/// and mid-line (`suffix`) cut where it would repeat the rest of the line.
+fn shown_text(out: &[u8], fragment: &[u8], cut: bool, suffix: &str) -> String {
+    if out.len() < fragment.len() {
+        return String::new();
+    }
+    let shown = &out[fragment.len()..];
+    let valid = match std::str::from_utf8(shown) {
+        Ok(s) => s,
+        Err(e) => std::str::from_utf8(&shown[..e.valid_up_to()]).unwrap_or(""),
+    };
+    let trimmed = if cut { words::drop_partial_last_word(valid) } else { valid };
+    let text = trimmed.trim_end_matches([' ', '\t']);
+    if suffix.is_empty() {
+        text.to_string()
+    } else {
+        before_suffix(text, suffix).to_string()
     }
 }
 

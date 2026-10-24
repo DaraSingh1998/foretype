@@ -7,6 +7,7 @@
 //! It emits suggestion *state*, never pixels, so the same engine can sit behind an overlay
 //! (macOS), a TSF text service (Windows) or an Fcitx5/IBus preedit (Linux).
 
+pub mod alternatives;
 pub mod backend;
 pub mod context;
 pub mod details;
@@ -131,6 +132,10 @@ pub struct Settings {
     pub mid_line: bool,
     /// Phrase beam search width (1 = greedy).
     pub beam_width: usize,
+    /// Word alternatives (D50): suggestions carry up to three other phrases from the beam
+    /// search, each starting with its own word, and `request_alternatives` searches for them
+    /// on demand (always, with a greedy `beam_width`).
+    pub alternatives: bool,
     /// Most tokens the other-apps section may take (D42, D44: the macOS shell sends 512 on
     /// Macs under 16 GB, 2,048 provisionally from 16 GB). The section also leaves room for the
     /// rest of the prompt within `n_ctx` − 64; 0 turns it off.
@@ -187,6 +192,7 @@ impl Default for Settings {
             typo_gate: true,
             mid_line: false,
             beam_width: 1,
+            alternatives: false,
             other_apps_tokens: 512,
         }
     }
@@ -256,7 +262,7 @@ pub enum Event {
     Suggestion {
         revision: u64,
         text: String,
-        /// model | typeThrough | cache | pending | policy | dismissed | error | emoji | autocorrect | details
+        /// model | typeThrough | cache | alternatives | pending | policy | dismissed | error | emoji | autocorrect | details
         source: &'static str,
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
@@ -273,6 +279,12 @@ pub enum Event {
         /// of the user's details a `details` fill is (`email`, `name`, …).
         #[serde(skip_serializing_if = "Option::is_none")]
         label: Option<String>,
+        /// Word alternatives (D50, `settings.alternatives`): up to three other phrases for the
+        /// same text, best first, each starting with its own word. Sent with `model`, `cache`
+        /// and `typeThrough` continuations, and as the answer to `request_alternatives`
+        /// (`source` `alternatives`, possibly none).
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        alternatives: Vec<String>,
     },
     /// Engine lifecycle: loading | ready | idle (model unloaded) | paused | error.
     Status { state: &'static str, detail: String },
@@ -283,6 +295,8 @@ pub type EventSink = Box<dyn Fn(&Event) + Send + Sync>;
 enum JobKind {
     Complete,
     Warm,
+    /// Alternatives on demand (`request_alternatives`) to `Job::shown`.
+    Alternatives,
 }
 
 struct Job {
@@ -294,7 +308,14 @@ struct Job {
     queued: Instant,
     /// The snapshot the prompt came from (rebuilt for the prefetch).
     snapshot: Snapshot,
+    /// `Alternatives`: the suggestion showing, which the alternatives must differ from.
+    shown: String,
 }
+
+/// Phrases an on-demand search for alternatives keeps at once (`request_alternatives`, D50):
+/// wider than the 3 of mains power, as the suggestion it answers for had none (or came from
+/// greedy decoding), and the user is waiting for the card, not typing.
+pub const ON_DEMAND_BEAMS: usize = 6;
 
 /// What the user typed in the focused field since it got focus, for the history.
 struct FieldTrack {
@@ -676,6 +697,11 @@ impl Core {
     }
 
     fn emit_suggestion(&self, revision: u64, text: String, source: &'static str, reason: Option<String>) {
+        self.emit_continuation(revision, text, source, reason, Vec::new());
+    }
+
+    /// A continuation with its alternatives (none unless `settings.alternatives`).
+    fn emit_continuation(&self, revision: u64, text: String, source: &'static str, reason: Option<String>, alternatives: Vec<String>) {
         (self.shared.sink)(&Event::Suggestion {
             revision,
             text,
@@ -686,6 +712,7 @@ impl Core {
             stop: None,
             replace: None,
             label: None,
+            alternatives,
         });
     }
 
@@ -702,6 +729,7 @@ impl Core {
             stop: None,
             replace: Some(replace.to_string()),
             label: Some(label),
+            alternatives: Vec::new(),
         });
     }
 
@@ -718,6 +746,7 @@ impl Core {
             stop: None,
             replace: (!fill.replace.is_empty()).then_some(fill.replace),
             label: Some(fill.field.key().to_string()),
+            alternatives: Vec::new(),
         });
     }
 
@@ -749,13 +778,7 @@ impl Core {
         // Against the text the shell sent, as `dismiss` got it (before a terminal's is cut to
         // its agent prompt below).
         let dismissed = !snap.force && self.shared.session.lock().unwrap().is_dismissed(snap.field_key, &snap.text_before);
-        // In a terminal only the agent prompt's own text is the document; the scrollback
-        // above it reaches the model as screen context instead.
-        if self.shared.compat.rule(&snap.bundle_id).agent_prompt_only && !enabled.contains(&snap.bundle_id) {
-            if let Some(prompt) = self.shared.compat.agent_prompt_text(&snap.text_before) {
-                snap.text_before = prompt.to_string();
-            }
-        }
+        self.to_document(&mut snap, &settings);
         if settings.personalize {
             self.observe(&snap, &snap.text_before, true);
         }
@@ -770,14 +793,15 @@ impl Core {
             }
             let mut session = self.shared.session.lock().unwrap();
             if let Some(rest) = session.type_through(snap.field_key, &snap.text_before) {
+                let alts = session.alternatives().to_vec();
                 drop(session);
-                return self.emit_suggestion(rev, rest, "typeThrough", None);
+                return self.emit_continuation(rev, rest, "typeThrough", None, alts);
             }
             let hit = if line_suffix(&snap).is_empty() { session.cached(snap.field_key, &snap.text_before) } else { None };
-            if let Some(hit) = hit {
-                session.set(snap.field_key, &snap.text_before, &hit);
+            if let Some((hit, alts)) = hit {
+                session.set(snap.field_key, &snap.text_before, &hit, &alts);
                 drop(session);
-                return self.emit_suggestion(rev, hit, "cache", None);
+                return self.emit_continuation(rev, hit, "cache", None, alts);
             }
             session.clear();
         }
@@ -791,8 +815,52 @@ impl Core {
             prompt,
             queued: Instant::now(),
             snapshot: snap,
+            shown: String::new(),
         });
         self.emit_suggestion(rev, String::new(), "pending", None);
+    }
+
+    /// In a terminal only the agent prompt's own text is the document; the scrollback above
+    /// it reaches the model as screen context instead.
+    fn to_document(&self, snap: &mut Snapshot, settings: &Settings) {
+        if self.shared.compat.rule(&snap.bundle_id).agent_prompt_only && !settings.enabled_apps.contains(&snap.bundle_id) {
+            if let Some(prompt) = self.shared.compat.agent_prompt_text(&snap.text_before) {
+                snap.text_before = prompt.to_string();
+            }
+        }
+    }
+
+    /// Alternatives on demand (D50) to the suggestion showing for `snap`, the shell's latest
+    /// (already submitted) snapshot. Answers with a `suggestion` event for its revision, the
+    /// same text, `source` `alternatives` and the alternatives, possibly none: at once when
+    /// they are known (from the beam, or an earlier request) or there is no built-in engine
+    /// to search with, otherwise after an `ON_DEMAND_BEAMS`-wide search, which typing cancels.
+    /// Nothing when alternatives are off, `snap` isn't the latest, or no continuation shows
+    /// for its text (a replacement or a detail has none).
+    pub fn request_alternatives(&self, mut snap: Snapshot) {
+        let settings = self.settings();
+        if self.is_paused() || !settings.alternatives || self.shared.latest.load(Ordering::SeqCst) != snap.revision {
+            return;
+        }
+        self.to_document(&mut snap, &settings);
+        let Some((shown, alts, searched)) = self.shared.session.lock().unwrap().alternatives_for(snap.field_key, &snap.text_before) else {
+            return;
+        };
+        if !alts.is_empty() || searched || !self.shared.mid_line_ok.load(Ordering::SeqCst) {
+            return self.emit_continuation(snap.revision, shown, "alternatives", None, alts);
+        }
+        let examples = self.examples_for(&snap, &settings);
+        let prompt = build_prompt(&self.shared, &snap, &settings, &examples, true);
+        self.enqueue(Job {
+            kind: JobKind::Alternatives,
+            revision: snap.revision,
+            field_key: snap.field_key,
+            text_before: snap.text_before.clone(),
+            prompt,
+            queued: Instant::now(),
+            snapshot: snap,
+            shown,
+        });
     }
 
     /// The user's details, emoji shortcodes, autocorrect and the typo gate, which answer
@@ -902,6 +970,7 @@ impl Core {
                 prompt,
                 queued: Instant::now(),
                 snapshot: snap,
+                shown: String::new(),
             });
             self.shared.wake.notify_one();
         }
@@ -938,6 +1007,18 @@ impl Core {
     /// What Tab (next word) or accept-all inserts, and what it replaces.
     pub fn accept(&self, mode: AcceptMode) -> Option<Accepted> {
         let r = self.shared.session.lock().unwrap().accept(mode);
+        if r.is_some() {
+            if let Some(t) = self.shared.track.lock().unwrap().as_mut() {
+                t.accepted = true;
+            }
+        }
+        r
+    }
+
+    /// Takes the next word of alternative `index` (0 for Option+1), which becomes the
+    /// suggestion: what is left of it shows next, and Tab goes on with it.
+    pub fn accept_alternative(&self, index: usize) -> Option<Accepted> {
+        let r = self.shared.session.lock().unwrap().accept_alternative(index);
         if r.is_some() {
             if let Some(t) = self.shared.track.lock().unwrap().as_mut() {
                 t.accepted = true;
@@ -1138,6 +1219,81 @@ fn plan(e: &Engine, shared: &Shared, field: u64, target: &Prompt, live: Option<&
         }
     }
     (target, tokens, None)
+}
+
+/// Generation options for a request from the settings.
+fn gen_options(settings: &Settings, mid_line: bool) -> GenOptions {
+    GenOptions {
+        max_words: if mid_line { settings.length_words.clamp(1, 3) } else { settings.length_words.max(1) },
+        deadline: Duration::from_millis(settings.deadline_ms),
+        stop_at_sentence_end: settings.stop_at_sentence_end,
+        personal_strength: settings.personal_strength(),
+        beam_width: settings.beam_width,
+        alternatives: settings.alternatives,
+    }
+}
+
+/// The alternatives a completion offers with its text (D50): none unless they were asked for.
+fn offered(c: &engine::Completion) -> Vec<String> {
+    alternatives::distinct(&c.text, c.alternatives.iter().map(|a| context::strip_marker_echo(a).to_string()))
+}
+
+/// Runs a job's prompt the way requests are served (D47): on the built-in engine `plan` picks
+/// the job's own prompt, or the same with the serving slot's older header while the new one
+/// prefills in the background (`live` and `background` follow); a prompt too long for the
+/// context runs again without other apps' text (D42). Returns the result, the prompt served
+/// and whether it had the older header.
+fn serve(
+    engine: &mut Runner,
+    shared: &Shared,
+    job: &Job,
+    opts: &GenOptions,
+    cancel: &dyn Fn() -> bool,
+    live: &mut Option<(u64, Prompt)>,
+    background: &mut bool,
+) -> (Result<engine::Completion, GenError>, Prompt, bool) {
+    let rev = job.revision;
+    let mut served = job.prompt.clone();
+    let mut served_old = false;
+    let mut result = match engine {
+        Runner::Local(e) => {
+            let (p, tokens, later) = plan(e, shared, job.field_key, &job.prompt, live.as_ref());
+            let old_header = later.is_some();
+            served_old = old_header;
+            *background = old_header;
+            match later {
+                Some(t) => e.set_background(t),
+                None => e.finish_background(),
+            }
+            if old_header {
+                shared.served_old.fetch_add(1, Ordering::SeqCst);
+                if debug() {
+                    eprintln!("[foretype] rev={rev} served with the previous header; the new one prefills in the background");
+                }
+            }
+            served = p;
+            let r = e.complete_tokens(&tokens, &served, opts, cancel);
+            *live = Some((job.field_key, served.clone()));
+            *shared.cache.lock().unwrap() = e.stats();
+            r
+        }
+        Runner::Remote(b) => b.complete(&served, opts, cancel),
+    };
+    // Too long for the context: the other apps' text is what goes first (D42).
+    if let (Err(GenError::TooLong(n)), Some(p)) = (&result, without_others(&served)) {
+        if debug() {
+            eprintln!("[foretype] rev={rev} prompt of {n} tokens too long: other apps' text left out");
+        }
+        served = p;
+        result = engine.complete(&served, opts, cancel);
+        if engine.is_local() {
+            *live = Some((job.field_key, served.clone()));
+        }
+    }
+    if result.is_ok() {
+        record_served(shared, &job.prompt, &served, served_old);
+    }
+    (result, served, served_old)
 }
 
 fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConfig>) {
@@ -1342,6 +1498,47 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     }
                 }
             },
+            JobKind::Alternatives => {
+                if cancel() {
+                    continue;
+                }
+                let settings = shared.settings.read().unwrap().clone();
+                let opts = GenOptions {
+                    beam_width: settings.beam_width.max(ON_DEMAND_BEAMS),
+                    alternatives: true,
+                    ..gen_options(&settings, !job.prompt.suffix.is_empty())
+                };
+                let (result, _, _) = serve(engine, &shared, &job, &opts, &cancel, &mut live, &mut background);
+                let alts = match result {
+                    // Its best phrase is a candidate too: it may not be the suggestion showing.
+                    Ok(c) => alternatives::distinct(
+                        &job.shown,
+                        std::iter::once(c.text).chain(c.alternatives).map(|t| context::strip_marker_echo(&t).to_string()),
+                    ),
+                    Err(GenError::Cancelled) => continue,
+                    Err(_) => Vec::new(),
+                };
+                let queue_ms = job.queued.elapsed().as_secs_f64() * 1000.0;
+                if debug() {
+                    eprintln!("[foretype] rev={rev} alternatives on demand: {} in {queue_ms:.1}ms", alts.len());
+                }
+                // The user typed, or took a word, meanwhile: they were for other text.
+                if cancel() || !shared.session.lock().unwrap().set_alternatives(job.field_key, &job.text_before, &job.shown, &alts) {
+                    continue;
+                }
+                (shared.sink)(&Event::Suggestion {
+                    revision: rev,
+                    text: job.shown,
+                    source: "alternatives",
+                    reason: None,
+                    ms: Some(queue_ms),
+                    prefilled: None,
+                    stop: None,
+                    replace: None,
+                    label: None,
+                    alternatives: alts,
+                });
+            }
             JobKind::Complete => {
                 if cancel() {
                     continue;
@@ -1359,67 +1556,22 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     }
                 }
                 let mid_line = !job.prompt.suffix.is_empty();
-                let opts = GenOptions {
-                    max_words: if mid_line { settings.length_words.clamp(1, 3) } else { settings.length_words.max(1) },
-                    deadline: Duration::from_millis(settings.deadline_ms),
-                    stop_at_sentence_end: settings.stop_at_sentence_end,
-                    personal_strength: settings.personal_strength(),
-                    beam_width: settings.beam_width,
-                };
-                // The prompt actually served: the request's own, or (D47) the same with the
-                // serving slot's older header while the new one prefills in the background.
-                let mut served = job.prompt.clone();
-                let mut served_old = false;
-                let mut result = match engine {
-                    Runner::Local(e) => {
-                        let (p, tokens, later) = plan(e, &shared, job.field_key, &job.prompt, live.as_ref());
-                        let old_header = later.is_some();
-                        served_old = old_header;
-                        background = old_header;
-                        match later {
-                            Some(t) => e.set_background(t),
-                            None => e.finish_background(),
-                        }
-                        if old_header {
-                            shared.served_old.fetch_add(1, Ordering::SeqCst);
-                            if debug() {
-                                eprintln!("[foretype] rev={rev} served with the previous header; the new one prefills in the background");
-                            }
-                        }
-                        served = p;
-                        let r = e.complete_tokens(&tokens, &served, &opts, &cancel);
-                        live = Some((job.field_key, served.clone()));
-                        publish(e);
-                        r
-                    }
-                    Runner::Remote(b) => b.complete(&served, &opts, &cancel),
-                };
-                // Too long for the context: the other apps' text is what goes first (D42).
-                if let (Err(GenError::TooLong(n)), Some(p)) = (&result, without_others(&served)) {
-                    if debug() {
-                        eprintln!("[foretype] rev={rev} prompt of {n} tokens too long: other apps' text left out");
-                    }
-                    served = p;
-                    result = engine.complete(&served, &opts, &cancel);
-                    if engine.is_local() {
-                        live = Some((job.field_key, served.clone()));
-                    }
-                }
-                if result.is_ok() {
-                    record_served(&shared, &job.prompt, &served, served_old);
-                }
+                let opts = gen_options(&settings, mid_line);
+                let (result, served, _) = serve(engine, &shared, &job, &opts, &cancel, &mut live, &mut background);
                 match result {
                     Ok(mut c) => {
                         c.text = context::strip_marker_echo(&c.text).to_string();
+                        let alts = offered(&c);
                         let queue_ms = job.queued.elapsed().as_secs_f64() * 1000.0;
                         if debug() {
                             eprintln!(
-                                "[foretype] rev={rev} prefill={} tok/{:.1}ms gen={} total={:.1}ms queue+total={queue_ms:.1}ms stop={} {:?}",
+                                "[foretype] rev={rev} prefill={} tok/{:.1}ms gen={} total={:.1}ms queue+total={queue_ms:.1}ms stop={} alternatives={} {:?}",
                                 c.prefilled_tokens,
                                 c.prefill_ms,
                                 c.generated_tokens,
                                 c.total_ms,
                                 c.stop,
+                                alts.len(),
                                 shared.details.read().unwrap().redact(&c.text)
                             );
                         }
@@ -1427,9 +1579,9 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             continue;
                         }
                         if mid_line {
-                            shared.session.lock().unwrap().set_uncached(job.field_key, &job.text_before, &c.text);
+                            shared.session.lock().unwrap().set_uncached(job.field_key, &job.text_before, &c.text, &alts);
                         } else {
-                            shared.session.lock().unwrap().set(job.field_key, &job.text_before, &c.text);
+                            shared.session.lock().unwrap().set(job.field_key, &job.text_before, &c.text, &alts);
                         }
                         let shown = c.text.clone();
                         (shared.sink)(&Event::Suggestion {
@@ -1442,6 +1594,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             stop: Some(c.stop),
                             replace: None,
                             label: None,
+                            alternatives: alts,
                         });
                         // Prefetch what follows the suggestion while the user reads it; any new
                         // request cancels this between decode steps. It keeps the header the
@@ -1464,7 +1617,8 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                                 if let Ok(mut p) = engine.complete(&prompt, &opts, &busy) {
                                     p.text = context::strip_marker_echo(&p.text).to_string();
                                     if !p.text.trim().is_empty() {
-                                        shared.session.lock().unwrap().remember(job.field_key, &next.text_before, &p.text);
+                                        let alts = offered(&p);
+                                        shared.session.lock().unwrap().remember(job.field_key, &next.text_before, &p.text, &alts);
                                         if debug() {
                                             let d = shared.details.read().unwrap();
                                             eprintln!("[foretype] prefetched {:?} after {:?}", d.redact(&p.text), d.redact(&shown));
@@ -1491,6 +1645,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             stop: None,
                             replace: None,
                             label: None,
+                            alternatives: Vec::new(),
                         });
                     }
                 }
@@ -1658,6 +1813,53 @@ mod tests {
         }
     }
 
+    /// The alternatives of the suggestion event for `rev` and its source.
+    fn alternatives_for(rx: &std::sync::mpsc::Receiver<Event>, rev: u64) -> (&'static str, Vec<String>) {
+        loop {
+            match rx.recv_timeout(Duration::from_secs(2)).expect("event") {
+                Event::Suggestion { revision, source, alternatives, .. } if revision == rev => return (source, alternatives),
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn alternatives_follow_type_through_and_answer_on_demand() {
+        let (c, rx) = core_with_events();
+        c.configure(Settings { alternatives: true, ..Settings::default() });
+        let alts = vec![" there".to_string(), " again".to_string()];
+        c.shared.session.lock().unwrap().set(1, "Hello ", "world", &["there".to_string(), "again".to_string()]);
+        c.submit(Snapshot { revision: 1, ..snap(1, "Hello") });
+        assert_eq!(alternatives_for(&rx, 1), ("typeThrough", alts.clone()), "a backspace gives them the space back");
+        c.submit(Snapshot { revision: 2, ..snap(1, "Hell") });
+        assert_eq!(alternatives_for(&rx, 2), ("typeThrough", vec![]), "now all start with the same word: o");
+        c.shared.session.lock().unwrap().set(1, "Hello", " world", &alts);
+        // On demand: known ones at once, for the latest revision only.
+        c.request_alternatives(Snapshot { revision: 1, ..snap(1, "Hello") });
+        c.request_alternatives(Snapshot { revision: 2, ..snap(1, "Hello") });
+        assert_eq!(alternatives_for(&rx, 2), ("alternatives", alts));
+        // None known and no built-in engine to search with: an answer, with none.
+        c.submit(Snapshot { revision: 3, ..snap(1, "Hello wo") });
+        assert_eq!(alternatives_for(&rx, 3).0, "typeThrough");
+        c.request_alternatives(Snapshot { revision: 3, ..snap(1, "Hello wo") });
+        assert_eq!(alternatives_for(&rx, 3), ("alternatives", vec![]));
+        // A replacement has none to offer: no answer at all.
+        c.submit(Snapshot { revision: 4, ..snap(1, "Great news :ta") });
+        assert_eq!(alternatives_for(&rx, 4).0, "emoji");
+        c.request_alternatives(Snapshot { revision: 4, ..snap(1, "Great news :ta") });
+        assert!(!rx.try_iter().chain(rx.recv_timeout(Duration::from_millis(200))).any(|e| matches!(e, Event::Suggestion { .. })));
+    }
+
+    #[test]
+    fn alternatives_off_means_none_on_demand() {
+        let (c, rx) = core_with_events();
+        c.shared.session.lock().unwrap().set(1, "Hello", " world", &[" there".to_string()]);
+        c.submit(Snapshot { revision: 1, ..snap(1, "Hello w") });
+        assert_eq!(alternatives_for(&rx, 1).0, "typeThrough");
+        c.request_alternatives(Snapshot { revision: 1, ..snap(1, "Hello w") });
+        assert!(!rx.try_iter().chain(rx.recv_timeout(Duration::from_millis(200))).any(|e| matches!(e, Event::Suggestion { .. })));
+    }
+
     #[test]
     fn emoji_shortcode_becomes_a_replacement() {
         let (c, rx) = core_with_events();
@@ -1703,7 +1905,7 @@ mod tests {
     fn typing_aids_come_before_type_through() {
         let (c, rx) = core_with_events();
         // A suggestion that continues a misspelling is showing...
-        c.shared.session.lock().unwrap().set(1, "I will rec", "ieve the notes");
+        c.shared.session.lock().unwrap().set(1, "I will rec", "ieve the notes", &[]);
         // ...the user types through it to the end of the word and a space.
         c.submit(Snapshot {
             revision: 1,
@@ -1712,7 +1914,7 @@ mod tests {
             ..snap(1, "I will recieve ")
         });
         assert_eq!(suggestion_for(&rx, 1).1, "autocorrect");
-        c.shared.session.lock().unwrap().set(1, "I will rec", "ieve the notes");
+        c.shared.session.lock().unwrap().set(1, "I will rec", "ieve the notes", &[]);
         c.submit(Snapshot { revision: 2, spell_fragment: "typo".into(), ..snap(1, "I will recie") });
         assert_eq!(suggestion_for(&rx, 2).3.as_deref(), Some("typo"));
     }
@@ -2020,6 +2222,7 @@ mod tests {
             prompt: build_prompt(&c.shared, &snap(1, "x"), &Settings::default(), &[], true),
             queued: Instant::now(),
             snapshot: snap(1, "x"),
+            shown: String::new(),
         });
         let before = c.shared.latest.load(Ordering::SeqCst);
         c.configure(Settings { paused: true, ..Settings::default() });

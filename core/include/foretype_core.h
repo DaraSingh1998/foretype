@@ -29,6 +29,15 @@ void ft_engine_warm(FtEngine *engine, const char *snapshot_json);
 /// mode 0 = next word, 1 = whole suggestion. Returns {"insert","remaining","replace"} or NULL;
 /// a non-empty "replace" is the text just before the caret to delete before inserting.
 char *ft_engine_accept(FtEngine *engine, int32_t mode);
+/// Word alternatives (settings "alternatives"): takes the next word of alternative `index`
+/// (0-based, as the last suggestion event's "alternatives" listed them), which becomes the
+/// suggestion. Returns {"insert","remaining","replace":""} or NULL when there is none.
+char *ft_engine_accept_alternative(FtEngine *engine, int32_t index);
+/// Asks for alternatives on demand to the suggestion showing for this (latest) snapshot. The
+/// answer is a suggestion event with the same revision and text, "source": "alternatives" and
+/// "alternatives" (possibly empty), at once or after a wider beam search; none when
+/// alternatives are off, the snapshot isn't the latest or no continuation shows for its text.
+void ft_engine_alternatives(FtEngine *engine, const char *snapshot_json);
 void ft_engine_dismiss(FtEngine *engine, uint64_t field_key, const char *text_before);
 
 /// Replaces the settings (JSON). "paused": true drops queued work, frees the model and sends

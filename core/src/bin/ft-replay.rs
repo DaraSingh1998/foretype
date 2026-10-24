@@ -77,6 +77,12 @@
 //!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
 //!       types with those custom instructions (corpus apps such as "Mail" stand in for their
 //!       bundle IDs); without either, with none.
+//!   --alternatives turns word alternatives on (D50): the user still takes only the
+//!       suggestion, so its numbers must not move, and the summary counts how often an
+//!       alternative's next word was right where the suggestion's wasn't. --oracle takes that
+//!       alternative (Option+N, one keystroke like Tab): the upper bound of what the picker
+//!       saves. --on-demand asks for alternatives (the on-demand key) whenever the suggestion's
+//!       next word is wrong and it came without any, and times the answers.
 
 use std::collections::BTreeMap;
 use std::sync::mpsc;
@@ -111,6 +117,17 @@ struct Stats {
     first_ms: Vec<f64>,
     prefills: Vec<f64>,
     sources: BTreeMap<&'static str, usize>,
+    /// Continuations shown with 0, 1, 2 and 3 alternatives (--alternatives).
+    with_alts: [usize; 4],
+    /// The suggestion's next word was wrong and alternative 1, 2 or 3's was right.
+    alt_right: [usize; 3],
+    /// Alternatives taken (--oracle).
+    alt_accepts: usize,
+    alt_accepted_chars: usize,
+    /// On-demand requests (--on-demand), how many found any, and how long each took.
+    demands: usize,
+    demands_found: usize,
+    demand_ms: Vec<f64>,
 }
 
 impl Stats {
@@ -126,6 +143,17 @@ impl Stats {
         for (k, v) in &o.sources {
             *self.sources.entry(k).or_default() += v;
         }
+        for i in 0..4 {
+            self.with_alts[i] += o.with_alts[i];
+        }
+        for i in 0..3 {
+            self.alt_right[i] += o.alt_right[i];
+        }
+        self.alt_accepts += o.alt_accepts;
+        self.alt_accepted_chars += o.alt_accepted_chars;
+        self.demands += o.demands;
+        self.demands_found += o.demands_found;
+        self.demand_ms.extend(&o.demand_ms);
     }
 
     fn print(&self, label: &str) {
@@ -141,6 +169,22 @@ impl Stats {
             pct(&self.first_ms, 0.9),
             self.sources
         );
+        let shown: usize = self.with_alts.iter().sum();
+        if shown > 0 && (self.with_alts[1..].iter().any(|&n| n > 0) || self.demands > 0) {
+            println!(
+                "{label} alternatives: continuations with 0/1/2/3: {:?} ({:.1}% with any), suggestion wrong but alternative 1/2/3 right: {:?} ({} in all), taken {} ({} chars), on demand {} ({} with any) p50 {:.0} ms p90 {:.0} ms",
+                self.with_alts,
+                100.0 * (shown - self.with_alts[0]) as f64 / shown as f64,
+                self.alt_right,
+                self.alt_right.iter().sum::<usize>(),
+                self.alt_accepts,
+                self.alt_accepted_chars,
+                self.demands,
+                self.demands_found,
+                pct(&self.demand_ms, 0.5),
+                pct(&self.demand_ms, 0.9),
+            );
+        }
     }
 }
 
@@ -152,6 +196,10 @@ fn n_ctx_arg() -> u32 {
         .and_then(|i| args.get(i + 1))
         .and_then(|s| s.parse().ok())
         .unwrap_or(EngineConfig::default().n_ctx)
+}
+
+fn has_flag(name: &str) -> bool {
+    std::env::args().any(|a| a == name)
 }
 
 fn arg_value(name: &str) -> Option<String> {
@@ -233,6 +281,10 @@ struct Replayer {
     verbose: bool,
     think: Duration,
     spell: Option<SpellMap>,
+    /// --oracle: take an alternative whose next word is right.
+    oracle: bool,
+    /// --on-demand: ask for alternatives when the suggestion is wrong and came with none.
+    on_demand: bool,
 }
 
 /// Spell checker verdicts precomputed by tools/spell-map (the app's own Speller).
@@ -285,7 +337,7 @@ impl Replayer {
             }
         }
         let spell = arg("--spell").map(|p| serde_json::from_str(&std::fs::read_to_string(p).expect("read spell map")).expect("spell map json"));
-        Self { core, rx, rev: 0, verbose, think: Duration::ZERO, spell }
+        Self { core, rx, rev: 0, verbose, think: Duration::ZERO, spell, oracle: has_flag("--oracle"), on_demand: has_flag("--on-demand") }
     }
 
     /// Types `text[prime..prime+max]` after `text[..prime]` in field `field_key`.
@@ -316,9 +368,11 @@ impl Replayer {
             let mut suggestion = String::new();
             // A detail other than a name is accepted whole: take it only if all of it is next.
             let mut whole = false;
+            let mut alts: Vec<String> = Vec::new();
+            let mut continuation = false;
             loop {
                 match self.rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, reason, replace, label, .. }) if revision == rev => {
+                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, reason, replace, label, alternatives, .. }) if revision == rev => {
                         if source == "pending" {
                             continue;
                         }
@@ -337,6 +391,11 @@ impl Replayer {
                             st.prefills.push(prefilled.unwrap_or(0) as f64);
                         }
                         whole = source == "details" && label.as_deref() != Some("name");
+                        continuation = source != "details" && !text.is_empty();
+                        if continuation {
+                            st.with_alts[alternatives.len().min(3)] += 1;
+                        }
+                        alts = alternatives;
                         suggestion = text;
                         break;
                     }
@@ -363,6 +422,45 @@ impl Replayer {
                     typed.push_str(&insert);
                     i += insert.chars().count();
                     continue;
+                }
+            }
+            if continuation && alts.is_empty() && self.on_demand {
+                // The on-demand key: answered at once or after a wider search.
+                let t = Instant::now();
+                self.core.request_alternatives(snap(rev, &typed));
+                st.demands += 1;
+                loop {
+                    match self.rx.recv_timeout(Duration::from_secs(5)) {
+                        Ok(Event::Suggestion { revision, source: "alternatives", alternatives, .. }) if revision == rev => {
+                            st.demand_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+                            st.demands_found += usize::from(!alternatives.is_empty());
+                            alts = alternatives;
+                            break;
+                        }
+                        Ok(_) => continue,
+                        Err(_) => break,
+                    }
+                }
+            }
+            if let Some(k) = alts.iter().position(|a| {
+                let w = words::take_words(a, 1);
+                !w.is_empty() && upcoming.starts_with(w)
+            }) {
+                st.alt_right[k.min(2)] += 1;
+                if self.oracle {
+                    if let Some(insert) = self.core.accept_alternative(k).map(|a| a.insert) {
+                        if self.verbose {
+                            eprintln!("  OPTION+{} {:?}  (showing {:?}, alternatives {:?})", k + 1, insert, suggestion, alts);
+                        }
+                        st.alt_accepts += 1;
+                        st.alt_accepted_chars += insert.chars().count();
+                        st.accepts += 1;
+                        st.accepted_chars += insert.chars().count();
+                        st.keystrokes += 1;
+                        typed.push_str(&insert);
+                        i += insert.chars().count();
+                        continue;
+                    }
                 }
             }
             typed.push(chars[i]);
@@ -1098,7 +1196,8 @@ fn main() {
     }
     let length_words: usize = flag("--words").and_then(|s| s.parse().ok()).unwrap_or(4);
     let beam_width: usize = flag("--beam").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let mut settings = Settings { length_words, beam_width, prefetch: !has("--no-prefetch"), ..Settings::default() };
+    let mut settings =
+        Settings { length_words, beam_width, prefetch: !has("--no-prefetch"), alternatives: has("--alternatives"), ..Settings::default() };
     let notes = match flag("--instructions") {
         Some(p) => Some(instructions::parse(&std::fs::read_to_string(p).expect("read instructions")).expect("instructions json")),
         None => has("--default-instructions").then(instructions::defaults),
