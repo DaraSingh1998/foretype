@@ -150,12 +150,13 @@ are kept for if that changes; the core stays portable.
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.
-- **Release** (D36): the pipeline is built and tested locally: self-signed "Foretype"
-  identity, EdDSA update key, feed on the latest release, tag-triggered workflow,
-  `scripts/release.sh`, `install.sh`, silent update on idle. Left: the signing backup and
-  update key as repository secrets, the repository made public, the first workflow run
-  (v0.1.0), a clean-account install test and a v0.1.1 update test. Later, optionally: a
-  Developer ID with notarization (one re-grant for everyone), and a Homebrew tap.
+- **Release** (D36): live since 2026-10-22: the signing backup and update key are
+  repository secrets, the repository is public, and 0.1.0 to 0.1.7 were published by the
+  release workflow (GitHub started no run for the tag pushes, so `scripts/release.sh`
+  starts it by hand on the tag). Left: a clean-account install test, and watching an
+  installed copy update itself from a GitHub release (so far only the local-feed test,
+  `scripts/sparkle-local-test.sh`, checks the update path). Later, optionally: a Developer
+  ID with notarization (one re-grant for everyone), and a Homebrew tap.
 
 ## Known limitations
 
