@@ -298,3 +298,16 @@ pub extern "C" fn ft_model_catalog(ram_gb: u32) -> *mut c_char {
 pub extern "C" fn ft_default_instructions() -> *mut c_char {
     to_c(serde_json::to_string(&crate::instructions::defaults()).unwrap_or_else(|_| "{}".into()))
 }
+
+/// The website a page URL belongs to, for keying a website's instructions: `{"host":
+/// "mail.google.com", "domain": "google.com"}` (lowercase, no port or leading "www."; the
+/// domain is the host itself when it has no shorter one), or `null` for a page that isn't
+/// http(s) or a null `url`. Needs no engine.
+///
+/// # Safety
+/// `url` must be null or a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_site_of(url: *const c_char) -> *mut c_char {
+    let site = read_str(url).and_then(crate::instructions::site_of);
+    to_c(serde_json::to_string(&site).unwrap_or_else(|_| "null".into()))
+}

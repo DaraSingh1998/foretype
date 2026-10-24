@@ -71,6 +71,11 @@ char *ft_model_catalog(uint32_t ram_gb);
 /// The custom instructions a fresh install starts with: {"global", "apps": {bundle id: note}}.
 char *ft_default_instructions(void);
 
+/// The website of a page URL, for keying its instructions ("site_instructions" in the
+/// settings): {"host": "mail.google.com", "domain": "google.com"}, or null for a page that
+/// isn't http(s). Free with ft_string_free.
+char *ft_site_of(const char *url);
+
 void ft_string_free(char *s);
 
 #ifdef __cplusplus

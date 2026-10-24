@@ -96,6 +96,10 @@ pub struct Settings {
     pub instructions: String,
     /// Extra instructions per bundle ID, appended after the global ones.
     pub app_instructions: HashMap<String, String>,
+    /// Extra instructions per website, appended after the app's (in a web field whose page
+    /// URL the snapshot carries). A key is a host ("mail.google.com") or "*." and a domain
+    /// ("*.google.com": the domain and every host under it); see `instructions::site_notes`.
+    pub site_instructions: HashMap<String, String>,
     pub disabled_apps: Vec<String>,
     pub enabled_apps: Vec<String>,
     /// When non-empty, suggest only in these apps (development and testing safety net).
@@ -146,12 +150,14 @@ impl Settings {
         }
     }
 
-    fn instructions_for(&self, bundle_id: &str) -> String {
-        match self.app_instructions.get(bundle_id).map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            Some(app) if !self.instructions.trim().is_empty() => format!("{} {}", self.instructions.trim(), app),
-            Some(app) => app.to_string(),
-            None => self.instructions.trim().to_string(),
+    /// The writer's notes for a field: the note for all apps, the app's and the website's,
+    /// within `instructions::NOTES_CAP` (the earlier ones give way).
+    fn instructions_for(&self, bundle_id: &str, url: &str) -> String {
+        let mut notes = vec![self.instructions.as_str(), self.app_instructions.get(bundle_id).map_or("", String::as_str)];
+        if !url.is_empty() {
+            notes.extend(instructions::site_notes(&self.site_instructions, url));
         }
+        instructions::assemble(&notes, instructions::NOTES_CAP)
     }
 }
 
@@ -164,6 +170,7 @@ impl Default for Settings {
             stop_at_sentence_end: true,
             instructions: String::new(),
             app_instructions: HashMap::new(),
+            site_instructions: HashMap::new(),
             disabled_apps: Vec::new(),
             enabled_apps: Vec::new(),
             only_apps: Vec::new(),
@@ -739,6 +746,9 @@ impl Core {
             }
             return self.emit_suggestion(rev, String::new(), "policy", Some(reason.into()));
         }
+        // Against the text the shell sent, as `dismiss` got it (before a terminal's is cut to
+        // its agent prompt below).
+        let dismissed = !snap.force && self.shared.session.lock().unwrap().is_dismissed(snap.field_key, &snap.text_before);
         // In a terminal only the agent prompt's own text is the document; the scrollback
         // above it reaches the model as screen context instead.
         if self.shared.compat.rule(&snap.bundle_id).agent_prompt_only && !enabled.contains(&snap.bundle_id) {
@@ -750,11 +760,9 @@ impl Core {
             self.observe(&snap, &snap.text_before, true);
         }
         {
-            let mut session = self.shared.session.lock().unwrap();
-            if !snap.force && session.is_dismissed(snap.field_key, &snap.text_before) {
+            if dismissed {
                 return self.emit_suggestion(rev, String::new(), "dismissed", None);
             }
-            drop(session);
             // Before type-through: a model that continues a misspelling ("recie" → "ve the")
             // must not carry the user past the typo gate and autocorrect.
             if let Some(handled) = self.typing_aids(&snap, &settings) {
@@ -983,7 +991,7 @@ fn body_reserve(max_body_chars: usize) -> usize {
 /// and warm); otherwise the current section is reused (the prefetch, which must not move
 /// the selection the next keystroke's prompt starts from).
 fn build_prompt(shared: &Shared, snap: &Snapshot, settings: &Settings, examples: &[String], select: bool) -> Prompt {
-    let instructions = settings.instructions_for(&snap.bundle_id);
+    let instructions = settings.instructions_for(&snap.bundle_id, &snap.url);
     let writer = shared.writer.read().unwrap().clone();
     let mut input = ContextInput {
         other_apps: "",
@@ -1509,6 +1517,52 @@ mod tests {
 
     fn accept_here(c: &Core) {
         c.shared.track.lock().unwrap().as_mut().unwrap().accepted = true;
+    }
+
+    #[test]
+    fn a_dismissal_holds_on_a_terminal_agent_prompt() {
+        let sources = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let seen = sources.clone();
+        let c = Core::new(
+            CoreConfig { model_path: "/nonexistent.gguf".into(), ..CoreConfig::default() },
+            Box::new(move |ev| {
+                if let Event::Suggestion { source, .. } = ev {
+                    seen.lock().unwrap().push(*source);
+                }
+            }),
+        );
+        let mut sn = snap(5, "$ claude\n\n> fix the failing te");
+        (sn.bundle_id, sn.revision) = ("com.apple.Terminal".into(), 1);
+        c.dismiss(5, &sn.text_before);
+        c.submit(sn.clone());
+        assert_eq!(sources.lock().unwrap().last(), Some(&"dismissed"));
+        // Typing on brings suggestions back.
+        (sn.text_before, sn.revision) = ("$ claude\n\n> fix the failing tes".into(), 2);
+        c.submit(sn);
+        assert_ne!(sources.lock().unwrap().last(), Some(&"dismissed"));
+    }
+
+    #[test]
+    fn website_notes_follow_the_app_note() {
+        let json = r#"{"instructions": "Plain words.", "app_instructions": {"com.google.Chrome": "Browser."},
+            "site_instructions": {"mail.google.com": "Gmail: short replies.", "*.google.com": "Google."}}"#;
+        let s: Settings = serde_json::from_str(json).unwrap();
+        let chrome = "com.google.Chrome";
+        assert_eq!(s.instructions_for(chrome, "https://mail.google.com/mail/u/0/#inbox"), "Plain words. Browser. Google. Gmail: short replies.");
+        assert_eq!(s.instructions_for(chrome, "https://docs.google.com/document/d/1"), "Plain words. Browser. Google.");
+        assert_eq!(s.instructions_for(chrome, "https://example.com/"), "Plain words. Browser.");
+        assert_eq!(s.instructions_for(chrome, ""), "Plain words. Browser.");
+        assert_eq!(s.instructions_for("com.apple.TextEdit", "https://mail.google.com/"), "Plain words. Google. Gmail: short replies.");
+        // Settings from before website notes: none.
+        let old: Settings = serde_json::from_str(r#"{"instructions": "Plain words."}"#).unwrap();
+        assert!(old.site_instructions.is_empty());
+        assert_eq!(old.instructions_for(chrome, "https://mail.google.com/"), "Plain words.");
+        // In the prompt header.
+        let c = core();
+        let mut sn = snap(1, "Hi Sam, thanks for");
+        (sn.bundle_id, sn.app_name, sn.url) = (chrome.into(), "Google Chrome".into(), "https://mail.google.com/mail/u/0/#inbox".into());
+        let p = build_prompt(&c.shared, &sn, &s, &[], false);
+        assert!(p.prefix.contains("[Writer's notes: Plain words. Browser. Google. Gmail: short replies.]\n"), "{}", p.prefix);
     }
 
     #[test]
