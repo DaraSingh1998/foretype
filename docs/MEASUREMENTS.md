@@ -1290,6 +1290,30 @@ after a warm-up run, the capture itself not timed:
   still not read again). Each refresh now logs its CPU time
   (`context: switch refresh, … OCR … ms, CPU … ms`).
 
+## Website notes: no change without one (2026-10-24)
+
+Qwen3-1.7B-Base Q4_K_M (the default tier; a copy left from the Phase 0 spike, as only Gemma 4
+E2B was in the Models folder that day), full corpus (53 documents, 12,704 characters),
+built-in engine, Metal, `ft-replay MODEL --corpus eval/corpus.jsonl` with and without
+`--default-instructions`, on `main` (25924c7) and on `feat/site-instructions-esc`, where the
+notes are joined by `instructions::assemble` with website notes after the app's (D49). The
+corpus has no page URLs, so no website note applies: the check is that the notes line, and
+so every prompt, is unchanged.
+
+| Notes | Build | Keystrokes saved | Chars per accept | Accepts | Sources (model / policy / typeThrough) |
+|---|---|---:|---:|---:|---|
+| None | main | 41.9% | 3.68 | 1,985 | 3,063 / 112 / 4,203 |
+| None | branch | 41.9% | 3.68 | 1,985 | 3,063 / 112 / 4,203 |
+| Shipped defaults | main | 41.9% | 3.71 | 1,967 | 3,071 / 112 / 4,199 |
+| Shipped defaults | branch | 41.9% | 3.71 | 1,967 | 3,071 / 112 / 4,199 |
+
+- Identical counts both ways; latency is within run-to-run noise (model p50 77–81 ms).
+- On Qwen3-1.7B the default note for all apps leaves keystrokes saved where they were
+  (41.9% both; 3.71 against 3.68 characters per accept); on Gemma 4 E2B it added 0.7 points
+  (Default instructions, above). The first Qwen measurement of it.
+- A unit test (`notes_join_and_the_oldest_gives_way`) checks that every bundled default
+  joins to the same text as before.
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

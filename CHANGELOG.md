@@ -5,6 +5,23 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Instructions for a website, and a choice of what Esc does (2026-10-24)
+- Custom instructions can now be kept for a website: when the last place you typed was a
+  web page, **Custom Instructions…** has a third note, **For this website**, that applies
+  to that page's host (mail.google.com) or, under **Applies to**, to all of its domain
+  (google.com and everything under it). It is added after the notes for all apps and for
+  the app. Settings ▸ Personalization lists your website notes with Edit… and Remove.
+- When the notes are longer than the prompt keeps (400 characters), the website's and then
+  the app's note are kept whole and the note for all apps is shortened, instead of the most
+  specific note losing its end.
+- New in Settings ▸ Typing: **Esc**. By default Esc now dismisses the suggestion and keeps
+  that field quiet for 5 seconds, so you can type on without a new guess after every key.
+  It can instead switch suggestions off in the app until you switch to another app (the
+  menu shows it, with Resume), or be left alone so Esc always goes to the app. With no
+  suggestion showing, Esc goes to the app as before.
+- Fixed: Esc on an AI-agent prompt in a terminal brought the suggestion straight back on
+  the next read.
+
 ## 0.1.7 (2026-10-24)
 
 ### See what Foretype reads from other apps (2026-10-24)

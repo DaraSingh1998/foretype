@@ -835,3 +835,54 @@ its window and its text, so one whose text changed since the prompt (the window 
 again) counts as gone, though its window is still listed. Forget All Now also drops saved
 contexts that held no other apps' text (D47's reset is all or nothing). Recording the report
 takes one more lock of the pool per request.
+
+## D49. Website notes keyed by host or domain, the most specific note kept whole; Esc's three behaviours with a 5-second field pause (2026-10-24)
+
+**Decision.** The two Cotypist-parity features left from the feature plan:
+- **Website notes are keyed by host or by domain.** A key is a host ("mail.google.com") or
+  "*." and a domain ("*.google.com": the domain and every host under it). The Custom
+  Instructions window offers both for the page the user was last on (Applies to:
+  mail.google.com / All of google.com) as two separate notes; on a page where both apply
+  the domain's comes first. Hosts are compared lowercase, without port, user or a leading
+  "www."; only http and https pages have a website. The domain is computed in the core
+  (`instructions::base_domain`, `ft_site_of`) from a short rule, not the Public Suffix
+  List: the last two labels, three under a shared country second level (co.uk, com.au,
+  gov.in, ...), and the host itself on hosting services whose subdomains belong to
+  different people (github.io, pages.dev, vercel.app, ...). Settings ▸ Personalization
+  lists the notes to edit or remove; new ones come from the Custom Instructions window,
+  where the host is known.
+- **The note cap trims the least specific note.** The joined notes keep their 400
+  characters, but from the end: the website's note whole, then the app's, and the one before
+  the first that doesn't fit is cut at a word with "…" (anything earlier is left out).
+  Before, the joined text was cut at 400 characters from the start, so the app's note was
+  the part lost.
+- **Esc has three behaviours** (Settings ▸ Typing, Cotypist's): dismiss and pause this
+  field briefly (the default), turn suggestions off in this app until another app comes to
+  the front, or leave Esc alone (never taken). With no suggestion showing Esc always goes to
+  the app, as before. The pause is **5 seconds** and covers only the dismissed field.
+- **The Esc state lives in the shell** (`EscState`, pure, `--esc-selftest`). During a field
+  pause each snapshot is dismissed at its own text and still submitted, so the core keeps
+  seeing the field (personalization) and answers with nothing; an app switched off is
+  treated like a snoozed app. No FFI change. The core now checks a dismissal against the
+  text the shell sent, before a terminal's text is cut to its agent prompt (a dismissal
+  never held there before).
+
+**Why.** A host is what people mean by "this website" in most cases (Gmail, not all of
+Google), but a whole domain is the natural unit for a company's own tools, so both are
+offered and neither is guessed. A rule of a few lines gets the domain right for the sites
+people write on; the Public Suffix List (about 200 KB, updated monthly) would only matter
+for the rare hosting service, which the short list covers. The more specific a note, the
+more it says about the field at hand, so it is the one to keep: a site note that lost its
+end to a long global note would silently stop working. Five seconds is about three words at
+an average 40 words a minute (five at 70): long enough to type the phrase Foretype guessed
+wrong without a new guess after every key, which is what the old Esc did (the next key
+brought one back), and short enough that suggestions are back for the next sentence, so a
+pause never looks like Foretype stopped; nothing reappears on its own afterwards because
+the dismissed text still gets none. Keeping the state in the shell keeps the core's
+interface as it was, and app activation is a platform event anyway.
+
+**Cost.** A domain rule can be wrong for an unusual suffix (a note for "All of" such a
+domain would apply more widely or not be offered); the host note still works. With notes
+longer than the cap, the cut moves from the app's note to the global one. During a field pause no screen text or caret search is
+refreshed for that field (5 seconds). Switching to Foretype's own windows does not count as
+switching apps.

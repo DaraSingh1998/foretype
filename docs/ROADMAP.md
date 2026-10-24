@@ -15,7 +15,9 @@ from Mac MVP to Linux"), adjusted as the work went.
 
 Since Phase 4: the pixel caret locator (D31, `feat/pixel-caret`); pause and power-aware
 pausing (D39, `feat/pause`); a waiting update shown in the menu and Settings (D40); text
-from other apps, opt-in (D42, D44, D47, D48; the cross-app context plan below is done).
+from other apps, opt-in (D42, D44, D47, D48; the cross-app context plan below is done);
+custom instructions per website and a choice of what Esc does, the last two Cotypist-parity
+features of the feature plan (D49, `feat/site-instructions-esc`).
 
 ## Cross-app context (planned 2026-10-23, done 2026-10-24)
 
@@ -146,7 +148,8 @@ are kept for if that changes; the core stays portable.
   country code. (One set of details with exact fills and a writer line landed.)
 - **Product**: more languages (English and Hindi so far). (Settings window, statistics,
   model manager polish, downloads that resume after a relaunch, adding an app from the
-  Settings window, the Apple on-device fallback and localization landed.)
+  Settings window, the Apple on-device fallback, localization, per-website instructions
+  and the Esc setting landed.)
 - **Measurement**: base M1 and M4 benchmarks (`scripts/bench-mac.sh` on those Macs), CPU and
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.
