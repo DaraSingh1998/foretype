@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.8 (2026-10-25)
+
 ### Instructions for a website, and a choice of what Esc does (2026-10-24)
 - Custom instructions can now be kept for a website: when the last place you typed was a
   web page, **Custom Instructions…** has a third note, **For this website**, that applies
