@@ -101,7 +101,9 @@ In order; the first rule that applies decides:
 7. Dismissed for exactly this text (unless forced) → hide (`dismissed`).
 8. **Type-through**: the text extends the shown suggestion's base by a prefix of the
    suggestion, or backspaces up to 24 characters into it → emit the rest (`typeThrough`),
-   no inference.
+   no inference. Its word alternatives (D50) follow: those that start with the typed text
+   keep their rest, a backspace gives them the deleted text back, and any that now share a
+   first word with the suggestion or each other go.
 9. **Typing aids** (no model): one of the user's details the text asks for, at the end of
    a line → its exact value (`details`; see *Your details* below); an `:name` emoji shortcode at a word start → the best
    gemoji match as a replacement (`emoji`; no match → hide, `shortcode`); a misspelled word
@@ -111,8 +113,8 @@ In order; the first rule that applies decides:
    can't become a word (`spell_fragment: "typo"`) → hide (`typo`), unless capitalized, with
    digits, shorter than 3 letters or a prefix of the user's own words.
 10. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
-   prefetch → emit (`cache`). Skipped mid-line (the key doesn't hold the text after the
-   caret).
+   prefetch → emit (`cache`), with the alternatives cached alongside. Skipped mid-line (the
+   key doesn't hold the text after the caret).
 11. Build the prompt (personal examples are chosen once per field and cached; the other-apps
     section is selected for this text, see *Other apps' text* below) and enqueue a
     `Complete` job; emit an empty `pending` event so the shell hides the stale ghost.
@@ -167,6 +169,20 @@ never while paused.
   complete the prompt for `text_before + suggestion` and `remember` it in the session cache.
   It reuses the current other-apps section without selecting again (the next keystroke's
   prompt starts from it). It is cancelled as soon as any job is queued.
+- **Word alternatives** (D50, `settings.alternatives`): a completion's other phrases
+  (`Completion::alternatives`, from the beam search) go through `strip_marker_echo` and
+  `alternatives::distinct` (at most 3, none blank, each with a first word, compared without
+  case or trailing punctuation, that neither the suggestion nor an earlier one has) and
+  travel with the suggestion: in the event, the session and the cache (prefetches' too).
+  `request_alternatives(snapshot)` (the shell's on-demand key) answers for the continuation
+  showing for exactly that snapshot's text, if it is the latest: at once with the known
+  ones, or with none after an on-demand search already ran or without a built-in engine;
+  otherwise it queues an `Alternatives` job, which runs the prompt like a request (`serve`:
+  D47's planning and the too-long fallback) with `max(beam_width, ON_DEMAND_BEAMS = 6)`
+  beams and alternatives on, takes its best phrase and its others as candidates against the
+  suggestion showing, stores them only if that suggestion still shows for that text
+  (`set_alternatives`), and emits them (`source: alternatives`). Typing cancels it like any
+  job; it cancels a running prefetch.
 
 ### Engine (`engine.rs`)
 
@@ -215,7 +231,14 @@ never while paused.
   prompt, so nothing is rolled back), one batched decode per step, the `beam_width` best
   children by summed log-probability survive, the same healing, bias and stops as greedy
   (`stop_before`), and the finished phrase with the best mean log-probability wins (its
-  first word may differ from greedy's). Recurrent models stay greedy.
+  first word may differ from greedy's). Recurrent models stay greedy. With
+  `GenOptions::alternatives` it also returns the other phrases, best mean first: every
+  finished or unfinished phrase but the winner, plus every beam it let go (none of its
+  children kept) at a word end, where its own best next token starts a new word
+  (`starts_after_word`: a space, newline, punctuation other than an apostrophe or hyphen, or
+  end of text). The winner is picked from exactly the same candidates as without it, and
+  nothing more is decoded. Each goes through the suggestion's own clean-up (`shown_text`),
+  with a word cut short dropped from unfinished ones.
 - **Greedy decoding** with stops: newline; the next word would exceed `max_words`; a
   sentence end before a new word (`stop_at_sentence_end`); end-of-generation token; a
   deadline (`deadline_ms`, default 300 ms, counted from the end of prefill: `sync` waits
@@ -403,6 +426,12 @@ dismissal marker.
   "", replace }` and the shell deletes `replace` (Backspace per character) before
   inserting; replacements are never typed through or cached.
 - `remember`: cache-only insert used by the prefetch.
+- **Alternatives** (D50): `set`, `set_uncached` and `remember` take the continuation's
+  alternatives; the cache keeps them. `accept_alternative(i)` makes alternative `i` the
+  suggestion and takes its next word (`accept(NextWord)`); any accept clears them (they
+  were for the text before it). `alternatives_for` and `set_alternatives` serve on-demand
+  requests (a model continuation only, `plain`: never a replacement or a fill), and
+  `searched` marks that one ran for this text.
 - **Fills** (`set_fill`): one of the user's details, a continuation or (case differs) a
   replacement; `whole` makes either key accept all of it. Not cached, not typed through.
 
@@ -488,6 +517,8 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_submit(engine, snapshot_json)` | Field changed |
 | `ft_engine_warm(engine, snapshot_json)` | Prefill a newly focused field |
 | `ft_engine_accept(engine, mode)` | 0 next word, 1 all → `{"insert","remaining","replace"}` or NULL (delete `replace` before the caret first) |
+| `ft_engine_accept_alternative(engine, index)` | Word alternatives (D50): the next word of alternative `index` (0-based, as the last event listed them), which becomes the suggestion → `{"insert","remaining","replace": ""}` or NULL |
+| `ft_engine_alternatives(engine, snapshot_json)` | Alternatives on demand to the suggestion showing for this (latest) snapshot: answered with a `suggestion` event, `source` `alternatives` |
 | `ft_engine_dismiss(engine, field_key, text_before)` | Esc |
 | `ft_engine_configure(engine, settings_json)` | Replace settings |
 | `ft_engine_set_details(engine, details_json)` | The user's own details (below); returns false if the JSON doesn't parse |
@@ -512,7 +543,7 @@ text}, `disabled_apps`, `enabled_apps`,
 `only_apps`, `deadline_ms` (300), `max_body_chars` (1600), `unload_after_s` (300),
 `debounce_ms` (0), `prefetch` (true), `personalize` (false), `personalize_strength` (1),
 `personal_examples` (true), `emoji` (true), `autocorrect` (true), `typo_gate` (true),
-`mid_line` (false), `beam_width` (1), `other_apps_tokens` (512).
+`mid_line` (false), `beam_width` (1), `alternatives` (false), `other_apps_tokens` (512).
 
 **UserDetails** (`ft_engine_set_details`): `name`, `email`, `phone`, `company`, `job_title`,
 `address`, `website` (strings, empty = unset or switched off), `in_prompt` (false).
@@ -545,6 +576,8 @@ placeholder), `text_before`, `text_after` (rest of the caret line), `screen_cont
 {"type":"suggestion","revision":43,"text":"","source":"policy","reason":"secureField"}
 {"type":"suggestion","revision":44,"text":"🎉","source":"emoji","replace":":ta","label":":tada:"}
 {"type":"suggestion","revision":45,"text":"ya.raman@example.com","source":"details","label":"email"}
+{"type":"suggestion","revision":46,"text":" the draft","source":"model","ms":88.4,"prefilled":1,"stop":"words","alternatives":[" your notes"," a quick look"]}
+{"type":"suggestion","revision":47,"text":"iel,","source":"alternatives","ms":104.0,"alternatives":["ny,","a"]}
 {"type":"status","state":"ready","detail":"loaded in 846 ms"}
 {"type":"status","state":"paused","detail":"model unloaded"}
 ```
@@ -552,8 +585,12 @@ placeholder), `text_before`, `text_after` (rest of the caret line), `screen_cont
 `status` states: `loading`, `ready`, `idle` (model unloaded after `unload_after_s`, or just
 resumed), `paused`, `error`.
 
-`source`: `model`, `typeThrough`, `cache`, `pending`, `policy`, `dismissed`, `error`,
-`emoji`, `autocorrect`, `details`. An empty `text` means hide. `replace` (with `label`) marks a
+`source`: `model`, `typeThrough`, `cache`, `alternatives`, `pending`, `policy`, `dismissed`,
+`error`, `emoji`, `autocorrect`, `details`. An empty `text` means hide. `alternatives`
+(omitted when there are none; only with `settings.alternatives`): up to three other phrases
+for the same text, best first, each starting with its own word, on `model`, `cache` and
+`typeThrough` continuations; source `alternatives` is the answer to
+`ft_engine_alternatives`, with the same `text` and possibly no `alternatives`. `replace` (with `label`) marks a
 replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace` on accept. For
 `details`, `label` names the detail (`name`, `email`, `phone`, `company`, `job_title`,
 `address`, `website`); the shell draws a small tag ("your email") after the ghost text and
@@ -689,12 +726,18 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   (⇥ suggestion) above the field, or below it when above would leave the field's display. `advance` shifts the ghost after an accept until the host reports the new
   caret. Mid-line suggestions show as a card just under the caret (inline ghost text would
   overlap the rest of the line); `showHint` shows a tip card for 8 s without turning on the
-  key tap.
+  key tap. Word alternatives (D50) have a second panel, `showPicker`: a numbered card
+  ("⌥1  word rest", the word the key takes first in full colour) under the ghost text's
+  line or the mid-line card, above it when that leaves the display, above a mirror card;
+  "No alternatives" when an on-demand answer had none. It hides with the suggestion.
 - **`KeyTap.swift`**: a permanent listen-only session tap (notices typing) and a consuming
   head-inserted session tap that is enabled only while a suggestion is visible (disabled 50
   ms after it hides, so the last synthetic key drains). Consumes Tab (next word), the key
   above Tab (` on ANSI, § on ISO: accept all), Esc (dismiss, unless `escBehavior` is
-  `passThrough`: `EscState.consumes`), Option+Tab (real Tab), and swallows their key-ups. Ignores events carrying the inserter's marker. Re-enables itself
+  `passThrough`: `EscState.consumes`), Option+Tab (real Tab), and swallows their key-ups.
+  With word alternatives (`picker`, set by the Controller): Option+0 while a model
+  continuation shows, Option+1…3 (the number row's key codes, whatever the layout types)
+  while the card shows that many, and Esc closes only the card while it is up. Ignores events carrying the inserter's marker. Re-enables itself
   on `tapDisabledByTimeout`. `stop()` (pause) turns both taps off, so macOS delivers no key
   events at all; `start()` turns the listen tap back on.
 - **`Inserter.swift`**: keystrokes posted at the annotated session tap with marker
@@ -734,7 +777,14 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   sees the text); with `offInApp` the app is treated like a snoozed one (nothing submitted)
   until `didActivateApplication` brings another app, not Foretype, to the front. Force,
   pause, the menu's Resume and a new behaviour reset it. `--esc-selftest` checks the state
-  logic.
+  logic. Word alternatives (`Alternatives.swift`, D50): a `PickerState` (pure,
+  `--alternatives-selftest`) per suggestion revision; a plain continuation's event arms a
+  0.8 s timer (`PickerState.pause`) after which the card shows if it has items, wasn't
+  closed and no other key came (the listen tap's keys restart the pause; an Esc left to the
+  app closes it); Option+0 shows, closes or asks (`requestAlternatives`, the answer opening
+  the card); Option+N accepts through `acceptAlternative` and `advance`s the ghost to the
+  alternative's rest; any accept, hide or new non-plain suggestion resets it. Rows read as
+  whole words (`PickerState.display`: the word being typed + the alternative's rest).
 - **`ScreenContext.swift`**: on a new field (50 ms) or after a 1.5 s typing pause at most
   every 15 s: `SCShareableContent` → the focused window (the app's window holding the
   field's centre, `ScreenGeometry.windowIndex`; none if no window does) →

@@ -2,23 +2,30 @@ import ApplicationServices
 import Carbon
 import Foundation
 
-enum KeyAction {
+enum KeyAction: Equatable {
     case acceptWord
     case acceptAll
     case dismiss
     /// Option+Tab: the user wants a real Tab even though a suggestion is showing.
     case passTab
+    /// Word alternatives (D50): Option+1 to Option+3 take that alternative's next word.
+    case acceptAlternative(Int)
+    /// Option+0: show the alternatives card now (asking the core if none came), or close it.
+    case showAlternatives
+    /// Esc over the alternatives card: it closes; the suggestion stays.
+    case closeAlternatives
 }
 
 /// Two session event taps on one dedicated thread (Cotabby's design):
 /// - a permanent listen-only tap that notices typing and can never stall input;
 /// - a consuming tap that is enabled only while a suggestion is visible and swallows
 ///   Tab (next word), the key above Tab (everything) and Esc (dismiss, unless the user chose
-///   to leave Esc alone: `escBehavior`).
+///   to leave Esc alone: `escBehavior`); with word alternatives on (`picker`), Option+0 and,
+///   while their card shows, Option+1 to Option+3 and Esc (which then closes only the card).
 /// Callbacks never block and never call Accessibility.
 final class KeyTap {
-    /// Tap thread: the user pressed a key (not one of ours).
-    var onKeyDown: (() -> Void)?
+    /// Tap thread: the user pressed a key (not one of ours); its key code.
+    var onKeyDown: ((Int64) -> Void)?
     /// Tap thread: a suggestion key was consumed.
     var onAction: ((KeyAction) -> Void)?
 
@@ -34,13 +41,31 @@ final class KeyTap {
     private var swallowedUps = Set<Int64>()
 
     private let tabKey: Int64 = 48
-    private let escKey: Int64 = 53
+    let escKey: Int64 = 53
+    /// The number row's 0, 1, 2 and 3 (kVK_ANSI_0…3), whatever they type on the layout.
+    private let digitKeys: [Int64: Int] = [29: 0, 18: 1, 19: 2, 20: 3]
     /// The physical key above Tab: ` on ANSI keyboards, § on ISO.
     let acceptAllKey: Int64 = Int(KBGetLayoutType(Int16(LMGetKbdType()))) == Int(kKeyboardISO) ? 10 : 50
 
     private var isVisible: Bool {
         lock.lock(); defer { lock.unlock() }
         return visible
+    }
+
+    /// The word alternatives card's keys (D50).
+    struct Picker: Equatable {
+        /// Option+0 is taken: alternatives are on and the suggestion is the model's own text.
+        var onDemand = false
+        /// The card is up, with `items` alternatives for Option+1 to Option+`items`.
+        var card = false
+        var items = 0
+    }
+
+    private var _picker = Picker()
+    /// Which picker keys to take. Any thread.
+    var picker: Picker {
+        get { lock.lock(); defer { lock.unlock() }; return _picker }
+        set { lock.lock(); _picker = newValue; lock.unlock() }
     }
 
     private var _escBehavior = EscBehavior.pauseField
@@ -89,6 +114,7 @@ final class KeyTap {
         lock.lock()
         stopped = true
         visible = false
+        _picker = Picker()
         disableGeneration += 1
         lock.unlock()
         for port in [listenPort, activePort].compactMap({ $0 }) { CGEvent.tapEnable(tap: port, enable: false) }
@@ -127,7 +153,7 @@ final class KeyTap {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if !me.isStopped, let p = me.listenPort { CGEvent.tapEnable(tap: p, enable: true) }
         } else if type == .keyDown, event.getIntegerValueField(.eventSourceUserData) != Inserter.marker {
-            me.onKeyDown?()
+            me.onKeyDown?(event.getIntegerValueField(.keyboardEventKeycode))
         }
         return Unmanaged.passUnretained(event)
     }
@@ -148,12 +174,21 @@ final class KeyTap {
         }
         guard type == .keyDown, me.isVisible else { return Unmanaged.passUnretained(event) }
         let mods = event.flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift])
+        let picker = me.picker
         let action: KeyAction?
         switch (code, mods) {
         case (me.tabKey, []): action = .acceptWord
         case (me.tabKey, [.maskAlternate]): action = .passTab
         case (me.acceptAllKey, []): action = .acceptAll
-        case (me.escKey, []) where EscState.consumes(me.escBehavior, suggestionVisible: true): action = .dismiss
+        case (me.escKey, []) where EscState.consumes(me.escBehavior, suggestionVisible: true):
+            action = picker.card ? .closeAlternatives : .dismiss
+        case (_, [.maskAlternate]) where me.digitKeys[code] != nil:
+            let n = me.digitKeys[code]!
+            if n == 0 {
+                action = picker.onDemand ? .showAlternatives : nil
+            } else {
+                action = picker.card && n <= picker.items ? .acceptAlternative(n) : nil
+            }
         default: action = nil
         }
         guard let action else { return Unmanaged.passUnretained(event) }

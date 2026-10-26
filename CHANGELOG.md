@@ -5,6 +5,20 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Word alternatives (experimental) (2026-10-24)
+- New in Settings ▸ Typing: **Show alternatives (experimental)**, off by default. When you
+  pause with a suggestion on screen, a small numbered card under it lists up to three other
+  words Foretype considered, each a different next word. **Option-1, 2 or 3** takes that
+  word, and the rest of that alternative becomes the suggestion, so Tab goes on with it.
+  **Option-0** shows the card at once (or closes it); Esc closes just the card.
+- On mains power the alternatives cost nothing extra: they are the phrases Foretype's
+  3-wide search already weighs, and the suggestion itself is unchanged. On battery, where
+  Foretype searches one phrase to save energy, the card only comes when you press Option-0,
+  which runs one wider search for that text.
+- Foretype takes Option-1 to 3 only while the card shows, and Option-0 only while a
+  suggestion shows. On keyboards where those keys type something (# is Option-3 on a
+  British layout), press another key first or leave the setting off.
+
 ## 0.1.8 (2026-10-25)
 
 ### Instructions for a website, and a choice of what Esc does (2026-10-24)

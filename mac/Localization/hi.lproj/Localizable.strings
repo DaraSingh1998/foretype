@@ -212,11 +212,14 @@
 "Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before." = "दोनों आपकी भाषाओं में macOS की वर्तनी जाँच का उपयोग करते हैं, और नाम, संक्षिप्त रूप और आपके पहले लिखे शब्द छोड़ देते हैं।";
 "Suggest in the middle of a line (experimental)" = "पंक्ति के बीच में भी सुझाव दें (प्रायोगिक)";
 "Up to three words, shown in a small card under the caret." = "अधिकतम तीन शब्द, कर्सर के नीचे एक छोटे कार्ड में।";
+"Show alternatives (experimental)" = "विकल्प दिखाएँ (प्रायोगिक)";
+"When you pause, a numbered card under the caret lists other words Foretype considered. Option-1, 2 or 3 takes that word and Tab goes on with it; Option-0 shows the card at once (on battery, only then)." = "टाइप करना रोकने पर कर्सर के नीचे एक क्रमांकित कार्ड वे दूसरे शब्द दिखाता है जिन पर Foretype ने विचार किया। Option-1, 2 या 3 वह शब्द लेता है और Tab उसी के साथ आगे बढ़ता है; Option-0 कार्ड तुरंत दिखाता है (बैटरी पर सिर्फ़ तभी)।";
+"No alternatives" = "कोई विकल्प नहीं";
 "Esc:" = "Esc:";
 "Dismiss and pause in this field briefly" = "हटाएँ और इस फ़ील्ड में थोड़ी देर रुकें";
 "Turn suggestions off in this app until I switch apps" = "दूसरे ऐप पर जाने तक इस ऐप में सुझाव बंद करें";
 "Leave Esc alone" = "Esc को न छुएँ";
-"A pause keeps that field free of suggestions for %@ seconds. With no suggestion showing, Esc always goes to the app." = "रुकने पर उस फ़ील्ड में %@ सेकंड तक कोई सुझाव नहीं आता। जब कोई सुझाव नहीं दिख रहा हो, तब Esc हमेशा ऐप को जाता है।";
+"A pause keeps that field free of suggestions for %@ seconds. With no suggestion showing, Esc always goes to the app; with the alternatives card up, it closes only the card." = "रुकने पर उस फ़ील्ड में %@ सेकंड तक कोई सुझाव नहीं आता। जब कोई सुझाव नहीं दिख रहा हो, तब Esc हमेशा ऐप को जाता है; विकल्पों का कार्ड खुला हो, तो Esc सिर्फ़ कार्ड बंद करता है।";
 
 /* Settings ▸ Context */
 "Screen context:" = "स्क्रीन संदर्भ:";

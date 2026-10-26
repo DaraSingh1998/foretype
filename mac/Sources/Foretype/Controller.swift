@@ -54,6 +54,9 @@ final class Controller {
     private var shown: (fieldKey: UInt64, text: String, detail: AboutYou.Field?, midLine: Bool)?
     /// Main thread: whether a suggestion is on screen (an update waits until none is).
     var isShowingSuggestion: Bool { shown != nil }
+    /// Main thread: the word alternatives card (D50) and the pause before it shows by itself.
+    private var picker = PickerState()
+    private var pickerTimer: DispatchWorkItem?
 
     /// The user's details for the core (`AboutYou.coreJSON`); sent again to a new engine.
     var detailsJSON = "{}" {
@@ -95,7 +98,16 @@ final class Controller {
         screen.onUpdate = { [weak self] fieldKey, text in self?.screenTextArrived(fieldKey, text) }
         pixelCaret.onUpdate = { [weak self] fieldKey in self?.pixelCaretArrived(fieldKey) }
         pool.onChange = { [weak self] json in self?.contextChanged(json) }
-        keys.onKeyDown = { [weak self] in self?.tracker.keyDown() }
+        keys.onKeyDown = { [weak self] code in
+            guard let self else { return }
+            self.tracker.keyDown()
+            // Another key: the alternatives card goes, and its pause starts again (an Esc left
+            // to the app closes it for this suggestion).
+            if self.keys.picker.onDemand {
+                let esc = code == self.keys.escKey
+                DispatchQueue.main.async { self.otherKeyPressed(esc: esc) }
+            }
+        }
         keys.onAction = { [weak self] action in DispatchQueue.main.async { self?.perform(action) } }
         hotkeys.onAction = { [weak self] action in self?.hotkey(action) }
         hotkeys.register(keyAboveTab: UInt32(keys.acceptAllKey))
@@ -324,6 +336,7 @@ final class Controller {
             self.panel.show(text: shown.text, caret: updated.caret, frame: self.panelFrame(updated), font: updated.font,
                             midLine: shown.midLine, tag: shown.detail?.tag)
             self.keys.setSuggestionVisible(self.panel.isVisible)
+            if self.picker.visible { self.showPicker() } else { self.schedulePicker() }
             Log.debug("rev \(updated.revision) pixel caret moved the suggestion: show=\(self.panel.mode)")
         }
     }
@@ -379,7 +392,7 @@ final class Controller {
 
     private func handle(_ event: EngineEvent) {
         switch event {
-        case let .suggestion(revision, text, source, ms, replace, label):
+        case let .suggestion(revision, text, source, ms, replace, label, alternatives):
             let snap = latestSnapshot
             guard revision == snap.revision, !isPaused else { return }
             // One of the user's own details: tagged on screen, never written to the log.
@@ -401,6 +414,8 @@ final class Controller {
                 }
                 shown = (snap.fieldKey, display, detail, midLine)
                 keys.setSuggestionVisible(panel.isVisible)
+                updatePicker(revision: revision, alternatives: alternatives, answer: source == "alternatives",
+                             plain: replace.isEmpty && detail == nil)
             }
             if Log.enabled, source != "pending" {
                 let caret = snap.caret.map { "\($0.strategy) \(Int($0.rect.minX)),\(Int($0.rect.minY)) h\(Int($0.rect.height))" } ?? "none"
@@ -414,7 +429,8 @@ final class Controller {
                 let field = snap.frame.map { " field=\(Int($0.minY))+\(Int($0.height))" } ?? ""
                 let font = snap.font.map { " font=\($0.fontName) \(String(format: "%g", $0.pointSize))" } ?? ""
                 let at = panel.globalFrame.map { " at \(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? ""
-                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field)\(font) show=\(panel.mode)\(at) -> \(what)")
+                let alts = alternatives.isEmpty && source != "alternatives" ? "" : " alternatives=\(alternatives.count)"
+                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field)\(font) show=\(panel.mode)\(at)\(alts) -> \(what)")
             }
         case let .status(state, detail):
             Log.debug("engine \(state): \(detail)")
@@ -426,6 +442,72 @@ final class Controller {
         panel.hide()
         shown = nil
         keys.setSuggestionVisible(false)
+        resetPicker()
+    }
+
+    // MARK: Word alternatives (D50)
+
+    /// A suggestion is on screen with these alternatives (`answer`: the core's answer to the
+    /// on-demand key). Only the model's own text has any: not a replacement or a detail.
+    private func updatePicker(revision: UInt64, alternatives: [String], answer: Bool, plain: Bool) {
+        guard settings.alternatives, plain else { return resetPicker() }
+        if picker.shown(revision: revision, alternatives: alternatives, answer: answer, now: Date()) {
+            showPicker()
+        } else if !picker.visible {
+            panel.hidePicker()
+            schedulePicker()
+        }
+        syncPickerKeys()
+    }
+
+    /// The card shows by itself once typing has stopped for `PickerState.pause`.
+    private func schedulePicker() {
+        pickerTimer?.cancel()
+        pickerTimer = nil
+        guard picker.due(now: Date().addingTimeInterval(PickerState.pause)) else { return }
+        let item = DispatchWorkItem { [weak self] in
+            guard let self, self.picker.due(now: Date()), self.shown != nil, self.panel.isVisible else { return }
+            self.picker.opened()
+            self.showPicker()
+        }
+        pickerTimer = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + PickerState.pause, execute: item)
+    }
+
+    /// While the suggestion is held back for the pixel caret locator, the card waits for it
+    /// too (`pixelCaretArrived`).
+    private func showPicker() {
+        guard panel.isVisible else { return }
+        let before = latestSnapshot.textBefore
+        panel.showPicker(picker.items.map { PickerState.display($0, after: before) })
+        syncPickerKeys()
+        let at = panel.pickerFrame.map { " at \(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? ""
+        Log.debug("rev \(picker.revision) alternatives card: \(picker.items.count)\(at)")
+    }
+
+    /// Keys that aren't Foretype's: the card goes; it comes back after another pause, unless
+    /// the key was Esc (left to the app: Settings ▸ Typing ▸ Esc).
+    private func otherKeyPressed(esc: Bool) {
+        guard shown != nil else { return }
+        if esc { picker.close() } else { picker.keyPressed(now: Date()) }
+        panel.hidePicker()
+        schedulePicker()
+        syncPickerKeys()
+    }
+
+    /// Nothing to pick from: the suggestion went or a word of it was taken. Option-0 waits for
+    /// the next suggestion event (the core's alternatives were for the text before).
+    private func resetPicker() {
+        pickerTimer?.cancel()
+        pickerTimer = nil
+        picker.reset()
+        panel.hidePicker()
+        keys.picker = KeyTap.Picker()
+    }
+
+    private func syncPickerKeys() {
+        let card = picker.visible && panel.isPickerVisible
+        keys.picker = KeyTap.Picker(onDemand: shown != nil, card: card, items: card ? picker.items.count : 0)
     }
 
     private func perform(_ action: KeyAction) {
@@ -447,10 +529,44 @@ final class Controller {
             if r.remaining.isEmpty {
                 hide()
             } else {
+                resetPicker()
                 panel.advance(inserted: r.insert, remaining: r.remaining)
                 shown = panel.isVisible ? (latestSnapshot.fieldKey, r.remaining, detail, false) : nil
                 keys.setSuggestionVisible(panel.isVisible)
             }
+        case .acceptAlternative(let n):
+            resetPicker()
+            guard let r = engine.acceptAlternative(n - 1), !r.insert.isEmpty else {
+                // Gone stale between the key press and now: the card just closes.
+                return Log.debug("alternative \(n) is gone")
+            }
+            let strategy = insertionStrategy(for: latestSnapshot.bundleId)
+            Inserter.insert(r.insert, strategy: strategy)
+            stats.record(inserted: r.insert, all: false)
+            Log.debug("accept alternative \(n) via \(strategy.rawValue) \(r.insert.debugDescription)")
+            if r.remaining.isEmpty {
+                hide()
+            } else {
+                // The alternative is the suggestion now: its rest shows, and Tab goes on with it.
+                panel.advance(inserted: r.insert, remaining: r.remaining)
+                shown = panel.isVisible ? (latestSnapshot.fieldKey, r.remaining, nil, false) : nil
+                keys.setSuggestionVisible(panel.isVisible)
+            }
+        case .showAlternatives:
+            switch picker.demand() {
+            case .hide:
+                panel.hidePicker()
+                syncPickerKeys()
+            case .show:
+                showPicker()
+            case .ask:
+                Log.debug("rev \(latestSnapshot.revision) alternatives asked for")
+                engine.requestAlternatives(latestSnapshot)
+            }
+        case .closeAlternatives:
+            picker.close()
+            panel.hidePicker()
+            syncPickerKeys()
         case .dismiss:
             let snap = latestSnapshot
             let behavior = keys.escBehavior

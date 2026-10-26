@@ -252,6 +252,46 @@ as Japanese, is cut anywhere).
 
 All of these can be turned off in Settings → Typing.
 
+### Word alternatives (experimental)
+
+Settings ▸ Typing ▸ **Show alternatives (experimental)**, off by default (Cotypist's Labs
+feature of the same idea). With it on, a suggestion can come with up to three
+**alternatives**: other phrases the phrase beam search weighed for the same text, each
+starting with a different word from the suggestion and from each other (case and trailing
+punctuation don't make a word different: "soon" and "soon." are one choice).
+
+- **The card.** When you stop typing for 0.8 s with a suggestion on screen that has
+  alternatives, a small numbered card appears under it (under the caret line, or under the
+  mid-line card; above it near the bottom of the screen, and above the mirror card, which
+  already sits over the field). Each row reads as whole words: after "Hi Dan", the
+  alternative "iel," shows as **Daniel,**. The word the row's key takes first is in full
+  colour, the rest of the phrase fainter. Any other key closes the card; it comes back
+  after the next pause.
+- **Option+1, 2, 3** take that alternative's **next word**, like Tab: the alternative
+  becomes the suggestion, so its rest shows after the caret and Tab (or the key above Tab)
+  goes on with it. Foretype takes these keys only while the card shows.
+- **Option+0** shows the card at once, or closes it. When the suggestion came without
+  alternatives, it asks the engine for some: a 6-wide search for that text (about 0.1 s on
+  an M3 Pro), and the card then shows what it found, or "No alternatives". Typing cancels
+  the search. Foretype takes Option+0 only while a suggestion of the model's own shows (not
+  an emoji, a correction or one of your details).
+- **Esc** with the card up closes only the card (the suggestion stays; the next Esc does
+  what Settings ▸ Typing ▸ Esc says). With **Leave Esc alone**, Esc still goes to the app,
+  and the card closes too. A closed card doesn't come back for that suggestion.
+- **On mains power** the alternatives come free with every suggestion: they are the phrases
+  the 3-wide beam search computes anyway (no extra decoding, and the suggestion itself is
+  chosen exactly as before). **On battery or while saving energy** the engine decodes
+  greedily, which leaves no alternatives, so the card never appears by itself; Option+0
+  still asks for them, spending one search only when you ask.
+- Only the built-in engine has alternatives (a server or Apple's model answers Option+0
+  with "No alternatives"), and only for models whose cache can hold several phrases at once
+  (all in the catalog).
+
+On the 53-document corpus, where a suggestion's next word was wrong an alternative's was
+right 15% of the time; a user who always took the right one from the card would save 48.4%
+of keystrokes instead of 43.0%, with no extra GPU work. An Option-0 search costs about as
+much GPU energy as one suggestion (1.15 J) (`docs/MEASUREMENTS.md`, Word alternatives).
+
 ### Pausing and power
 
 **Pause** in the menu stops Foretype for 15 minutes, an hour, until tomorrow (6 in the
@@ -293,7 +333,7 @@ shows every setting in eight tabs; changes apply at once, the same way as from t
 - **General**: open at login, pause and resume, the power rules (on battery, low battery,
   Low Power Mode), the version and the update switches with Check Now.
 - **Typing**: length (2, 4, 7 or 10 words), stop at the end of a sentence, the typing aids
-  (emoji, autocorrect, typo gate, mid-line), what Esc does and the keys.
+  (emoji, autocorrect, typo gate, mid-line), word alternatives, what Esc does and the keys.
 - **Context**: screen context, with the Screen Recording status; text from other apps, with
   its limits on this Mac or backend, what is in memory and What Foretype Sees…, and the
   never-read list (Add an App…, Remove, Restore Defaults).
@@ -484,6 +524,8 @@ Settings… and setup. Option-click the icon to pause or resume.
 | key above Tab (` or §) | insert the whole suggestion |
 | Esc | dismiss; what else happens is set in Settings ▸ Typing (below) |
 | Option+Tab | a real Tab |
+| Option+1, 2, 3 | with Show Alternatives on and its card up: take that alternative's next word |
+| Option+0 | with Show Alternatives on: show the alternatives card now (asking for some if none came), or close it |
 | Ctrl + key above Tab | suggest here even where Foretype normally stays quiet (this line only) |
 | Ctrl+Opt+Cmd + key above Tab | pause suggestions in the current app for 5 minutes |
 | Option-click the menu-bar icon | pause or resume everywhere |
@@ -505,6 +547,9 @@ suggestion, Settings ▸ Typing ▸ Esc picks one of three behaviours (Cotypist'
   Resume" meanwhile; Resume, or Ctrl + the key above Tab, turns it back on.
 - **Leave Esc alone**: Foretype never takes Esc; it goes to the app, and the suggestion
   stays until you type on.
+
+With the word alternatives card up, the first Esc closes only the card (with Leave Esc
+alone the card closes and Esc still goes to the app).
 
 Ctrl + the key above Tab, pausing everywhere and choosing another behaviour end a field
 pause or an app switched off by Esc.
@@ -627,6 +672,14 @@ pause or an app switched off by Esc.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by
   replays against a local llama-server.
+- Word alternatives use Option+1, 2, 3 and 0 on the number row, taken only while their card
+  (or, for Option+0, a suggestion) shows; on layouts where those keys type something you
+  need, that character can't be typed then: # on a British keyboard is Option+3, and
+  Option+2 is a quotation mark on a German one. Press any other key first (the card
+  closes) or turn the setting off. The picker's state logic is covered by
+  `--alternatives-selftest` (which also renders the card), the core's by unit tests and
+  replays; the card has not yet been checked live in an app (`scripts/e2e-alternatives.sh`
+  types synthetic keys in TextEdit and waits for the user's go-ahead).
 
 ## Licensing
 

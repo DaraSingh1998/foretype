@@ -675,12 +675,13 @@ final class TypingPane: PreferencesPane {
     private let autocorrect = NSButton(checkboxWithTitle: L("Offer a fix for a misspelled word"), target: nil, action: nil)
     private let typoGate = NSButton(checkboxWithTitle: L("Wait while a word looks misspelled"), target: nil, action: nil)
     private let midLine = NSButton(checkboxWithTitle: L("Suggest in the middle of a line (experimental)"), target: nil, action: nil)
+    private let alternatives = NSButton(checkboxWithTitle: L("Show alternatives (experimental)"), target: nil, action: nil)
     private let esc = NSPopUpButton()
 
     override func build() {
         length.addItems(withTitles: AppSettings.lengthPresets.map(\.name))
         esc.addItems(withTitles: EscBehavior.allCases.map(\.title))
-        for c in [length, sentenceEnd, emoji, autocorrect, typoGate, midLine, esc] as [NSControl] {
+        for c in [length, sentenceEnd, emoji, autocorrect, typoGate, midLine, alternatives, esc] as [NSControl] {
             c.target = self
             c.action = #selector(changed(_:))
         }
@@ -696,11 +697,13 @@ final class TypingPane: PreferencesPane {
             [NSGridCell.emptyContentView, Self.note(L("Both use the macOS spell checker in your languages, and skip names, acronyms and words you have written before."), width: w)],
             [NSGridCell.emptyContentView, midLine],
             [NSGridCell.emptyContentView, Self.note(L("Up to three words, shown in a small card under the caret."), width: w)],
+            [NSGridCell.emptyContentView, alternatives],
+            [NSGridCell.emptyContentView, Self.note(L("When you pause, a numbered card under the caret lists other words Foretype considered. Option-1, 2 or 3 takes that word and Tab goes on with it; Option-0 shows the card at once (on battery, only then)."), width: w)],
             [Self.formLabel(L("Esc:")), esc],
-            [NSGridCell.emptyContentView, Self.note(L("A pause keeps that field free of suggestions for %@ seconds. With no suggestion showing, Esc always goes to the app.",
+            [NSGridCell.emptyContentView, Self.note(L("A pause keeps that field free of suggestions for %@ seconds. With no suggestion showing, Esc always goes to the app; with the alternatives card up, it closes only the card.",
                                                       formatNumber(Int(EscState.fieldPause))), width: w)],
         ])
-        grid.row(at: 10).topPadding = 8
+        grid.row(at: 12).topPadding = 8
         add(grid, spacingAfter: 18)
         add(Self.separator())
         add(Self.note(L("Tab takes the next word, the key above Tab takes the whole suggestion and Option-Tab types a real Tab. Ctrl + the key above Tab suggests where Foretype normally stays quiet; Ctrl-Option-Command + that key pauses it in the current app for 5 minutes. Option-click the menu-bar icon to pause or resume everywhere.")))
@@ -714,6 +717,7 @@ final class TypingPane: PreferencesPane {
         autocorrect.state = s.autocorrect ? .on : .off
         typoGate.state = s.typoGate ? .on : .off
         midLine.state = s.midLine ? .on : .off
+        alternatives.state = s.alternatives ? .on : .off
         esc.selectItem(at: EscBehavior.allCases.firstIndex(of: s.escBehavior) ?? 0)
     }
 
@@ -727,6 +731,7 @@ final class TypingPane: PreferencesPane {
         case autocorrect: s.autocorrect = autocorrect.state == .on
         case typoGate: s.typoGate = typoGate.state == .on
         case midLine: s.midLine = midLine.state == .on
+        case alternatives: s.alternatives = alternatives.state == .on
         case esc: s.escBehavior = EscBehavior.allCases[max(0, esc.indexOfSelectedItem)]
         default: return
         }

@@ -1314,6 +1314,58 @@ so every prompt, is unchanged.
 - A unit test (`notes_join_and_the_oldest_gives_way`) checks that every bundled default
   joins to the same text as before.
 
+## Word alternatives (2026-10-24)
+
+Qwen3-1.7B-Base Q4_K_M (the copy from the Phase 0 spike), full corpus (53 documents, 12,704
+characters), built-in engine, Metal, 4 words, prefetch on, instant simulated user, M3 Pro on
+mains power, the eight runs one after another with nothing else on the GPU but the
+installed Foretype (idle). `main` is 5fde6b9, the branch `feat/alternatives` (D50). GPU
+energy is `tools/energy` (the run's GPU energy minus 20 s of idle power, 0.24 W, scaled).
+`--oracle` takes an alternative (Option+N, counted as one keystroke like Tab) whenever its
+next word is right and the suggestion's isn't; `--on-demand` asks for alternatives
+(Option-0) whenever the suggestion's next word is wrong and it came with none.
+
+### The suggestion doesn't change (3 beams, mains power)
+
+| Run | Keystrokes saved | Chars per accept | Accepts | Sources (model / typeThrough / policy) | Model p50 / p90 | GPU energy |
+|---|---:|---:|---:|---|---:|---:|
+| `main`, `--beam 3` | 43.0% | 3.69 | 2,032 | 2,794 / 4,336 / 112 | 89 / 109 ms | 3,936 J |
+| branch, setting off | 43.0% | 3.69 | 2,032 | 2,794 / 4,336 / 112 | 90 / 120 ms | 4,050 J |
+| branch, `--alternatives` (only the suggestion taken) | 43.0% | 3.69 | 2,032 | 2,794 / 4,336 / 112 | 88 / 107 ms | 3,768 J |
+
+- Identical counts all three ways: the winner is picked from the same candidates, and
+  collecting the others decodes nothing. Latency and GPU energy are within run-to-run noise
+  (the setting-off run, the same work as `main`, was the most expensive: ±4%).
+- 44.3% of the 7,117 continuations shown came with alternatives (1: 1,193, 2: 1,714, 3:
+  244). Where a suggestion showed but its next word was wrong (about 5,100 keystrokes), an
+  alternative's next word was right 765 times (15%): alternative 1 563 times, 2 183, 3 19.
+
+### What the picker can save (upper bounds)
+
+| Run | Keystrokes saved | Chars per accept | Accepts (alternatives) | Model p50 / p90 | Option-0 searches (found any) | Search p50 / p90 | GPU energy |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `--beam 3 --alternatives --oracle` (mains, the card only) | **48.4%** | 3.81 | 2,191 (485) | 88 / 109 ms | | | 3,404 J |
+| same + `--on-demand` (Option-0 at every miss without any) | 56.8% | 4.08 | 2,343 (1,021) | 86 / 106 ms | 1,423 (97%) | 99 / 125 ms | 4,454 J |
+| `main`, `--beam 1` (battery: greedy) | 41.9% | 3.68 | 1,985 | 74 / 102 ms | | | 3,295 J |
+| `--beam 1 --alternatives --on-demand` (only the suggestion taken) | 41.9% | 3.68 | 1,984 | 62 / 88 ms | 3,168 (98%) | 96 / 118 ms | 6,945 J |
+| `--beam 1 --alternatives --on-demand --oracle` (battery, Option-0 at every miss) | 57.9% | 4.14 | 2,340 (1,135) | 62 / 83 ms | 2,821 (98%) | 95 / 116 ms | 5,125 J |
+
+- On mains power, a user who always took the right alternative from the card would save
+  48.4% of keystrokes instead of 43.0% (+5.4 points), at no extra GPU work (fewer model
+  calls, as more is typed through). That is the bound for the card as it comes by itself.
+- Asking with Option-0 at every miss is a much higher bound (56.8% on mains, 57.9% on
+  battery) but stands for a user who stops at every wrong word: a real user asks rarely.
+  The 6-wide on-demand search found alternatives 97–98% of the time (the 3-wide beam's
+  bookkeeping gave some for 44%), in 95–99 ms at the median.
+- **One on-demand search costs about 1.15 J of GPU energy**: the battery run that asked at
+  every miss (3,168 times) used 3,651 J more than greedy alone, while a greedy suggestion
+  costs about 1.08 J (3,295 J for 3,063 model calls). Asking 30 times an hour is about 35 J
+  (0.01 Wh). Offering alternatives with every suggestion on battery would instead need the
+  3-wide beam back for every keystroke: +19% GPU energy here (3,936 J against 3,295 J).
+- With every search the prefetch behind the suggestion is cancelled, so one more prompt
+  was computed later (1,984 accepts against 1,985) and model latency fell (62 ms: the GPU
+  was free when the next key came).
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

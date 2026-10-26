@@ -110,6 +110,38 @@ pub unsafe extern "C" fn ft_engine_accept(engine: *mut FtEngine, mode: i32) -> *
     }
 }
 
+/// Takes the next word of alternative `index` (0-based, in the order the last `suggestion`
+/// event listed them), which becomes the suggestion: returns `{"insert", "remaining",
+/// "replace": ""}` as `ft_engine_accept` does, or null when there is no such alternative.
+///
+/// # Safety
+/// `engine` must be live.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_accept_alternative(engine: *mut FtEngine, index: i32) -> *mut c_char {
+    let Some(e) = engine.as_ref() else { return ptr::null_mut() };
+    let Ok(index) = usize::try_from(index) else { return ptr::null_mut() };
+    match e.core.accept_alternative(index) {
+        Some(a) => to_c(serde_json::json!({ "insert": a.insert, "remaining": a.remaining, "replace": a.replace }).to_string()),
+        None => ptr::null_mut(),
+    }
+}
+
+/// Asks for word alternatives on demand (D50) to the suggestion showing for `snapshot_json`,
+/// the latest snapshot submitted. The answer is a `suggestion` event for its revision with
+/// the same `text`, `source` `alternatives` and `alternatives` (possibly none): at once when
+/// they are known, else after a wider beam search that typing cancels. Nothing comes when
+/// alternatives are off, the snapshot isn't the latest or no continuation shows for its text.
+///
+/// # Safety
+/// `engine` must be live; `snapshot_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_alternatives(engine: *mut FtEngine, snapshot_json: *const c_char) {
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(snapshot_json)) else { return };
+    if let Ok(snap) = serde_json::from_str::<Snapshot>(s) {
+        e.core.request_alternatives(snap);
+    }
+}
+
 /// # Safety
 /// `engine` must be live; `text_before` a valid C string.
 #[no_mangle]

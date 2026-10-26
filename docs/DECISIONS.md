@@ -886,3 +886,60 @@ domain would apply more widely or not be offered); the host note still works. Wi
 longer than the cap, the cut moves from the app's note to the global one. During a field pause no screen text or caret search is
 refreshed for that field (5 seconds). Switching to Foretype's own windows does not count as
 switching apps.
+
+## D50. Word alternatives from the beam already running, next word by Option+1–3, on demand on battery (2026-10-24)
+
+**Decision.** Cotypist's Labs "word alternatives", as an experimental setting (Settings ▸
+Typing ▸ Show alternatives, off by default):
+- **Where they come from.** On mains power the engine already searches 3 phrases at once
+  (D28). With alternatives on, the beam search also returns what it would otherwise throw
+  away: every finished or unfinished phrase but the winner, and every beam it let go at the
+  end of a word (none of its children kept, its own best next token starting a new word).
+  The winner is chosen from exactly the same candidates as before and nothing more is
+  decoded, so the suggestion and its latency don't change.
+- **Which are offered.** At most three, best mean log-probability first, each starting with
+  a word that neither the suggestion nor an earlier alternative starts with, compared
+  without case or trailing punctuation ("soon" and "soon." are one choice); a phrase the
+  search cut off after a single word is left out (it may stop inside the word). They follow
+  type-through and backspace, are cached with the suggestion (and the prefetch's), and are
+  cleared by any accept.
+- **Option+N takes the alternative's next word**, like Tab, and the alternative becomes the
+  suggestion: its rest shows after the caret and Tab or the key above Tab go on with it.
+- **The card** shows after typing stops for 0.8 s with alternatives to offer, or at once on
+  **Option+0**, which also closes it. Option+1–3 are taken only while the card shows (and
+  only as many as it lists), Option+0 only while one of the model's own suggestions shows,
+  never over an emoji, a correction or a detail. Esc over the card closes only the card;
+  with Esc left to the app, the card closes too. A closed card doesn't come back for that
+  suggestion; any other key hides it until the next pause.
+- **On battery (greedy decoding) only on demand.** Option+0 asks the core, which runs one
+  search 6 phrases wide for that text (`ON_DEMAND_BEAMS`) and answers with what it found
+  (the card then says when there is nothing). The same search answers Option+0 on mains
+  power when the 3-wide beam found none.
+
+**Why.** Reusing the beam makes the feature free where it runs: on the corpus the
+suggestion's numbers are identical with it on (43.0%, 2,032 accepts, the same sources),
+latency and GPU energy within run-to-run noise, and an always-right pick from the card
+would save 48.4% of keystrokes instead of 43.0% (`docs/MEASUREMENTS.md`). Taking the next word
+rather than the whole phrase keeps one model for every accept key (Tab, and now Option+N,
+take a word; the key above Tab takes the rest), lets the user take only the word they
+wanted, and the word is what tells the alternatives apart (that is why they must differ in
+it); the whole alternative is two keys. Option+0 was chosen for the on-demand key because
+the other candidates collide: Option + the key above Tab is the grave-accent dead key on a
+US layout (à, è), which would break while any suggestion shows, and a second Tab already
+means "the next word". 0 sits beside the picker's 1–3 and types only º or ≠. On battery
+the 3-wide beam is what saving energy turns off (+15% GPU energy, D28): computing
+alternatives for every suggestion there would bring it back for a card most suggestions
+never need (+19% GPU energy on the corpus), while one search per Option+0 costs about 1.15 J,
+what one suggestion costs (1.08 J), and nothing until asked. Six phrases rather than three
+because the user is waiting for the card, not typing, and a wider search finds alternatives
+more often: the 6-wide search found some 97–98% of the time in 95–99 ms at the median,
+where the 3-wide beam's leftovers gave some for 44% of suggestions (a 3-wide on-demand
+search was not measured on its own). 0.8 s is longer than most gaps between keys inside a phrase (about 300 ms at
+40 words a minute), so the card never flickers up while the user types on.
+
+**Cost.** The number-row keys with Option type characters on some layouts (# is Option+3
+on a British keyboard, “ is Option+2 on a German one); they can't be typed while the card
+shows. Alternatives exist only with the built-in engine and models whose cache holds
+several phrases (every catalog model; recurrent and hybrid ones decode greedily). The
+picker's state lives in the shell and the core's API grows by two functions
+(`ft_engine_accept_alternative`, `ft_engine_alternatives`) and an event field.

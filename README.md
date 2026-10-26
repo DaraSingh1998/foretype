@@ -67,6 +67,9 @@ itself.
   card); then "My email is" or a sign-off suggests your own email or name.
 - **Small helpers.** `:tada` becomes 🎉, misspelled words get a one-key fix (Hinglish is left alone), and custom
   instructions set the tone (for every app, just one app or just one website).
+- **Other words to pick from (experimental).** Turn on Show Alternatives and, when you
+  pause, a small numbered card under the caret lists other words Foretype considered;
+  Option-1, 2 or 3 takes one.
 - **Easy on your battery.** Lighter suggestions on battery, a pause in Low Power Mode, and
   the model unloaded when you stop typing. Pause it for 15 minutes, an hour or until
   tomorrow, everywhere or in one app.
@@ -105,6 +108,8 @@ itself.
 | **Key above Tab** (` or §) | Take the whole suggestion |
 | **Esc** | Dismiss it and keep that field quiet for 5 seconds (or switch the app off until you change apps, or leave Esc to the app: Settings ▸ Typing) |
 | **Option+Tab** | Type a real Tab |
+| **Option+1, 2, 3** | With Show Alternatives on and its card up: take that alternative's next word (Tab goes on with it) |
+| **Option+0** | With Show Alternatives on: show the alternatives card now, or close it |
 | **Ctrl + key above Tab** | Ask for a suggestion where Foretype normally stays quiet |
 | **Option-click the menu-bar icon** | Pause or resume everywhere |
 
