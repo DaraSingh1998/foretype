@@ -94,6 +94,20 @@ pub unsafe extern "C" fn ft_engine_warm(engine: *mut FtEngine, snapshot_json: *c
     }
 }
 
+/// New screen text for the latest snapshot while the user pauses: the model runs again for it
+/// (past the cache, with no `pending` hide first), or the prompt is only prefilled where no
+/// model suggestion would show.
+///
+/// # Safety
+/// `engine` must be live; `snapshot_json` a valid C string.
+#[no_mangle]
+pub unsafe extern "C" fn ft_engine_refresh(engine: *mut FtEngine, snapshot_json: *const c_char) {
+    let (Some(e), Some(s)) = (engine.as_ref(), read_str(snapshot_json)) else { return };
+    if let Ok(snap) = serde_json::from_str::<Snapshot>(s) {
+        e.core.refresh(snap);
+    }
+}
+
 /// Accepts the next word (`mode` 0) or the whole suggestion (`mode` 1). Returns
 /// `{"insert": "...", "remaining": "...", "replace": "..."}` (delete `replace` before the
 /// caret first; empty for a continuation), or null when nothing is showing.

@@ -312,7 +312,8 @@ Contractors: $68,900 (budget $52,000)               where text was left out
 ...
 
 [Text visible on screen]                         ← screen_context, last ≤1,500 chars, lines
-...                                                 starting with "[" dropped, secrets masked
+...                                                 starting with "[" dropped, timestamps and
+                                                    "(edited)" dropped, secrets masked
 [End of screen text]
 
 [Earlier writing by the same person in Mail]     ← personalization examples (≤2 × 280 chars)
@@ -544,6 +545,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_free(engine)` | Stop the worker, free the model |
 | `ft_engine_submit(engine, snapshot_json)` | Field changed |
 | `ft_engine_warm(engine, snapshot_json)` | Prefill a newly focused field |
+| `ft_engine_refresh(engine, snapshot_json)` | The latest snapshot with new screen text while the user pauses: the model runs again past the cache and type-through, with no `pending` hide first (the suggestion showing stays until the new one arrives); where `submit` would show no model suggestion (the gate, a dismissal, a typing aid, mid-line) only a prefill, as `warm` |
 | `ft_engine_accept(engine, mode)` | 0 next word, 1 all → `{"insert","remaining","replace"}` or NULL (delete `replace` before the caret first) |
 | `ft_engine_accept_alternative(engine, index)` | Word alternatives (D50): the next word of alternative `index` (0-based, as the last event listed them), which becomes the suggestion → `{"insert","remaining","replace": ""}` or NULL |
 | `ft_engine_alternatives(engine, snapshot_json)` | Alternatives on demand to the suggestion showing for this (latest) snapshot: answered with a `suggestion` event, `source` `alternatives` |
@@ -830,8 +832,15 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   every 15 s: `SCShareableContent` → the focused window (the app's window holding the
   field's centre, `ScreenGeometry.windowIndex`; none if no window does) →
   `WindowCapture` (as the pixel caret, so full-screen windows work) → Vision `.accurate` OCR → lines grouped into rows,
-  rows inside the field dropped, rows nearest the field kept (rows above first, budget
-  1,400 characters) in reading order. The new text is prefilled with `warm` right away.
+  rows inside the field dropped, lines mostly outside the field's column (±24 pt) dropped
+  when at least 40 characters are left (a sidebar's names stay out of the conversation's
+  rows), rows nearest the field kept (rows above first, budget 1,400 characters) in reading
+  order. When the field's text is cleared (a chat message sent; `noteSent`) the window is read
+  again 1 s later whatever the interval. New text goes to the core with `refresh` when no
+  snapshot came for 1 s (the user pauses; Esc's quiet and the snooze excepted), so the
+  suggestion is asked for again with it, else with `warm` (prefill only). Vision requests
+  (here and in `ContextPool`) run through `ScreenContextProvider.perform`, which cancels one
+  after 8 s (60 s until the first finishes: Vision compiles its models then).
   Skipped for secure input, secure fields and apps where suggestions are off. The image is
   discarded after OCR. The capture scale is the window's own display's
   (`SCContentFilter.pointPixelScale`), so a window on a 1x display isn't captured at 2x.

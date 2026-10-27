@@ -854,6 +854,46 @@ impl Core {
         self.emit_suggestion(rev, String::new(), "pending", None);
     }
 
+    /// New screen text for the latest snapshot `snap` (the user paused): asks the model again,
+    /// past the cache and type-through, so the suggestion follows what the screen shows now.
+    /// Unlike `submit` it sends no `pending` hide: the suggestion showing stays (and can be
+    /// taken) until the new one replaces it. Where `submit` would show no model suggestion
+    /// (the gate, a dismissal, a typing aid) it only prefills, as `warm`.
+    pub fn refresh(&self, mut snap: Snapshot) {
+        let settings = self.settings();
+        if self.is_paused() || !settings.enabled || self.shared.latest.load(Ordering::SeqCst) != snap.revision {
+            return;
+        }
+        let disabled: HashSet<String> = settings.disabled_apps.iter().cloned().collect();
+        let enabled: HashSet<String> = settings.enabled_apps.iter().cloned().collect();
+        let mid_line = settings.mid_line && self.shared.mid_line_ok.load(Ordering::SeqCst);
+        let only = !settings.only_apps.is_empty() && !settings.only_apps.contains(&snap.bundle_id);
+        let gated = only || policy::evaluate(&snap, &self.shared.compat, &disabled, &enabled, mid_line).is_some();
+        let dismissed = self.shared.session.lock().unwrap().is_dismissed(snap.field_key, &snap.text_before);
+        self.to_document(&mut snap, &settings);
+        let aid = details::fill(&snap.text_before, &self.shared.details.read().unwrap()).is_some()
+            || (settings.emoji && emoji::typed_shortcode(&snap.text_before).is_some())
+            || !snap.spell_word.is_empty()
+            || (settings.typo_gate && snap.spell_fragment == "typo")
+            || privacy::typing_address(&snap.text_before);
+        if gated || dismissed || aid || !line_suffix(&snap).is_empty() {
+            return self.warm(snap);
+        }
+        self.shared.session.lock().unwrap().forget_cached(snap.field_key);
+        let examples = self.examples_for(&snap, &settings);
+        let prompt = build_prompt(&self.shared, &snap, &settings, &examples, true);
+        self.enqueue(Job {
+            kind: JobKind::Complete,
+            revision: snap.revision,
+            field_key: snap.field_key,
+            text_before: snap.text_before.clone(),
+            prompt,
+            queued: Instant::now(),
+            snapshot: snap,
+            shown: String::new(),
+        });
+    }
+
     /// In a terminal only the agent prompt's own text is the document; the scrollback above
     /// it reaches the model as screen context instead.
     fn to_document(&self, snap: &mut Snapshot, settings: &Settings) {
@@ -1840,6 +1880,28 @@ mod tests {
         let s = Snapshot { screen_context: "Your OTP is 482913\nghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789".into(), ..snap(1, "The code is") };
         let p = build_prompt(&c.shared, &s, &c.settings(), &[], true);
         assert!(!p.prefix.contains("482913") && !p.prefix.contains("ghp_") && p.prefix.contains("Your OTP is"), "{}", p.prefix);
+    }
+
+    #[test]
+    fn refresh_asks_again_past_the_cache_without_a_pending_hide() {
+        let (c, rx) = core_with_events();
+        c.submit(Snapshot { revision: 1, ..snap(1, "Thanks for the") });
+        assert_eq!(suggestion_for(&rx, 1).1, "pending");
+        *c.shared.pending.lock().unwrap() = None;
+        c.shared.session.lock().unwrap().remember(1, "Thanks for the", " update", &[]);
+        c.refresh(Snapshot { revision: 1, screen_context: "Sam: the numbers are in".into(), ..snap(1, "Thanks for the") });
+        assert!(c.shared.session.lock().unwrap().cached(1, "Thanks for the").is_none(), "the cache went");
+        assert!(matches!(c.shared.pending.lock().unwrap().as_ref().map(|j| &j.kind), Some(JobKind::Complete)));
+        assert!(!rx.try_iter().any(|e| matches!(e, Event::Suggestion { .. })), "no pending hide");
+        // Not the latest snapshot: nothing.
+        *c.shared.pending.lock().unwrap() = None;
+        c.refresh(Snapshot { revision: 0, ..snap(1, "Thanks for the") });
+        assert!(c.shared.pending.lock().unwrap().is_none());
+        // Where no model suggestion would show (too short), only a prefill.
+        c.submit(Snapshot { revision: 2, ..snap(1, "x") });
+        *c.shared.pending.lock().unwrap() = None;
+        c.refresh(Snapshot { revision: 2, ..snap(1, "x") });
+        assert!(matches!(c.shared.pending.lock().unwrap().as_ref().map(|j| &j.kind), Some(JobKind::Warm)));
     }
 
     #[test]

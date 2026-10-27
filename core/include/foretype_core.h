@@ -25,6 +25,10 @@ void ft_engine_free(FtEngine *engine);
 
 void ft_engine_submit(FtEngine *engine, const char *snapshot_json);
 void ft_engine_warm(FtEngine *engine, const char *snapshot_json);
+/// The latest snapshot again with new screen text while the user pauses: the model runs again
+/// for it (past the cache, no "pending" hide first), or the prompt is only prefilled where no
+/// model suggestion would show.
+void ft_engine_refresh(FtEngine *engine, const char *snapshot_json);
 
 /// mode 0 = next word, 1 = whole suggestion. Returns {"insert","remaining","replace"} or NULL;
 /// a non-empty "replace" is the text just before the caret to delete before inserting.

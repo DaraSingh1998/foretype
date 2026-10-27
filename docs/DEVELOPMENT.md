@@ -44,7 +44,7 @@ scripts/sparkle-local-test.sh                                   # waiting update
 |---|---|---|
 | Core unit tests (25+) | `cargo test --release --manifest-path core/Cargo.toml` | nothing |
 | Font matcher; ghost font from the run before the caret (soft wrap, mixed sizes, zoom) | `mac/.build/release/Foretype --font-selftest` | nothing |
-| OCR + row assembly | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
+| OCR + row assembly (and a sidebar left out of the field's column) | `mac/.build/release/Foretype --ocr-selftest` | nothing (first-ever run compiles Vision models, ~30 s) |
 | Statistics (counts, day buckets, 30-day window, reset, no text stored) | `mac/.build/release/Foretype --stats-selftest` | nothing (in-memory, never the app's defaults) |
 | Pixel caret detectors | `mac/.build/release/Foretype --caret-selftest` | nothing |
 | Screen geometry across displays (global and Cocoa coordinates, displays left of, above and below the primary, mixed 1x/2x scales, cards at a display's top edge) | `mac/.build/release/Foretype --geometry-selftest` | nothing (made-up layouts; no second display) |

@@ -30,6 +30,10 @@ final class Controller {
     /// field, so it must not outlive the command being typed).
     private var forcedField: UInt64 = 0
     private var forcedLine = ""
+    /// When the latest snapshot arrived (AX thread; under `lock`).
+    private var lastArrival = Date.distantPast
+    /// New screen text redoes the suggestion only after this long without a snapshot.
+    private static let refreshIdle: TimeInterval = 1.0
     /// Apps paused on their own (Ctrl+Opt+Cmd + key above Tab, the menu's Pause in X), and
     /// until when; `Date.distantFuture` is until the app quits.
     private(set) var snoozed: [String: Date] = [:]
@@ -266,7 +270,11 @@ final class Controller {
         let line = s.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
         if forcedField != 0, forcedField != s.fieldKey || !line.hasPrefix(forcedLine) { forcedField = 0 }
         s.force = forcedField != 0
+        // The field's text was cleared: a chat message went out.
+        let sent = latest.fieldKey == s.fieldKey && latest.textBefore.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
+            && s.textBefore.isEmpty && s.textAfter.isEmpty
         latest = s
+        lastArrival = Date()
         lock.unlock()
         lock.lock()
         let quiet = s.force ? nil : esc.quiet(fieldKey: s.fieldKey, bundleId: s.bundleId, now: Date())
@@ -283,14 +291,26 @@ final class Controller {
             return
         }
         // Never hand a secure field's text to the spell checker.
-        if !s.secureInput, s.subrole != "AXSecureTextField" { speller.annotate(&s) }
+        if !s.secureInput, s.subrole != "AXSecureTextField" {
+            speller.annotate(&s)
+            // A refresh for new screen text resubmits `latest`: it must carry the verdicts.
+            lock.lock()
+            if latest.revision == s.revision {
+                (latest.spellFragment, latest.spellWord, latest.spellCorrection) = (s.spellFragment, s.spellWord, s.spellCorrection)
+            }
+            lock.unlock()
+        }
         hintIfNeeded(s)
         // Before submitting, so a suggestion arriving for this snapshot sees a solid search
         // that is under way.
         if let pixel { pixelCaret.note(pixel) }
         engine.submit(s)
-        screen.note(.init(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame),
-                    skip: !screenContextAllowed(s))
+        let target = ScreenContextProvider.Target(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame)
+        if sent {
+            screen.noteSent(target, skip: !screenContextAllowed(s))
+        } else {
+            screen.note(target, skip: !screenContextAllowed(s))
+        }
         pool.note(pid: s.pid, windowTitle: s.windowTitle, windowFrame: s.windowFrame)
     }
 
@@ -388,15 +408,22 @@ final class Controller {
         return !off || s.force || settings.enabledApps.contains(s.bundleId)
     }
 
-    /// Screen queue: fresh OCR for a field. Prefill the new header right away so the next
-    /// keystroke does not pay for it.
+    /// Screen queue: fresh OCR for a field. While the user pauses, the suggestion is asked
+    /// for again with it (the one showing stays until the new one arrives); while they type,
+    /// the new header is only prefilled so the next keystroke doesn't pay for it.
     private func screenTextArrived(_ fieldKey: UInt64, _ text: String) {
         lock.lock()
         guard latest.fieldKey == fieldKey, latest.screenContext != text else { lock.unlock(); return }
         latest.screenContext = text
         let snap = latest
+        let idle = Date().timeIntervalSince(lastArrival) >= Controller.refreshIdle
+        let quiet = esc.quiet(fieldKey: snap.fieldKey, bundleId: snap.bundleId, now: Date())
         lock.unlock()
-        engine.warm(snap)
+        if idle, quiet == nil, !isSnoozed(snap.bundleId) {
+            engine.refresh(snap)
+        } else {
+            engine.warm(snap)
+        }
     }
 
     private func handle(_ event: EngineEvent) {

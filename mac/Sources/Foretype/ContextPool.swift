@@ -613,7 +613,7 @@ final class ContextPool {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .fast
         request.usesLanguageCorrection = false
-        guard (try? VNImageRequestHandler(cgImage: image).perform([request])) != nil else { return "" }
+        guard ScreenContextProvider.perform(request, on: image) else { return "" }
         let lines = (request.results ?? []).compactMap { obs -> (String, CGRect)? in
             guard let c = obs.topCandidates(1).first, c.confidence > 0.3 else { return nil }
             return (c.string, obs.boundingBox)

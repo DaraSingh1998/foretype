@@ -64,10 +64,17 @@ away right after recognition and the text is only kept in memory.
 - Only the focused window is read, on whichever display it is, at that display's
   resolution. Other apps' windows (a document or a web page beside the email) are read
   only with **Use text from other apps**, a setting of its own (below).
-- It refreshes when a new field gets focus and after a 1.5 s typing pause at most every 15 s,
-  never per keystroke, because new screen text changes the prompt header and costs a full
-  prefill. The new header is prefilled in the background between keystrokes as soon as OCR
-  finishes, while suggestions keep coming from the previous one (see *Latency design*).
+- It refreshes when a new field gets focus, a second after you send a chat message (the
+  field empties) and after a 1.5 s typing pause at most every 15 s, never per keystroke,
+  because new screen text changes the prompt header and costs a full prefill. The new
+  header is prefilled in the background between keystrokes as soon as OCR finishes, while
+  suggestions keep coming from the previous one (see *Latency design*). When it arrives
+  while you pause, the suggestion is asked for again with it; the one showing stays until
+  the new one replaces it.
+- Only the field's column is read when it holds enough text: a sidebar's channel and
+  contact names stay out of the conversation. Timestamps ("10:42 AM", "Yesterday at 3:15
+  PM", "5 min ago") and "(edited)" are dropped: they say nothing about what comes next and
+  would change the prompt as time passes.
 - Warm OCR takes 145–360 ms (M3 Pro), off the typing path. The very first run on a Mac takes
   much longer while Vision compiles its models.
 

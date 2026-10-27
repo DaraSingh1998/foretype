@@ -113,6 +113,12 @@ impl Session {
         self.searched = false;
     }
 
+    /// Drops the field's cached suggestions (made with context that has since changed); the
+    /// one showing stays until another replaces it.
+    pub fn forget_cached(&mut self, field_key: u64) {
+        self.cache.retain(|(k, _, _, _)| *k != field_key);
+    }
+
     pub fn dismiss(&mut self, field_key: u64, text_before: &str) {
         self.dismissed = Some((field_key, text_before.to_string()));
         self.clear();

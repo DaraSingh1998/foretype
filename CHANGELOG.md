@@ -5,6 +5,15 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Cleaner screen context (2026-10-27)
+- Only the column of the field you type in is read, so a sidebar's channel and contact
+  names no longer mix into the conversation.
+- Timestamps and "(edited)" marks are left out of the screen text.
+- After you send a chat message the window is read again a second later, and new screen
+  text that arrives while you pause updates the suggestion showing.
+- Text recognition gives up on a window after 8 seconds (60 the first time, while macOS
+  prepares it) instead of possibly waiting forever and reading no screen again.
+
 ### Ghost text wraps (2026-10-27)
 - In a multi-line field the suggestion no longer stops at the field's right edge: the words
   that don't fit go on the next line, from where the text starts, up to three lines, as
