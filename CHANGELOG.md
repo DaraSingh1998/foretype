@@ -5,6 +5,24 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Fixed: half a word at the end of a suggestion (2026-10-26)
+- On mains power a suggestion could end in a word cut short ("thanks for get"). It now ends
+  at the last whole word.
+
+### Fewer wrong suggestions (2026-10-26)
+- A suggestion now stops where the model starts guessing: a word after the first stays only
+  while it is at least 5% likely. It saves as much typing and is right in full more often.
+- On battery (and whenever Foretype saves energy) a suggestion whose first word is unlikely
+  isn't shown at all: wrong suggestions on screen fall by about a fifth, for 0.4 points of
+  keystrokes saved on the test corpus.
+
+### For developers (2026-10-26)
+- The engine reports how likely each suggestion's first word is (`confidence` on `model`
+  events; a held-back one is a `policy` hide with reason `lowConfidence`). See D51.
+- `ft-replay` now reports how often the suggestion on screen is right or wrong, not only
+  the typing it saves, and `--gate`, `--extend`, `--beam-first`, `--rank-sum` and
+  `--confidence-log` measure the new options (`tools/confidence-sweep.py`).
+
 ### Word alternatives (experimental) (2026-10-24)
 - New in Settings ▸ Typing: **Show alternatives (experimental)**, off by default. When you
   pause with a suggestion on screen, a small numbered card under it lists up to three other

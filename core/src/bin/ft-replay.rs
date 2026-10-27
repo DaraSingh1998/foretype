@@ -77,6 +77,14 @@
 //!   --instructions FILE (core/data/default-instructions.json format) or --default-instructions
 //!       types with those custom instructions (corpus apps such as "Mail" stand in for their
 //!       bundle IDs); without either, with none.
+//!   Confidence gate and phrase search (D51; the app's defaults unless set): --gate B[,M]
+//!       shows a greedy suggestion only when its first word is at least B likely after a space
+//!       or punctuation and M likely mid-word (M defaults to B; default 0.15,0.08; --gate 0
+//!       turns it off), --gate-beam gates beam search results too; --beam-first keeps greedy's first word in the beam search;
+//!       --rank-sum ranks phrases by total instead of mean log-probability; --extend X cuts
+//!       words after the first that are less than X likely (default 0.05; --extend 0 keeps all). --confidence-log FILE writes one
+//!       JSON line per keystroke showing a model suggestion (its first word's probability, mid-word
+//!       or not, next word right, words shown and right) for sweeping the bars offline.
 //!   --alternatives turns word alternatives on (D50): the user still takes only the
 //!       suggestion, so its numbers must not move, and the summary counts how often an
 //!       alternative's next word was right where the suggestion's wasn't. --oracle takes that
@@ -112,6 +120,15 @@ struct Stats {
     accepts: usize,
     accepted_chars: usize,
     shown: usize,
+    /// Keystrokes with a suggestion on screen, and those whose suggestion's next word was
+    /// right: [in the middle of a word, after one].
+    shown_at: [usize; 2],
+    right_at: [usize; 2],
+    /// Suggestions on screen that were right in full, and their words: shown, and wrong
+    /// (every word after the first one that isn't what comes next).
+    whole_right: usize,
+    words_shown: usize,
+    words_wrong: usize,
     model_ms: Vec<f64>,
     /// The first model suggestion of each replay: it pays for prefilling the whole header.
     first_ms: Vec<f64>,
@@ -137,6 +154,13 @@ impl Stats {
         self.accepts += o.accepts;
         self.accepted_chars += o.accepted_chars;
         self.shown += o.shown;
+        for i in 0..2 {
+            self.shown_at[i] += o.shown_at[i];
+            self.right_at[i] += o.right_at[i];
+        }
+        self.whole_right += o.whole_right;
+        self.words_shown += o.words_shown;
+        self.words_wrong += o.words_wrong;
         self.model_ms.extend(&o.model_ms);
         self.first_ms.extend(&o.first_ms);
         self.prefills.extend(&o.prefills);
@@ -168,6 +192,21 @@ impl Stats {
             pct(&self.first_ms, 0.5),
             pct(&self.first_ms, 0.9),
             self.sources
+        );
+        let per = |n: usize, of: usize| if of > 0 { 100.0 * n as f64 / of as f64 } else { 0.0 };
+        let right = self.right_at[0] + self.right_at[1];
+        println!(
+            "{label} shown: at {:.1}% of keystrokes, next word right {:.1}% (mid-word {:.1}% of {}, after a word {:.1}% of {}), wrong at {:.1} of 100 keystrokes, whole suggestion right {:.1}%, {:.2} words per suggestion ({:.1}% wrong)",
+            per(self.shown, self.keystrokes),
+            per(right, self.shown),
+            per(self.right_at[0], self.shown_at[0]),
+            self.shown_at[0],
+            per(self.right_at[1], self.shown_at[1]),
+            self.shown_at[1],
+            per(self.shown - right, self.keystrokes),
+            per(self.whole_right, self.shown),
+            if self.shown > 0 { self.words_shown as f64 / self.shown as f64 } else { 0.0 },
+            per(self.words_wrong, self.words_shown),
         );
         let shown: usize = self.with_alts.iter().sum();
         if shown > 0 && (self.with_alts[1..].iter().any(|&n| n > 0) || self.demands > 0) {
@@ -285,6 +324,8 @@ struct Replayer {
     oracle: bool,
     /// --on-demand: ask for alternatives when the suggestion is wrong and came with none.
     on_demand: bool,
+    /// --confidence-log FILE: one JSON line per keystroke showing a model suggestion.
+    confidence_log: Option<std::fs::File>,
 }
 
 /// Spell checker verdicts precomputed by tools/spell-map (the app's own Speller).
@@ -337,7 +378,8 @@ impl Replayer {
             }
         }
         let spell = arg("--spell").map(|p| serde_json::from_str(&std::fs::read_to_string(p).expect("read spell map")).expect("spell map json"));
-        Self { core, rx, rev: 0, verbose, think: Duration::ZERO, spell, oracle: has_flag("--oracle"), on_demand: has_flag("--on-demand") }
+        let confidence_log = arg("--confidence-log").map(|p| std::fs::File::create(p).expect("create confidence log"));
+        Self { core, rx, rev: 0, verbose, think: Duration::ZERO, spell, oracle: has_flag("--oracle"), on_demand: has_flag("--on-demand"), confidence_log }
     }
 
     /// Types `text[prime..prime+max]` after `text[..prime]` in field `field_key`.
@@ -370,13 +412,21 @@ impl Replayer {
             let mut whole = false;
             let mut alts: Vec<String> = Vec::new();
             let mut continuation = false;
+            let mut first_p: Option<f32> = None;
             loop {
                 match self.rx.recv_timeout(Duration::from_secs(5)) {
-                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, reason, replace, label, alternatives, .. }) if revision == rev => {
+                    Ok(Event::Suggestion { revision, text, source, ms, prefilled, reason, replace, label, alternatives, confidence, .. }) if revision == rev => {
                         if source == "pending" {
                             continue;
                         }
-                        let key = if reason.as_deref() == Some("typo") { "policy:typo" } else { source };
+                        let key = match reason.as_deref() {
+                            Some("typo") => "policy:typo",
+                            Some("lowConfidence") => "policy:lowConfidence",
+                            _ => source,
+                        };
+                        if source == "model" {
+                            first_p = confidence;
+                        }
                         *st.sources.entry(key).or_default() += 1;
                         if replace.is_some() {
                             // An emoji or a correction: the simulated user, who types clean
@@ -403,15 +453,29 @@ impl Replayer {
                     Err(_) => break,
                 }
             }
-            if !suggestion.is_empty() {
-                st.shown += 1;
-            }
             if !self.think.is_zero() {
                 std::thread::sleep(self.think);
             }
             let upcoming: String = chars[i..end].iter().collect();
             let next = if whole { suggestion.as_str() } else { words::take_words(&suggestion, 1) };
-            if !next.is_empty() && upcoming.starts_with(next) {
+            let right = !next.is_empty() && upcoming.starts_with(next);
+            if !suggestion.is_empty() {
+                st.shown += 1;
+                let at = usize::from(!typed.chars().last().is_some_and(words::is_word_char));
+                st.shown_at[at] += 1;
+                st.right_at[at] += usize::from(right);
+                let n = words::count_words(&suggestion);
+                let ok = (1..=n).take_while(|&k| upcoming.starts_with(words::take_words(&suggestion, k))).count();
+                st.words_shown += n;
+                st.words_wrong += n - ok;
+                st.whole_right += usize::from(ok == n);
+                if let (Some(log), Some(p)) = (self.confidence_log.as_mut(), first_p) {
+                    use std::io::Write;
+                    let line = serde_json::json!({ "p": p, "mid": at == 0, "right": right, "words": n, "ok": ok });
+                    writeln!(log, "{line}").expect("write confidence log");
+                }
+            }
+            if right {
                 if let Some(insert) = self.core.accept(AcceptMode::NextWord).map(|a| a.insert) {
                     if self.verbose {
                         eprintln!("  TAB {:?}  (showing {:?})", insert, suggestion);
@@ -1196,8 +1260,23 @@ fn main() {
     }
     let length_words: usize = flag("--words").and_then(|s| s.parse().ok()).unwrap_or(4);
     let beam_width: usize = flag("--beam").and_then(|s| s.parse().ok()).unwrap_or(1);
-    let mut settings =
-        Settings { length_words, beam_width, prefetch: !has("--no-prefetch"), alternatives: has("--alternatives"), ..Settings::default() };
+    // --gate B[,M]: the confidence gate's bars after a word and mid-word (M defaults to B;
+    // --gate 0 turns it off). Without it, the app's defaults.
+    let d = Settings::default();
+    let gate: Vec<f32> = flag("--gate").map(|s| s.split(',').map(|x| x.parse().expect("--gate B[,M]")).collect()).unwrap_or_default();
+    let mut settings = Settings {
+        length_words,
+        beam_width,
+        prefetch: !has("--no-prefetch"),
+        alternatives: has("--alternatives"),
+        min_confidence: gate.first().copied().unwrap_or(d.min_confidence),
+        min_confidence_mid_word: gate.get(1).or(gate.first()).copied().unwrap_or(d.min_confidence_mid_word),
+        gate_beam: has("--gate-beam"),
+        beam_first_word: has("--beam-first"),
+        beam_rank_by_sum: has("--rank-sum"),
+        extend_min: flag("--extend").and_then(|s| s.parse().ok()).unwrap_or(d.extend_min),
+        ..d
+    };
     let notes = match flag("--instructions") {
         Some(p) => Some(instructions::parse(&std::fs::read_to_string(p).expect("read instructions")).expect("instructions json")),
         None => has("--default-instructions").then(instructions::defaults),

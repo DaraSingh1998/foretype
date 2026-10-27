@@ -147,7 +147,15 @@ apps (`Mail`, `Slack`, `Teams`, `Messages`, `Notes`, `a document`) stand in for 
 
 Output: keystrokes saved, characters per accept, accept count, model latency p50/p90, the
 first suggestion of each document p50/p90 (it prefills the whole header), and
-how many keystrokes were served by `model`, `typeThrough`, `cache`, `details` or `policy`.
+how many keystrokes were served by `model`, `typeThrough`, `cache`, `details` or `policy`
+(`policy:lowConfidence`: held back by the confidence gate). A second line says what the
+user saw (D51): at how many keystrokes a suggestion was on screen, how often its next word
+was right (mid-word and after a word), wrong ghosts per 100 keystrokes, whole suggestions
+right and words per suggestion. It replays with the app's defaults, so the gate (greedy
+only) and the extension bar are on: `--gate 0 --extend 0` replays without them, as before
+D51. `--gate B[,M]`, `--extend X`, `--gate-beam`, `--beam-first`, `--rank-sum` set the D51
+options; `--confidence-log FILE` with `tools/confidence-sweep.py` estimates
+the gate's bars from one ungated run.
 With `--details`, the simulated user takes a fill other than a name only if all of it is
 what comes next (one Tab inserts all of it).
 

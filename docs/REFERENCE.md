@@ -245,12 +245,21 @@ as Japanese, is cut anywhere).
   **Stop at end of sentence**, and words with a virama or nukta (क्या, दफ़्तर) stay whole.
 - **Phrase beam search**: at full speed the engine weighs 3 candidate phrases instead of
   one (+1.1 points of keystrokes saved on the corpus); greedy while saving energy.
+- **Unlikely words left off**: a word after the first stays in the suggestion only while it
+  is at least 5% likely given the words before it, so the ghost text stops where the model
+  starts guessing. On the corpus it saves exactly as much typing and the whole suggestion
+  is right more often (8.3% → 9.7% of the time at full speed).
+- **Confidence gate while saving energy**: a suggestion shows only when its first word is at
+  least 15% likely (8% when it finishes a word you are typing). A wrong ghost was on screen
+  at 71 of every 100 keystrokes; with the gate, 58, for 0.4 points of keystrokes saved. At
+  full speed it stays off: there it cost 2 points, since the 3-phrase search's probabilities
+  are a poor guide (D51).
 - **Mid-line** (experimental, off): up to three words in a card under the caret when text
   follows it on the line.
 - In **VS Code, Cursor and Windsurf** only chat inputs get suggestions; the code editor
   stays off. **Google Docs** and **Arc/Dia** show a one-time tip for the setting they need.
 
-All of these can be turned off in Settings → Typing.
+All of these but the last two can be turned off in Settings → Typing.
 
 ### Word alternatives (experimental)
 
@@ -318,8 +327,8 @@ The power rules are in Settings → General:
 | The Mac runs hot | saves energy when the thermal state is serious, pauses when critical |
 | Sleep, a locked screen, display sleep | always paused |
 
-Saving energy: one candidate phrase instead of three, no look-ahead for the next
-suggestion, mid-word suggestions wait 80 ms for the next keystroke, no screen context, and
+Saving energy: one candidate phrase instead of three, the confidence gate (unlikely
+suggestions aren't shown), no look-ahead for the next suggestion, mid-word suggestions wait 80 ms for the next keystroke, no screen context, and
 the model is freed after a minute without typing (5 minutes otherwise). The battery rows
 are hidden on Macs without a battery. When the power rules pause it, the menu says why
 ("Paused — Low Power Mode") and offers **Resume Anyway (until plugged in)**; the
