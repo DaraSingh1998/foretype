@@ -35,7 +35,7 @@ was never asked for its accessibility tree.
 |---|---|---|
 | Codex app | Done (`fix/codex-electron`, 0.1.10) | OpenAI's owl runtime primed like Chrome; renamed Electron frameworks (`app.asar`) detected |
 | Installed-app scan | Done (`feat/compat-sweep`) | `Foretype --compat-scan`: every installed app with what it is built on (Electron, owl, other Chromium, a browser's web app) and the setup it gets; fails on a Chromium-based app that isn't listed and gets no priming. On the developer's Mac: 99 apps, 10 Chromium-based, none unprimed (OBS listed: its CEF draws browser docks only) |
-| Browser web apps | Left | Installed web apps (`com.google.Chrome.app.*`, e.g. Hoppscotch) are app shims whose pages live in the browser's process; check whether they get suggestions, and if not, prime the browser when its web app is in front |
+| Browser web apps | Done (`feat/compat-sweep`) | Installed web apps (`com.google.Chrome.app.*`, e.g. Hoppscotch) are app shims whose fields are served by the browser's process. Hoppscotch gets ghost text while Chrome is primed (checked live); Foretype now primes the browser when its web app is in front, so a web app opened before the browser ever was gets it too (that case checked by the self-test only) |
 | Cursor and Windsurf | Left: not installed here | Check the chat inputs' labels against `allow_fields` (VS Code's "Message input" is checked) |
 | LibreOffice Writer | Left: not installed here | It reported no `AXFocusedUIElement` for a document opened from outside; a fallback could take the paragraph `AXTextArea` whose selection is valid |
 | By-eye checks | Left | The overlay in Safari, Mail and Notes; the pixel caret locator in Teams and Obsidian/CodeMirror and with a non-blinking caret |
@@ -160,11 +160,11 @@ are kept for if that changes; the core stays portable.
   first word's probability, or the phrase's). A model trained for fill-in-the-middle, so mid-line can use the rest of the
   line (Qwen3's FIM tokens don't work on prose). (Beam search, the typo gate, emoji,
   autocorrect and mid-line landed in `feat/quality`.)
-- **Compatibility**: the compatibility sweep above (web apps, Cursor and Windsurf labels,
+- **Compatibility**: the compatibility sweep above (Cursor and Windsurf labels,
   LibreOffice, by-eye checks, insertion; Teams is the developer's live chat and Obsidian is
   not installed); text-marker reads in a real WebKit editor (Chrome's textarea answers
   none). (Chat inputs, Google Docs and Arc/Dia hints, text markers, the pixel caret locator,
-  the Codex app and `--compat-scan` landed.)
+  the Codex app, browser web apps and `--compat-scan` landed.)
 - **Personalization**: per-app retrieval tuning (needs a larger personal corpus than the 12
   self-written documents: tuning on those would fit noise). Cotypist's history can't be
   imported (encrypted, D30); Import Writing… takes text files instead. (The llama-server

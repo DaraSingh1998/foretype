@@ -33,6 +33,20 @@ enum AppKind {
         return fm.fileExists(atPath: framework.path) || fm.fileExists(atPath: archive.path) ? "electron" : nil
     }
 
+    /// The browser behind an installed web app ("com.google.Chrome.app.<id>" →
+    /// "com.google.Chrome"), else nil. Its page and fields live in the browser's process, so
+    /// that is the process to prime (Hoppscotch from Chrome, checked 2026-10-27).
+    static func browser(ofWebApp bundleId: String) -> String? {
+        guard let r = bundleId.range(of: ".app.") else { return nil }
+        let browser = String(bundleId[..<r.lowerBound])
+        return webAppBrowsers.contains(browser) ? browser : nil
+    }
+
+    private static let webAppBrowsers: Set<String> = [
+        "com.google.Chrome", "com.google.Chrome.beta", "com.google.Chrome.canary",
+        "com.microsoft.edgemac", "com.brave.Browser",
+    ]
+
     /// `--electron-selftest`: made-up bundles in a temporary folder.
     static func selfTest() -> Bool {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("foretype-appkind-\(getpid())")
@@ -58,6 +72,9 @@ enum AppKind {
         }
         let ok = kind(of: electron) == "electron" && kind(of: renamed) == "electron" && kind(of: owl) == "chromium" && kind(of: native) == nil
             && detected("invalid.foretype.nothing") == nil
+            && browser(ofWebApp: "com.google.Chrome.app.olccnbcocbmcbhlmeppkgaojoampamab") == "com.google.Chrome"
+            && browser(ofWebApp: "com.microsoft.edgemac.app.abc") == "com.microsoft.edgemac"
+            && browser(ofWebApp: "com.google.Chrome") == nil && browser(ofWebApp: "com.example.app.thing") == nil
         print(ok ? "electron self-test passed" : "electron self-test FAILED")
         return ok
     }

@@ -296,7 +296,18 @@ final class FocusTracker {
     /// while the app was launching, or someone cleared it). A read that times out is no
     /// reason to set it again.
     private func primeIfNeeded(_ pid: pid_t, _ bundle: String, after minAge: Double = 3) {
-        guard running, let kind = primeKind?(bundle), onlyAppsAllow?(pid, bundle) ?? true,
+        // A browser's installed web app is an app shim whose page lives in the browser's
+        // process: that process is the one to ask (the web app itself is allowed, not the browser).
+        if let browser = AppKind.browser(ofWebApp: bundle) {
+            guard running, onlyAppsAllow?(pid, bundle) ?? true,
+                  let b = NSRunningApplication.runningApplications(withBundleIdentifier: browser).first else { return }
+            return primeIfNeeded(b.processIdentifier, browser, after: minAge, allowed: true)
+        }
+        primeIfNeeded(pid, bundle, after: minAge, allowed: false)
+    }
+
+    private func primeIfNeeded(_ pid: pid_t, _ bundle: String, after minAge: Double, allowed: Bool) {
+        guard running, let kind = primeKind?(bundle), allowed || onlyAppsAllow?(pid, bundle) ?? true,
               kind == "electron" || kind == "chromium" && !NSWorkspace.shared.isVoiceOverEnabled else { return }
         let attr = kind == "electron" ? "AXManualAccessibility" : "AXEnhancedUserInterface"
         let app = AXUIElementCreateApplication(pid)
@@ -315,7 +326,7 @@ final class FocusTracker {
         let again = primedAt[pid] != nil
         primedAt[pid] = CFAbsoluteTimeGetCurrent()
         Log.debug("primed \(bundle) as \(kind)\(again ? " again (the flag read false)" : "")")
-        if minAge > 1 { perform(afterMs: 500) { self.primeIfNeeded(pid, bundle, after: 0.4) } }
+        if minAge > 1 { perform(afterMs: 500) { self.primeIfNeeded(pid, bundle, after: 0.4, allowed: allowed) } }
     }
 
     /// Puts the Chromium/Electron flags back as we found them (the enhanced flag disturbs

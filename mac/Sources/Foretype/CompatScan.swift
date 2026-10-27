@@ -19,8 +19,7 @@ enum CompatScan {
     static func engine(of url: URL, bundleId: String) -> String? {
         if let kind = AppKind.kind(of: url) { return kind }
         if hasRenderer(url) { return "chromium-other" }
-        return bundleId.range(of: #"^(com\.google\.Chrome|com\.microsoft\.edgemac|com\.brave\.Browser)(\.[a-z]+)?\.app\."#,
-                              options: .regularExpression) != nil ? "web-app" : nil
+        return AppKind.browser(ofWebApp: bundleId) != nil ? "web-app" : nil
     }
 
     /// True when the rule says anything: the core sends every field, so `disabled: false` and
@@ -77,6 +76,7 @@ enum CompatScan {
             let r = rule(id)
             let engine = engine(of: url, bundleId: id)
             let prime = r["prime"] as? String ?? AppKind.kind(of: url)
+                ?? AppKind.browser(ofWebApp: id).flatMap { rule($0)["prime"] as? String }.map { "\($0) (its browser)" }
             return Row(name: url.deletingPathExtension().lastPathComponent, bundleId: id, engine: engine ?? "native", rule: r, prime: prime)
         }
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -84,7 +84,7 @@ enum CompatScan {
 
     /// Prints the Chromium-based apps and every app with a rule, and returns false when a
     /// Chromium-based app that isn't listed gets no priming (a listed one without `prime` was
-    /// looked at and needs none). Web apps are printed as unchecked, never a failure.
+    /// looked at and needs none). A browser's web app gets its browser primed.
     static func run() -> Bool {
         // The "shell" backend loads no model; the engine is only asked for compat rules.
         guard let engine = EngineBridge(configJSON: #"{"backend":"shell"}"#) else {
@@ -97,9 +97,7 @@ enum CompatScan {
         for row in all where row.engine != "native" || listed(row.rule) {
             let ruleText = row.rule.filter { k, v in k != "note" && listed([k: v]) }.keys.sorted().joined(separator: ",")
             var setup = row.prime ?? "none"
-            if row.engine == "web-app" {
-                setup += "  (unchecked: a browser's web app)"
-            } else if row.engine != "native", row.prime == nil, !listed(row.rule) {
+            if row.engine != "native", row.prime == nil, !listed(row.rule) {
                 setup += "  <-- UNPRIMED"
                 unprimed.append(row)
             }

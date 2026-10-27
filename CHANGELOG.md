@@ -5,6 +5,11 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Web apps (2026-10-27)
+- Web apps installed from Chrome, Edge or Brave get suggestions (checked with Hoppscotch).
+  Foretype now sets up the browser behind a web app when the web app comes to the front, so
+  this no longer depends on having had the browser itself in front first.
+
 ## 0.1.10 (2026-10-27)
 
 ### Codex app (2026-10-27)
