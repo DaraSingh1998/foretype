@@ -990,3 +990,87 @@ probabilities of every split of the first word, as TabType does.
 **Cost.** One pass over the vocabulary per token of the first word (two while healing),
 and per word with the extension bar on greedy: no visible change in latency. Fewer
 suggestions shown with a gate, by design.
+
+## D52. Privacy filters: secrets masked by shape, sensitive fields and addresses skipped (2026-10-27)
+
+**Decision.** A core module, `privacy.rs`, always on and with no setting:
+- `redact` masks secrets (as `•••`) in every text that reaches the prompt from outside the
+  field being written in: the screen text (`context::screen_section`), other apps' windows
+  (`OtherApps::set_passages`, before passages are cut, so the report shows them masked too)
+  and the writing history (on recording, in the vocabulary profile, and in the examples,
+  for records written before this). It recognises secrets by shape, with hand-written
+  scanners: private key blocks, known key prefixes and JWTs, long random-looking strings
+  (32+ characters with upper and lower case and digits at 4+ bits of entropy per character,
+  or 32+ hex digits), values assigned to secret names (`*_API_KEY=`, `"password":`,
+  `Bearer`), and numbers with a checksum or a cue (cards by Luhn, IBANs by mod 97, Aadhaar by
+  Verhoeff, `123-45-6789`, and 4–8 digits next to "OTP", "code", "PIN" or "verification").
+- The gate (`policy::evaluate`) skips a field whose label or placeholder asks for a secret
+  (`sensitiveField`) and one that holds nothing but digits and number punctuation
+  (`numbers`); forcing a suggestion lifts both.
+- `submit` shows nothing while the word at the caret is a URL or an email address
+  (`address`), after the details fill (the user's own email is exact) and before
+  type-through.
+
+The field's own text is not masked: the model needs it as typed to continue it, and it is
+the user's own document.
+
+**Why.** From the comparison with KeyType and TabType (2026-10-26). With text from other
+apps and screen context, what one window shows can be suggested into another: an API key in
+a terminal, a one-time code in a message, a card number on a web page, typed into a chat
+with one Tab. Password managers were already never read and secure fields never touched,
+but most secrets live elsewhere, and not every code or card field is marked secure (web
+forms seldom are). A suggestion inside a URL or an email address is a guess of something
+exact. Shape-based masking misses what looks like an ordinary word, so the masks err
+towards hiding (a git hash, a postal PIN code next to "PIN"); a lost hash costs a suggestion
+little. Regex was not added as a dependency: the scanners are a few hundred lines and run
+on every keystroke's screen text in microseconds.
+
+**Cost.** Nothing measurable: the 53-document corpus has no secrets, addresses or
+digit-only texts, and replays the same (`docs/MEASUREMENTS.md`, "Privacy filters").
+
+## D53. No confidence gate on the beam yet: merging token splits doesn't calibrate it (2026-10-27)
+
+**Decision.** The confidence gate stays on greedy decoding only (D51). Summing the first
+word's probability over the token paths that spell it, tried as the fix for the beam's
+calibration, is not kept.
+
+**Why.** D51 found the beam's first-word probability a poor guide (mid-word words under 0.05
+were right a fifth of the time) and guessed the cause was a rarer token split winning, as
+TabType describes. Prototyped (2026-10-27): during the search every path that could end its
+first word recorded that word's probability, summed per spelling, and the winner reported its
+spelling's sum. On the corpus (Gemma 4 E2B, `--beam 3`) not one first word was ever reached by
+two paths: the 3-wide beam keeps different words, not different splits of one. The gated
+run reproduced D51's numbers exactly (41.3%, 1,548 suggestions held back) and the
+calibration stayed the same (mid-word under 0.05: 21.4% right). The beam's unlikely first
+words are right more often because it picks them for the likely words after them, which the
+first word's own probability can't see. A gate on mains power needs a different signal
+(`docs/ROADMAP.md`).
+
+**Cost.** None kept.
+
+## D54. Phrase lookup in the writing history, ahead of the model (2026-10-27)
+
+**Decision.** With personalization on, `submit` looks the text up in an index of the writing
+history (`phrases.rs`) after type-through and the cache and before the model: the three
+words before the word being typed, matched in lower case without surrounding punctuation
+and never across a line break; among the places they were written whose next word starts
+with what is typed, the continuation written most often (the longest matching context, then
+the most recent, on a tie), up to the length setting and stopping after a sentence's end or
+before a line break. It is offered (source `phrase`) when it was written at least twice, or
+once after five or more matching words. The index is rebuilt from the history (secrets
+masked) on the next lookup after it changes. `Settings::phrases` (default on; ft-replay
+`--no-phrases`) turns it off.
+
+**Why.** From TabType, which keeps a suffix index over the user's writing and measured +13%
+characters saved for users who repeat phrases. Our word-level bias (Phase 3) gained 0.6
+points because it can only nudge single words; a phrase the user always writes the same way
+is better offered whole than guessed. Leave-one-out with Gemma 4 E2B, `--beam 3`
+(`docs/MEASUREMENTS.md`, "Phrase lookup"): on `corpus-repeat.jsonl`, ten messages by one
+writer that reuse stock phrases, personalization went from 47.7% to 50.0% keystrokes saved
+with the lookup (whole suggestions right 15.8% → 18.5%, wrong ghosts 62.9 → 61.2 per 100
+keystrokes); on the twelve `sw-*` documents, which share no phrases, it offered nothing and
+changed nothing. Requiring a repeat (or a long match) keeps a phrase written once in passing
+from overriding the model.
+
+**Cost.** A hash lookup per keystroke; the index holds every three-word context of the
+history (rebuilt in milliseconds for a few hundred records).

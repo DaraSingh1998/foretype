@@ -62,7 +62,11 @@ itself.
   open in another window, on any display. Settings ▸ Context ▸ What Foretype Sees shows
   exactly what it has read and what your last suggestion used.
 - **Sounds like you (opt-in).** Learn From My Writing picks up the words and phrasing you
-  use. Your history is encrypted on your Mac, and one click deletes it.
+  use, and offers the phrases you keep writing word for word. Your history is encrypted on
+  your Mac, and one click deletes it.
+- **Keeps secrets out.** API keys, card numbers and one-time codes seen on screen or in
+  other apps are masked before the model sees them, and fields asking for a code, PIN or
+  card number get no suggestions.
 - **Fills in your details.** Add them once in Settings ▸ About You (or from your Contacts
   card); then "My email is" or a sign-off suggests your own email or name.
 - **Small helpers.** `:tada` becomes 🎉, misspelled words get a one-key fix (Hinglish is left alone), and custom

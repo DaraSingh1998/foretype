@@ -108,14 +108,13 @@ const WINDOW_STEP: usize = 512;
 /// chat-like layouts, as the shell orders it) is kept.
 const MAX_SCREEN_CHARS: usize = 1500;
 
-/// Cleans OCR text for the prompt: trims lines, drops empty ones and bracket lines that
-/// could be mistaken for the header's own markers, and keeps the last `MAX_SCREEN_CHARS`.
+/// Cleans OCR text for the prompt: trims lines, drops timestamps and edit marks
+/// (`clean_screen_line`), empty lines and bracket lines that could be mistaken for the
+/// header's own markers, keeps the last `MAX_SCREEN_CHARS` and masks secrets
+/// (`privacy::redact`).
 fn screen_section(raw: &str) -> String {
-    let lines: Vec<&str> = raw
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('['))
-        .collect();
+    let cleaned: Vec<String> = raw.lines().filter_map(clean_screen_line).collect();
+    let lines: Vec<&str> = cleaned.iter().map(String::as_str).filter(|l| !l.starts_with('[')).collect();
     let mut kept: Vec<&str> = Vec::new();
     let mut total = 0;
     for line in lines.iter().rev() {
@@ -127,7 +126,84 @@ fn screen_section(raw: &str) -> String {
         kept.push(line);
     }
     kept.reverse();
-    kept.join("\n")
+    crate::privacy::redact(&kept.join("\n")).into_owned()
+}
+
+/// One screen line without the chat app's timestamps and edit marks, which say nothing about
+/// what comes next and change as time passes (each change costs a prefill): pieces of the
+/// row that are only a time or date (the shell joins a row's pieces with two spaces),
+/// "(edited)", and a time after a name ("Priya Raman 10:42 AM"). None when nothing is left.
+pub(crate) fn clean_screen_line(line: &str) -> Option<String> {
+    let line = line.trim().replace("(edited)", "").replace("(Edited)", "");
+    let pieces: Vec<String> = line
+        .split("  ")
+        .map(|p| p.trim().trim_start_matches(['\u{b7}', '\u{2022}', '-', '|']).trim())
+        .filter(|p| !p.is_empty() && !is_stamp(p))
+        .map(|p| strip_trailing_stamp(p).to_string())
+        .collect();
+    let out = pieces.join("  ");
+    (!out.trim().is_empty()).then_some(out)
+}
+
+const MONTHS: &[&str] = &["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+    "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december"];
+const WEEKDAYS: &[&str] = &["mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
+
+/// A word of a timestamp, and whether it is one on its own (not just "at" or a number).
+fn stamp_word(w: &str) -> Option<bool> {
+    let w = w.trim_matches(|c: char| c == ',' || c == '.' || c == '(' || c == ')').to_lowercase();
+    let digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    let strong = ["today", "yesterday", "now", "ago", "edited"].contains(&w.as_str())
+        || MONTHS.contains(&w.as_str())
+        || WEEKDAYS.contains(&w.as_str())
+        // 10:42, 10.42, 10:42:05, 10:42am
+        || {
+            let t = w.trim_end_matches("am").trim_end_matches("pm");
+            let parts: Vec<&str> = t.split([':', '.']).collect();
+            (2..=3).contains(&parts.len()) && parts[0].len() <= 2 && digits(parts[0]) && parts[1..].iter().all(|p| p.len() == 2 && digits(p))
+        }
+        // 10/26, 26/10/2026, 2026-10-26
+        || {
+            let parts: Vec<&str> = w.split(['/', '-']).collect();
+            (2..=3).contains(&parts.len()) && parts.iter().all(|p| digits(p) && p.len() <= 4)
+        }
+        // 5m, 2h, 3d, 1w, 10min
+        || ["m", "h", "d", "w", "min", "mins", "hr", "hrs"].iter().any(|u| w.strip_suffix(u).is_some_and(|n| digits(n) && n.len() <= 3));
+    if strong {
+        return Some(true);
+    }
+    let weak = ["at", "on", "just", "am", "pm", "a.m", "p.m", "min", "mins", "minute", "minutes", "hr", "hrs", "hour", "hours", "day", "days", "week", "weeks"]
+        .contains(&w.as_str())
+        || (digits(&w) && w.len() <= 4);
+    weak.then_some(false)
+}
+
+/// A piece that is only a timestamp: "10:42 AM", "Yesterday at 3:15 PM", "Monday, October 26",
+/// "5 min ago", "2h", "Edited".
+fn is_stamp(piece: &str) -> bool {
+    let words: Vec<&str> = piece.split_whitespace().collect();
+    let kinds: Option<Vec<bool>> = words.iter().map(|w| stamp_word(w)).collect();
+    words.len() <= 6 && kinds.is_some_and(|k| k.contains(&true))
+}
+
+/// `piece` without a timestamp after a name (one to four capitalized words); the stamp needs a
+/// number or "today"/"yesterday" ("Thanks May" keeps its May).
+fn strip_trailing_stamp(piece: &str) -> &str {
+    let words: Vec<(usize, &str)> = piece.split_whitespace().map(|w| (w.as_ptr() as usize - piece.as_ptr() as usize, w)).collect();
+    let mut cut = words.len();
+    while cut > 0 && stamp_word(words[cut - 1].1).is_some() {
+        cut -= 1;
+    }
+    let stamp = &words[cut..];
+    let name = &words[..cut];
+    let named = (1..=4).contains(&name.len()) && name.iter().all(|(_, w)| w.chars().next().is_some_and(char::is_uppercase));
+    let dated = stamp.iter().any(|(_, w)| w.chars().any(|c| c.is_ascii_digit()) || ["today", "yesterday"].contains(&w.to_lowercase().as_str()));
+    if named && dated && stamp.iter().any(|(_, w)| stamp_word(w) == Some(true)) {
+        piece[..stamp[0].0].trim_end()
+    } else {
+        piece
+    }
 }
 
 /// The header without the other-apps section.
@@ -314,6 +390,30 @@ mod tests {
         let p = build(&i, 2000);
         assert!(p.prefix.contains("line 399\n[End of screen text]"));
         assert!(!p.prefix.contains("line 1\n"));
+    }
+
+    #[test]
+    fn timestamps_and_edit_marks_leave_the_screen_text() {
+        let c = |l: &str| clean_screen_line(l);
+        assert_eq!(c("Priya Raman  10:42 AM").as_deref(), Some("Priya Raman"));
+        assert_eq!(c("Priya Raman 10:42 AM").as_deref(), Some("Priya Raman"));
+        assert_eq!(c("10:42"), None);
+        assert_eq!(c("Yesterday at 3:15 PM"), None);
+        assert_eq!(c("Monday, October 26"), None);
+        assert_eq!(c("Sam  \u{b7} 5 min ago").as_deref(), Some("Sam"));
+        assert_eq!(c("2h"), None);
+        assert_eq!(c("Can you send the numbers? (edited)").as_deref(), Some("Can you send the numbers?"));
+        assert_eq!(c("Edited"), None);
+        // Times inside a message stay.
+        assert_eq!(c("Let's meet at 10:30 tomorrow").as_deref(), Some("Let's meet at 10:30 tomorrow"));
+        assert_eq!(c("The call moved to 4 PM").as_deref(), Some("The call moved to 4 PM"));
+        assert_eq!(c("Q3 2026 budget").as_deref(), Some("Q3 2026 budget"));
+        assert_eq!(c("We sold 4500 units").as_deref(), Some("We sold 4500 units"));
+        assert_eq!(c("I am").as_deref(), Some("I am"));
+        assert_eq!(c("Thanks May").as_deref(), Some("Thanks May"));
+        // A whole screen: the stamps go, the conversation stays.
+        let s = screen_section("Priya  9:58 AM\nMorning! Did you see the notes?\nSam  10:02 AM\nYes (edited)\nToday");
+        assert_eq!(s, "Priya\nMorning! Did you see the notes?\nSam\nYes");
     }
 
     #[test]

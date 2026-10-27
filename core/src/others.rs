@@ -286,6 +286,7 @@ impl OtherApps {
             };
             let w = self.windows.len();
             let text: String = p.text.chars().take(MAX_WINDOW_CHARS).collect();
+            let text = crate::privacy::redact(&text);
             let mut added = false;
             for (ordinal, piece) in chunk(&text).into_iter().enumerate() {
                 let id = hash_of((ident, &piece));

@@ -8,6 +8,8 @@ private final class NonActivatingPanel: NSPanel {
 
 private final class GhostView: NSView {
     var text = NSAttributedString()
+    /// Inline ghost text: each line and where it starts in the view.
+    var lines: [(text: NSAttributedString, at: NSPoint)] = []
     var card = false
     let padding = NSSize(width: 6, height: 3)
 
@@ -22,13 +24,15 @@ private final class GhostView: NSView {
             path.stroke()
             text.draw(at: NSPoint(x: padding.width, y: padding.height))
         } else {
-            text.draw(at: .zero)
+            for line in lines { line.text.draw(at: line.at) }
         }
     }
 }
 
 /// Draws the suggestion as gray "ghost" text right after the caret, matching the host
-/// field's font. When the caret position is unknown it falls back to a small "mirror"
+/// field's font. In a multi-line field with nothing below the caret's line, words that don't
+/// fit before the field's edge wrap onto the next lines, from where its text starts (`Wrap`).
+/// When the caret position is unknown it falls back to a small "mirror"
 /// card above the field, as Cotypist does for Firefox. Mid-line suggestions (text follows
 /// the caret, so inline ghost text would overlap it) use a card just below the caret. Word
 /// alternatives (D50) get a numbered card of their own under the suggestion (`showPicker`).
@@ -37,13 +41,29 @@ final class GhostPanel {
     private let view = GhostView()
     private let pickerPanel: NSPanel
     private let pickerView = GhostView()
-    private var anchor: (caret: CGRect, font: NSFont)?
+    /// What the inline text was laid out with, so an accept can move it (`advance`).
+    private var anchor: (caret: CGRect, font: NSFont, limit: CGFloat, left: CGFloat?, bottom: CGFloat)?
+    /// Where each multi-line field's text starts (left edge, global x), measured on a line
+    /// that fits on one row; used for lines that are already wrapped.
+    private var leftEdges: [UInt64: CGFloat] = [:]
+
+    /// A multi-line field the ghost text may wrap in: nothing follows the caret's line, the
+    /// caret is inside `field`, and `lineText` is the text from the line's start to the caret.
+    struct Wrap {
+        var fieldKey: UInt64
+        var lineText: String
+        var field: CGRect
+        /// The lowest y a wrapped line may reach (the field's or the window's bottom).
+        var bottom: CGFloat
+    }
     /// Where the suggestion is drawn (global coordinates), the caret it follows (none for the
     /// mirror card) and its font: the alternatives card goes next to it.
     private var drawn: (rect: CGRect, caret: CGRect?, font: NSFont)?
     /// What the panel last drew: `inline`, `card` (under the caret), `mirror` (above the
     /// field), `hint` or `hidden`. For the debug log.
     private(set) var mode = "hidden"
+    /// Rows the inline text takes (more than 1 when it wraps). For the debug log.
+    private(set) var rows = 0
 
     init() {
         panel = GhostPanel.makePanel(view)
@@ -115,9 +135,49 @@ final class GhostPanel {
         return fit
     }
 
+    /// Most rows the ghost text takes in a multi-line field, the caret's included.
+    static let maxRows = 3
+
+    /// `text` laid out from the caret at `x`: the words that fit before `limit` on the caret's
+    /// row, then, given the field's `left` edge, rows starting there, up to `rows` in all.
+    /// Each line is its text (wrapped lines without their leading spaces), where it starts and
+    /// its row. A new word that doesn't fit on the caret's row starts on the next one; the rest
+    /// of a word being typed never moves down (the app would move the whole word).
+    static func layout(_ text: String, font: NSFont, x: CGFloat, limit: CGFloat, left: CGFloat?, rows: Int) -> [(text: String, x: CGFloat, row: Int)] {
+        var lines: [(text: String, x: CGFloat, row: Int)] = []
+        var rest = Substring(text)
+        var row = 0, start = x
+        while !rest.isEmpty, row < max(1, rows) {
+            let fit = fitting(String(rest), font: font, width: max(0, limit - start))
+            if !fit.trimmingCharacters(in: .whitespaces).isEmpty {
+                lines.append((fit, start, row))
+                rest = rest.dropFirst(fit.count)
+            } else if row > 0 || !(rest.first?.isWhitespace ?? false) {
+                break  // a word wider than the field, or the rest of the word at the caret
+            }
+            guard let left, !rest.isEmpty else { break }
+            rest = rest.drop { $0.isWhitespace }
+            row += 1
+            start = left
+        }
+        return lines
+    }
+
+    /// The field's left text edge for `wrap`: measured from the caret's line when that line
+    /// fits on one row (and remembered for the field), else the remembered one.
+    private func leftEdge(_ wrap: Wrap, caret: CGRect, font: NSFont) -> CGFloat? {
+        let measured = caret.minX - GhostPanel.attributed(wrap.lineText, font: font, card: false).size().width
+        if measured >= wrap.field.minX - 2, measured <= wrap.field.minX + wrap.field.width / 4 {
+            if leftEdges.count > 64 { leftEdges.removeAll() }
+            leftEdges[wrap.fieldKey] = measured
+            return measured
+        }
+        return leftEdges[wrap.fieldKey]
+    }
+
     /// `tag` labels a fill of one of the user's details; it is drawn only when the whole text
-    /// fits.
-    func show(text: String, caret: CaretInfo?, frame: CGRect?, font: NSFont?, midLine: Bool = false, tag: String? = nil) {
+    /// fits on the caret's row. `wrap` lets the text go on below the caret's line.
+    func show(text: String, caret: CaretInfo?, frame: CGRect?, font: NSFont?, midLine: Bool = false, tag: String? = nil, wrap: Wrap? = nil) {
         let caretRect = caret?.rect
         let baseFont = font ?? NSFont.systemFont(ofSize: max(11, (caretRect?.height ?? 16) * 0.78))
         if midLine, let caretRect {
@@ -126,29 +186,10 @@ final class GhostPanel {
         if let caretRect {
             let x = caretRect.minX + caretRect.width
             let limit = (frame.map { $0.maxX } ?? (displayBounds().first { $0.contains(caretRect.origin) }?.maxX ?? x + 600)) - 4
-            var shown = GhostPanel.fitting(text, font: baseFont, width: max(0, limit - x))
-            if shown.trimmingCharacters(in: .whitespaces).isEmpty {
-                // No whole word fits before the field's edge (the line is about to wrap): the
-                // first word may run past it, which beats a card away from the caret.
-                let screenRight = (displayBounds().first { $0.contains(caretRect.origin) }?.maxX ?? x + 600) - 4
-                shown = GhostPanel.fitting(GhostPanel.firstWord(text), font: baseFont, width: max(0, screenRight - x))
-            }
-            if !shown.trimmingCharacters(in: .whitespaces).isEmpty {
-                var attr = GhostPanel.attributed(shown, font: baseFont, card: false)
-                if shown == text, tag != nil {
-                    let tagged = GhostPanel.attributed(shown, font: baseFont, card: false, tag: tag)
-                    if tagged.size().width <= limit - x { attr = tagged }
-                }
-                let size = attr.size()
-                let axRect = CGRect(x: x, y: caretRect.midY - size.height / 2, width: ceil(size.width) + 2, height: ceil(size.height))
-                view.card = false
-                view.text = attr
-                anchor = (caretRect, baseFont)
-                drawn = (axRect, caretRect, baseFont)
-                mode = "inline"
-                place(GhostPanel.cocoaRect(fromAX: axRect))
-                return
-            }
+            let left = wrap.flatMap { leftEdge($0, caret: caretRect, font: baseFont) }
+            let screenBottom = displayBounds().first { $0.contains(caretRect.origin) }?.maxY ?? .greatestFiniteMagnitude
+            let bottom = min(wrap?.bottom ?? caretRect.maxY, screenBottom)
+            if showInline(text, caret: caretRect, font: baseFont, limit: limit, left: left, bottom: bottom, tag: tag) { return }
         }
         // Mirror card: above the field (or below the caret line when the field is unknown).
         guard let anchorRect = frame ?? caretRect else { return hide() }
@@ -168,6 +209,42 @@ final class GhostPanel {
         drawn = (axRect, nil, cardFont)
         mode = "mirror"
         place(GhostPanel.cocoaRect(fromAX: axRect))
+    }
+
+    /// The inline ghost text from `caret`; false when nothing fits there.
+    private func showInline(_ text: String, caret caretRect: CGRect, font: NSFont, limit: CGFloat, left: CGFloat?,
+                            bottom: CGFloat, tag: String?) -> Bool {
+        let x = caretRect.minX + caretRect.width
+        let lineHeight = max(caretRect.height, NSLayoutManager().defaultLineHeight(for: font))
+        let rowLimit = left == nil ? 1 : min(GhostPanel.maxRows, 1 + max(0, Int(((bottom - caretRect.maxY) / lineHeight).rounded(.down))))
+        var lines = GhostPanel.layout(text, font: font, x: x, limit: limit, left: left, rows: rowLimit)
+        if lines.isEmpty {
+            // No whole word fits before the field's edge (the line is about to wrap): the
+            // first word may run past it, which beats a card away from the caret.
+            let screenRight = (displayBounds().first { $0.contains(caretRect.origin) }?.maxX ?? x + 600) - 4
+            let first = GhostPanel.fitting(GhostPanel.firstWord(text), font: font, width: max(0, screenRight - x))
+            if !first.trimmingCharacters(in: .whitespaces).isEmpty { lines = [(first, x, 0)] }
+        }
+        guard !lines.isEmpty else { return false }
+        var attrs = lines.map { GhostPanel.attributed($0.text, font: font, card: false) }
+        if lines.count == 1, lines[0].text == text, tag != nil {
+            let tagged = GhostPanel.attributed(text, font: font, card: false, tag: tag)
+            if tagged.size().width <= limit - x { attrs[0] = tagged }
+        }
+        let height = ceil(attrs[0].size().height)
+        let top = caretRect.midY - height / 2
+        let rects = zip(lines, attrs).map { line, attr in
+            CGRect(x: line.x, y: top + CGFloat(line.row) * lineHeight, width: ceil(attr.size().width) + 2, height: height)
+        }
+        let axRect = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+        view.card = false
+        view.lines = zip(attrs, rects).map { ($0, NSPoint(x: $1.minX - axRect.minX, y: $1.minY - axRect.minY)) }
+        anchor = (caretRect, font, limit, left, bottom)
+        drawn = (axRect, caretRect, font)
+        mode = "inline"
+        rows = (lines.last?.row ?? 0) + 1
+        place(GhostPanel.cocoaRect(fromAX: axRect))
+        return true
     }
 
     /// Shows a tip card above `rect` (a field or window) for 8 seconds. It doesn't count as
@@ -223,10 +300,22 @@ final class GhostPanel {
         guard let anchor, panel.isVisible, !view.card, !remaining.trimmingCharacters(in: .whitespaces).isEmpty else {
             return hide()
         }
-        let dx = GhostPanel.attributed(inserted, font: anchor.font, card: false).size().width
+        // Where the inserted words ended in the layout (it fills rows greedily, so laying out
+        // a prefix gives the same rows): the caret is there now, on a lower row if they wrapped.
+        let x = anchor.caret.minX + anchor.caret.width
+        let lineHeight = max(anchor.caret.height, NSLayoutManager().defaultLineHeight(for: anchor.font))
+        let placed = GhostPanel.layout(inserted, font: anchor.font, x: x, limit: anchor.limit, left: anchor.left,
+                                       rows: anchor.left == nil ? 1 : GhostPanel.maxRows).last
         var caret = anchor.caret
-        caret.origin.x += dx
-        show(text: remaining, caret: CaretInfo(rect: caret, strategy: "advanced"), frame: nil, font: anchor.font)
+        if let placed, placed.row > 0 {
+            caret.origin.x = placed.x + GhostPanel.attributed(placed.text, font: anchor.font, card: false).size().width - caret.width
+            caret.origin.y += CGFloat(placed.row) * lineHeight
+        } else {
+            caret.origin.x += GhostPanel.attributed(inserted, font: anchor.font, card: false).size().width
+        }
+        if !showInline(remaining, caret: caret, font: anchor.font, limit: anchor.limit, left: anchor.left, bottom: anchor.bottom, tag: nil) {
+            hide()
+        }
     }
 
     private func place(_ rect: CGRect) {
@@ -325,5 +414,80 @@ final class GhostPanel {
         }
         rows.addAttribute(.paragraphStyle, value: para, range: NSRange(location: 0, length: rows.length))
         return rows
+    }
+
+    // MARK: Self-test (--ghost-selftest)
+
+    /// The wrapping layout on made-up fields; with `dir`, PNGs of a field with the ghost text
+    /// drawn as `showInline` draws it.
+    static func selfTest(dir: String?) -> Bool {
+        var failures = 0
+        func check(_ ok: Bool, _ what: String) {
+            if !ok { failures += 1; print("FAIL: \(what)") }
+        }
+        let font = NSFont.systemFont(ofSize: 13)
+        func width(_ s: String) -> CGFloat { attributed(s, font: font, card: false).size().width }
+        let text = " the quarterly numbers before the meeting on Thursday"
+        let x: CGFloat = 300, left: CGFloat = 100
+
+        // Everything fits: one line at the caret.
+        var l = layout(text, font: font, x: x, limit: x + width(text) + 1, left: left, rows: 3)
+        check(l.count == 1 && l[0].text == text && l[0].x == x, "fits on the caret's row: \(l)")
+        // Too long: the rest goes on the next rows, from the left edge, without its leading space.
+        let limit = x + width(" the quarterly numbers") + 1
+        l = layout(text, font: font, x: x, limit: limit, left: left, rows: 3)
+        check(l.count >= 2 && l[0].text == " the quarterly numbers" && l[0].row == 0, "first row: \(l)")
+        check(l.count >= 2 && l[1].x == left && l[1].row == 1 && l[1].text.first == "b", "second row from the left edge: \(l)")
+        check(l.map(\.text).joined(separator: " ") == text, "no word lost or doubled: \(l)")
+        check(l.allSatisfy { $0.x + width($0.text) <= limit }, "every row within the edge")
+        // Rows are capped; without a left edge only the caret's row.
+        check(layout(text, font: font, x: x, limit: x + width(" the") + 1, left: left, rows: 2).count == 2, "capped at 2 rows")
+        l = layout(text, font: font, x: x, limit: limit, left: nil, rows: 3)
+        check(l.count == 1 && l[0].text == " the quarterly numbers", "no wrap without a left edge: \(l)")
+        // A new word that doesn't fit at the caret starts on the next row...
+        l = layout(text, font: font, x: x, limit: x + 4, left: left, rows: 3)
+        check(l.first?.row == 1 && l.first?.x == left && l.first?.text.hasPrefix("the") == true, "new word moves down: \(l)")
+        // ...but the rest of a word being typed doesn't (the app moves the whole word).
+        check(layout("ly numbers", font: font, x: x, limit: x + 4, left: left, rows: 3).isEmpty, "rest of a word stays")
+        // A word wider than a whole row stops the layout.
+        l = layout(" a " + String(repeating: "x", count: 80), font: font, x: x, limit: x + 60, left: left, rows: 3)
+        check(l.count == 1 && l[0].text == " a", "too-wide word: \(l)")
+        // A prefix lays out on the same rows (what `advance` relies on).
+        let full = layout(text, font: font, x: x, limit: limit, left: left, rows: 3)
+        let prefix = layout(" the quarterly numbers before", font: font, x: x, limit: limit, left: left, rows: 3)
+        check(prefix.last?.row == 1 && full.count > 1 && full[1].text.hasPrefix(prefix.last!.text), "prefix layout: \(prefix) vs \(full)")
+
+        if let dir {
+            try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            for (name, dark) in [("light", false), ("dark", true)] {
+                let typed = "Hi Sam, could you send me"
+                let field = CGRect(x: 0, y: 0, width: 360, height: 90)
+                let caretX = 8 + width(typed)
+                let lines = layout(text, font: font, x: caretX, limit: field.maxX - 4, left: 8, rows: 3)
+                let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+                let image = NSImage(size: field.size, flipped: true) { _ in
+                    let appearance = NSAppearance(named: dark ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()
+                    appearance.performAsCurrentDrawingAppearance {
+                        NSColor.textBackgroundColor.setFill()
+                        field.fill()
+                        NSColor.separatorColor.setStroke()
+                        NSBezierPath(rect: field.insetBy(dx: 0.5, dy: 0.5)).stroke()
+                        NSAttributedString(string: typed, attributes: [.font: font, .foregroundColor: NSColor.textColor])
+                            .draw(at: NSPoint(x: 8, y: 8))
+                        for line in lines {
+                            attributed(line.text, font: font, card: false)
+                                .draw(at: NSPoint(x: line.x, y: 8 + CGFloat(line.row) * lineHeight))
+                        }
+                    }
+                    return true
+                }
+                guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+                else { check(false, "render \(name)"); continue }
+                let path = (dir as NSString).appendingPathComponent("ghost-wrap-\(name).png")
+                check(FileManager.default.createFile(atPath: path, contents: png), "write \(path)")
+            }
+        }
+        print(failures == 0 ? "ghost self-test passed" : "ghost self-test: \(failures) failure(s)")
+        return failures == 0
     }
 }

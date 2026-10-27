@@ -5,6 +5,44 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Small fixes (2026-10-27)
+- "Mr.", "Dr.", "e.g.", "U.S.", initials and list numbers ("1.") no longer count as the end
+  of a sentence, for **Stop at end of sentence** and autocorrect's capital letters.
+- Electron apps not in the compatibility list (Postman, Termius, YouTube Music…) are
+  recognised from their bundle and get the same accessibility setup as Slack or VS Code.
+- With Show Alternatives on, typing the start of an alternative instead of the suggestion
+  makes that alternative the suggestion, instead of dropping both.
+
+### Your phrases (2026-10-27)
+- With Learn From My Writing on, a phrase you keep writing is offered word for word: after
+  the same three words as before, the ghost text is what you wrote next then. On messages
+  that reuse their writer's stock phrases, keystrokes saved rose from 47.7% to 50.0%.
+
+### Cleaner screen context (2026-10-27)
+- Only the column of the field you type in is read, so a sidebar's channel and contact
+  names no longer mix into the conversation.
+- Timestamps and "(edited)" marks are left out of the screen text.
+- After you send a chat message the window is read again a second later, and new screen
+  text that arrives while you pause updates the suggestion showing.
+- Text recognition gives up on a window after 8 seconds (60 the first time, while macOS
+  prepares it) instead of possibly waiting forever and reading no screen again.
+
+### Ghost text wraps (2026-10-27)
+- In a multi-line field the suggestion no longer stops at the field's right edge: the words
+  that don't fit go on the next line, from where the text starts, up to three lines, as
+  long as nothing is written below. The 7- and 10-word lengths now show all their words at
+  the end of a line.
+
+### Privacy filters (2026-10-27)
+- Secrets are masked before the model sees them: API keys and tokens, private keys,
+  passwords after a name like `password:`, card numbers, IBANs, social security and Aadhaar
+  numbers and one-time codes, in the screen text, other apps' text and your writing
+  history. A key visible in a terminal can no longer be suggested into a chat.
+- No suggestions in fields that ask for a one-time code, PIN, card number, password or
+  similar, even when the app doesn't mark them secure, or in fields holding only digits.
+- No suggestions while you type a web address or an email address (your own email from
+  About You is still filled).
+
 ## 0.1.9 (2026-10-27)
 
 ### Fixed: half a word at the end of a suggestion (2026-10-26)

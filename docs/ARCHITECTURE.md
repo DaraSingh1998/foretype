@@ -45,8 +45,10 @@ Foretype has two halves joined by a small C ABI:
 | `core/src/words.rs` | Fragment splitting, word counting and limiting |
 | `core/src/session.rs` | Suggestion reuse: type-through, backspace, accept, cache, dismiss |
 | `core/src/policy.rs` | The gate, compatibility DB types, agent-prompt detection |
+| `core/src/privacy.rs` | Privacy filters (D52): secrets masked, sensitive field labels, addresses being typed |
 | `core/src/history.rs` | Encrypted writing history (ChaCha20-Poly1305) |
 | `core/src/profile.rs` | Vocabulary profile and example selection |
+| `core/src/phrases.rs` | Phrase lookup in the writing history (D54) |
 | `core/src/details.rs` | The user's own details: fill cues and the prompt's writer line |
 | `core/src/models.rs` | Model catalog (`models/catalog.json`) and tier choice |
 | `core/src/ffi.rs`, `core/include/foretype_core.h` | C ABI |
@@ -88,20 +90,24 @@ In order; the first rule that applies decides:
 3. `settings.only_apps` non-empty and the app is not in it → hide (`notInOnlyApps`).
 4. `policy::evaluate` → hide with a reason. Checks, in order: secure input, secure field
    (`AXSecureTextField`, or "password"/"secure" in the role description), role not
-   `AXTextArea`/`AXTextField`/`AXComboBox`, `AXSearchField` (unless forced), a selection,
+   `AXTextArea`/`AXTextField`/`AXComboBox`, a label or placeholder asking for a secret
+   (`sensitiveField`: one-time code, PIN, card number, password…; `privacy::sensitive_field`,
+   unless forced), `AXSearchField` (unless forced), a selection,
    IME composition (`marked_len > 0`), app disabled by the user, app disabled by default in
    the compat DB (unless the user enabled it, forced, or the field's label matches the
    rule's `allow_fields`, e.g. a code editor's chat input), agent-prompt-only app whose
    caret line is not an agent prompt, single-line field narrower than 260 pt, more than 8
    non-space characters after the caret on the line (lifted when `mid_line` is on and the
-   built-in engine is loaded), fewer than 2 characters typed, a partial word longer than 30
+   built-in engine is loaded), fewer than 2 characters typed, nothing but digits and number
+   punctuation in the field (`numbers`, unless forced), a partial word longer than 30
    characters.
 5. Agent-prompt apps (terminals): `text_before` is replaced by the prompt's own text.
 6. Recorder (`observe`) when personalization is on.
 7. Dismissed for exactly this text (unless forced) → hide (`dismissed`).
 8. **Type-through**: the text extends the shown suggestion's base by a prefix of the
    suggestion, or backspaces up to 24 characters into it → emit the rest (`typeThrough`),
-   no inference. Its word alternatives (D50) follow: those that start with the typed text
+   no inference. When the typed text leaves the suggestion but an alternative starts with it,
+   that alternative becomes the suggestion. Its word alternatives (D50) follow: those that start with the typed text
    keep their rest, a backspace gives them the deleted text back, and any that now share a
    first word with the suggestion or each other go.
 9. **Typing aids** (no model): one of the user's details the text asks for, at the end of
@@ -112,9 +118,18 @@ In order; the first rule that applies decides:
    digits, or is one of the user's own words; a partial word the shell's spell checker says
    can't become a word (`spell_fragment: "typo"`) → hide (`typo`), unless capitalized, with
    digits, shorter than 3 letters or a prefix of the user's own words.
+   Then, unless forced, a URL or email address at the caret (`privacy::typing_address`)
+   → hide (`address`); after the details fill, so the user's own address is still filled.
 10. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
    prefetch → emit (`cache`), with the alternatives cached alongside. Skipped mid-line (the
    key doesn't hold the text after the caret).
+    **Phrase**: with `personalize` and `phrases`, not mid-line: the three words before the
+    word being typed, looked up in an index of the writing history (`phrases::PhraseIndex`,
+    rebuilt on the next lookup after the history changes, secrets masked): the continuation
+    written most often after them whose first word starts with what is typed, up to the
+    length setting and a sentence's end or line break, offered when written at least twice
+    or after five matching words → emit (`phrase`), set in the session like a model
+    suggestion (type-through and accepts work the same).
 11. Build the prompt (personal examples are chosen once per field and cached; the other-apps
     section is selected for this text, see *Other apps' text* below) and enqueue a
     `Complete` job; emit an empty `pending` event so the shell hides the stale ghost.
@@ -306,7 +321,8 @@ Contractors: $68,900 (budget $52,000)               where text was left out
 ...
 
 [Text visible on screen]                         ← screen_context, last ≤1,500 chars, lines
-...                                                 starting with "[" dropped
+...                                                 starting with "[" dropped, timestamps and
+                                                    "(edited)" dropped, secrets masked
 [End of screen text]
 
 [Earlier writing by the same person in Mail]     ← personalization examples (≤2 × 280 chars)
@@ -384,6 +400,8 @@ per passage for windows on screen. At most 600 passages.
   1.25 × the current one's + 1, a passage it holds left the pool, it no longer fits, or there
   is none yet. `OtherApps::changes` counts replacements (each costs a full prefill;
   `ft-replay` prints them).
+- **Privacy**: each window's text has its secrets masked (`privacy::redact`) before it is
+  cut into passages, so the ranking, the prompt and the report never hold them.
 - **Render**: `[Also open: App — Title (host)]` per window (brackets in names become
   parentheses), windows in the order they first came into the pool, passages in document
   order with a "…" line between ones that aren't adjacent, a blank line at the end.
@@ -470,7 +488,9 @@ dismissal marker.
 
 `caret` is read only by the shell: `pixel` always takes the caret from screen pixels (the
 app's AX geometry is wrong), `ax` never does; unset means AX with the pixel locator as the
-fallback when AX gives nothing.
+fallback when AX gives nothing. An app with no `prime` whose bundle holds
+`Contents/Frameworks/Electron Framework.framework` is primed as `electron` anyway
+(`AppKind.detected` in the shell, cached per bundle ID).
 
 The longest matching prefix applies when there is no exact entry. An agent prompt line is
 `[whitespace][border][whitespace]marker text`; shell prompts (`$`, `%`, `❯`) don't match.
@@ -536,6 +556,7 @@ All strings are UTF-8 JSON. Strings returned by the core must be freed with
 | `ft_engine_free(engine)` | Stop the worker, free the model |
 | `ft_engine_submit(engine, snapshot_json)` | Field changed |
 | `ft_engine_warm(engine, snapshot_json)` | Prefill a newly focused field |
+| `ft_engine_refresh(engine, snapshot_json)` | The latest snapshot with new screen text while the user pauses: the model runs again past the cache and type-through, with no `pending` hide first (the suggestion showing stays until the new one arrives); where `submit` would show no model suggestion (the gate, a dismissal, a typing aid, mid-line) only a prefill, as `warm` |
 | `ft_engine_accept(engine, mode)` | 0 next word, 1 all → `{"insert","remaining","replace"}` or NULL (delete `replace` before the caret first) |
 | `ft_engine_accept_alternative(engine, index)` | Word alternatives (D50): the next word of alternative `index` (0-based, as the last event listed them), which becomes the suggestion → `{"insert","remaining","replace": ""}` or NULL |
 | `ft_engine_alternatives(engine, snapshot_json)` | Alternatives on demand to the suggestion showing for this (latest) snapshot: answered with a `suggestion` event, `source` `alternatives` |
@@ -610,7 +631,7 @@ placeholder), `text_before`, `text_after` (rest of the caret line), `screen_cont
 resumed), `paused`, `error`.
 
 `source`: `model`, `typeThrough`, `cache`, `alternatives`, `pending`, `policy`, `dismissed`,
-`error`, `emoji`, `autocorrect`, `details`. An empty `text` means hide. `alternatives`
+`error`, `emoji`, `autocorrect`, `details`, `phrase`. An empty `text` means hide. `alternatives`
 (omitted when there are none; only with `settings.alternatives`): up to three other phrases
 for the same text, best first, each starting with its own word, on `model`, `cache` and
 `typeThrough` continuations; source `alternatives` is the answer to
@@ -747,11 +768,17 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   again with no captures.
 - **`GhostPanel.swift`**: borderless, non-activating, click-through `NSPanel` at
   `.statusBar` level, on all Spaces, excluded from Accessibility. Draws the words that fit
-  before the field's right edge in the host font, gray; when not even the first word fits
-  (the line is about to wrap), the first word runs past the edge. Without a caret rect (AX
+  before the field's right edge in the host font, gray. In a multi-line field (`AXTextArea`)
+  with no text below the caret's line (`FieldSnapshot.textBelow`), the rest wraps onto up to
+  two more rows (`GhostPanel.layout`, greedy by word; a new word that doesn't fit at the caret
+  starts on the next row, the rest of the word being typed never does), from the field's
+  left text edge: the caret's x minus the width of its line's text, when that lands inside
+  the field's first quarter (the line fits on one row), remembered per field for lines that
+  already wrap; rows stop at the field's or window's bottom. When not even the first word
+  fits and nothing wraps (the line is about to wrap), the first word runs past the edge. Without a caret rect (AX
   gave none and the pixel locator has no position yet) it shows a "mirror card"
   (⇥ suggestion) above the field, or below it when above would leave the field's display. `advance` shifts the ghost after an accept until the host reports the new
-  caret. Mid-line suggestions show as a card just under the caret (inline ghost text would
+  caret, to the row the inserted words ended on when they wrapped. Mid-line suggestions show as a card just under the caret (inline ghost text would
   overlap the rest of the line); `showHint` shows a tip card for 8 s without turning on the
   key tap. Word alternatives (D50) have a second panel, `showPicker`: a numbered card
   ("⌥1  word rest", the word the key takes first in full colour) under the ghost text's
@@ -816,8 +843,15 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   every 15 s: `SCShareableContent` → the focused window (the app's window holding the
   field's centre, `ScreenGeometry.windowIndex`; none if no window does) →
   `WindowCapture` (as the pixel caret, so full-screen windows work) → Vision `.accurate` OCR → lines grouped into rows,
-  rows inside the field dropped, rows nearest the field kept (rows above first, budget
-  1,400 characters) in reading order. The new text is prefilled with `warm` right away.
+  rows inside the field dropped, lines mostly outside the field's column (±24 pt) dropped
+  when at least 40 characters are left (a sidebar's names stay out of the conversation's
+  rows), rows nearest the field kept (rows above first, budget 1,400 characters) in reading
+  order. When the field's text is cleared (a chat message sent; `noteSent`) the window is read
+  again 1 s later whatever the interval. New text goes to the core with `refresh` when no
+  snapshot came for 1 s (the user pauses; Esc's quiet and the snooze excepted), so the
+  suggestion is asked for again with it, else with `warm` (prefill only). Vision requests
+  (here and in `ContextPool`) run through `ScreenContextProvider.perform`, which cancels one
+  after 8 s (60 s until the first finishes: Vision compiles its models then).
   Skipped for secure input, secure fields and apps where suggestions are off. The image is
   discarded after OCR. The capture scale is the window's own display's
   (`SCContentFilter.pointPixelScale`), so a window on a 1x display isn't captured at 2x.

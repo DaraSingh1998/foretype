@@ -42,6 +42,14 @@ if let i = CommandLine.arguments.firstIndex(of: "--alternatives-selftest") {
     let next = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
     exit(PickerState.selfTest(dir: next.flatMap { $0.hasPrefix("-") ? nil : $0 }) ? 0 : 1)
 }
+// --ghost-selftest [DIR]: the ghost text's wrapping layout; DIR gets wrapped examples as PNGs.
+if let i = CommandLine.arguments.firstIndex(of: "--ghost-selftest") {
+    let next = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
+    exit(GhostPanel.selfTest(dir: next.flatMap { $0.hasPrefix("-") ? nil : $0 }) ? 0 : 1)
+}
+if CommandLine.arguments.contains("--electron-selftest") {
+    exit(AppKind.selfTest() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--pause-selftest") {
     exit(PauseState.selfTest() ? 0 : 1)
 }

@@ -68,6 +68,12 @@ final class EngineBridge {
         ft_engine_warm(handle, snap.coreJSON())
     }
 
+    /// New screen text for the latest snapshot while the user pauses (`ft_engine_refresh`).
+    func refresh(_ snap: FieldSnapshot) {
+        guard let handle else { return }
+        ft_engine_refresh(handle, snap.coreJSON())
+    }
+
     /// What a next-word or whole-suggestion accept inserts; delete `replace` first.
     func accept(all: Bool) -> (insert: String, remaining: String, replace: String)? {
         guard let handle, let raw = ft_engine_accept(handle, all ? 1 : 0) else { return nil }

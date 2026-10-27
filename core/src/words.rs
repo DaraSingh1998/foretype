@@ -133,11 +133,34 @@ pub fn has_word(text: &str, lower: &str, prefix: bool) -> bool {
     })
 }
 
+/// Words whose period doesn't end a sentence (lower case, without the period).
+const ABBREVIATIONS: &[&str] = &[
+    "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "cf", "approx", "fig", "vol", "ca", "mt",
+    "dept", "est", "govt", "ltd", "co", "corp", "ave", "rd", "apt", "eg", "ie",
+];
+
 /// True when `s` ends a sentence: `.` `!` `?` `…`, or the danda `।` and double danda `॥` of
-/// Hindi and other Indic scripts.
+/// Hindi and other Indic scripts. A period after an abbreviation ("Mr.", "e.g.", "U.S."), an
+/// initial ("J.") or a list number at the start of a line ("1.") ends none.
 pub fn ends_sentence(s: &str) -> bool {
     let t = s.trim_end_matches(['"', '\u{201D}', ')', '\'']);
-    t.ends_with(['.', '!', '?', '\u{2026}', '\u{964}', '\u{965}'])
+    if !t.ends_with(['.', '!', '?', '\u{2026}', '\u{964}', '\u{965}']) {
+        return false;
+    }
+    if !t.ends_with('.') || t.ends_with("..") {
+        return true;
+    }
+    let line = t.rsplit('\n').next().unwrap_or(t);
+    let word = line.rsplit(char::is_whitespace).next().unwrap_or("");
+    let stem = word.trim_start_matches(['(', '"', '\u{201C}', '\'']).trim_end_matches('.');
+    let first_on_line = line.trim_start().len() == word.len();
+    let abbreviation = ABBREVIATIONS.contains(&stem.to_lowercase().as_str())
+        || stem == "No"
+        || stem == "Nos"
+        || stem.contains('.')
+        || (stem.chars().count() == 1 && stem.chars().all(char::is_uppercase))
+        || (first_on_line && !stem.is_empty() && stem.chars().all(|c| c.is_ascii_digit()));
+    !abbreviation
 }
 
 #[cfg(test)]
@@ -180,6 +203,16 @@ mod tests {
         assert!(ends_sentence(" see you then."));
         assert!(ends_sentence(" really?\""));
         assert!(!ends_sentence(" e.g"));
+        assert!(!ends_sentence(" e.g."));
+        assert!(!ends_sentence("Thanks, Mr."));
+        assert!(!ends_sentence(" Dr."));
+        assert!(!ends_sentence("in the U.S."));
+        assert!(!ends_sentence(" J."));
+        assert!(!ends_sentence("Steps:\n1."));
+        assert!(ends_sentence("We met in 2024."));
+        assert!(ends_sentence(" I said no."), "a lower-case 'no' at the end is a word");
+        assert!(ends_sentence(" Wait..."));
+        assert!(ends_sentence(" Is it Dr. Rao?"));
         assert_eq!(limit(" do the first part of it", 4, true, false), " do the first part");
         assert_eq!(limit("tes. Then we go on", 4, true, false), "tes.");
         assert_eq!(limit(" the reconcil", 4, true, true), " the");

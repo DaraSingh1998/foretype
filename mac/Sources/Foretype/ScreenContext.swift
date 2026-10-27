@@ -29,6 +29,8 @@ final class ScreenContextProvider {
     private var generation = 0
     private let pauseDelay = 1.5
     private let minInterval: TimeInterval = 15
+    /// After a sent message, long enough for the chat to show it.
+    private let sentDelay = 1.0
     private static let budget = 1400
 
     static var hasPermission: Bool { CGPreflightScreenCaptureAccess() }
@@ -58,6 +60,19 @@ final class ScreenContextProvider {
             if stillPaused { self.lastRefresh[target.fieldKey] = Date() }
             self.lock.unlock()
             if stillPaused { self.capture(target) }
+        }
+    }
+
+    /// The field's text was just cleared (a chat message sent): read the window again in a
+    /// moment, when the message shows in the conversation, whatever the interval.
+    func noteSent(_ target: Target, skip: Bool) {
+        guard enabled, !skip, target.fieldKey != 0, ScreenContextProvider.hasPermission else { return }
+        lock.lock()
+        lastRefresh[target.fieldKey] = Date()
+        lock.unlock()
+        queue.asyncAfter(deadline: .now() + sentDelay) { [weak self] in
+            guard let self, self.enabled else { return }
+            self.capture(target)
         }
     }
 
@@ -114,17 +129,38 @@ final class ScreenContextProvider {
 
     // MARK: - Recognition
 
+    /// Set once a recognition finished: the first one on a Mac can take about 30 s while
+    /// Vision compiles its models, later ones take under a second.
+    private static var warmedUp = false
+
+    /// Runs a Vision request with a deadline (60 s until one has finished, then 8 s): a
+    /// request can hang on some images, and the queue it blocks would read no screen again.
+    /// Past the deadline the request is cancelled and its text given up. Any queue.
+    static func perform(_ request: VNRequest, on image: CGImage) -> Bool {
+        final class Box: @unchecked Sendable { var ok = false }
+        let box = Box()
+        let done = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .utility).async {
+            box.ok = (try? VNImageRequestHandler(cgImage: image).perform([request])) != nil
+            done.signal()
+        }
+        let timeout: TimeInterval = warmedUp ? 8 : 60
+        guard done.wait(timeout: .now() + timeout) == .success else {
+            request.cancel()
+            Log.debug("ocr: gave up after \(Int(timeout)) s")
+            return false
+        }
+        warmedUp = true
+        return box.ok
+    }
+
     /// OCR of a window image. `field` (window coordinates, top-left origin) is excluded,
     /// since the field's own text already reaches the prompt as `text_before`.
     static func recognize(_ image: CGImage, windowSize: CGSize, field: CGRect?) -> String {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
-        do {
-            try VNImageRequestHandler(cgImage: image).perform([request])
-        } catch {
-            return ""
-        }
+        guard perform(request, on: image) else { return "" }
         let lines: [(String, CGRect)] = (request.results ?? []).compactMap { obs in
             guard let candidate = obs.topCandidates(1).first, candidate.confidence > 0.3 else { return nil }
             let bb = obs.boundingBox
@@ -135,13 +171,23 @@ final class ScreenContextProvider {
         return assemble(lines, field: field, budget: budget)
     }
 
-    /// Groups recognized lines into rows, drops anything inside the field, keeps the rows
-    /// closest to the field (rows above it first, as in chats and email threads) within the
-    /// character budget, and returns them in reading order.
+    /// Groups recognized lines into rows, drops anything inside the field and, when enough
+    /// is left, anything mostly outside the field's column (a sidebar's channel and contact
+    /// names would otherwise join the conversation's rows), keeps the rows closest to the
+    /// field (rows above it first, as in chats and email threads) within the character budget,
+    /// and returns them in reading order.
     static func assemble(_ lines: [(String, CGRect)], field: CGRect?, budget: Int) -> String {
-        let outside = lines.filter { line in
+        var outside = lines.filter { line in
             guard let field else { return true }
             return !field.insetBy(dx: -4, dy: -4).contains(CGPoint(x: line.1.midX, y: line.1.midY))
+        }
+        if let field {
+            let column = field.insetBy(dx: -24, dy: 0)
+            let inColumn = outside.filter { line in
+                let overlap = max(0, min(line.1.maxX, column.maxX) - max(line.1.minX, column.minX))
+                return overlap >= line.1.width / 2
+            }
+            if inColumn.reduce(0, { $0 + $1.0.count }) >= 40 { outside = inColumn }
         }
         var rows: [(text: String, rect: CGRect)] = []
         for line in outside.sorted(by: { $0.1.midY < $1.1.midY }) {
@@ -199,7 +245,17 @@ final class ScreenContextProvider {
         print("recognized in \(Int(Date().timeIntervalSince(t0) * 1000)) ms:\n\(text)")
         let ok = text.contains("planning notes") && text.contains("Thursday") && !text.contains("send the timeline by")
             && text.components(separatedBy: "\n").count == 3
-        print(ok ? "OCR self-test passed" : "OCR self-test FAILED")
-        return ok
+        // A sidebar left of the conversation: its names stay out of the rows.
+        let sidebar: [(String, CGRect)] = [
+            ("# general", CGRect(x: 10, y: 40, width: 120, height: 18)),
+            ("Priya Raman", CGRect(x: 10, y: 110, width: 120, height: 18)),
+            ("Priya: Can you send the timeline before Thursday?", CGRect(x: 220, y: 40, width: 400, height: 18)),
+            ("Sam: Sure, by Wednesday evening at the latest.", CGRect(x: 220, y: 110, width: 380, height: 18)),
+        ]
+        let column = assemble(sidebar, field: CGRect(x: 210, y: 300, width: 500, height: 50), budget: budget)
+        let columnOK = column == "Priya: Can you send the timeline before Thursday?\nSam: Sure, by Wednesday evening at the latest."
+        if !columnOK { print("column FAILED:\n\(column)") }
+        print(ok && columnOK ? "OCR self-test passed" : "OCR self-test FAILED")
+        return ok && columnOK
     }
 }

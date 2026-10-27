@@ -19,6 +19,8 @@ struct FieldSnapshot {
     var roleDescription = ""
     var textBefore = ""
     var textAfter = ""
+    /// Text follows on a line below the caret's (read up to 160 characters past the caret).
+    var textBelow = false
     var caretIndex = 0
     var selectionLength = 0
     var markedLength = 0
@@ -421,6 +423,7 @@ final class FocusTracker {
             if let m = AX.viaTextMarkers(el, maxBefore: windowSize) {
                 snap.textBefore = m.before
                 snap.textAfter = m.after
+                snap.textBelow = FocusTracker.textBelow(m.after)
                 snap.caretIndex = m.before.utf16.count
                 snap.selectionLength = m.selection
                 snap.frame = AX.frame(el)
@@ -447,6 +450,9 @@ final class FocusTracker {
                 after = after ?? value.substring(with: NSRange(location: caret, length: min(len - caret, 160)))
             }
         }
+        // Read before a web field's text is cut to its paragraph below, which hides the
+        // paragraphs after it.
+        snap.textBelow = FocusTracker.textBelow(after ?? "")
         if fieldInfoCache.web {
             if let p = FocusTracker.paragraphValue(el, caret: caret, count: count) {
                 let s = max(0, p.caret - windowSize) / windowAlign * windowAlign
@@ -518,6 +524,12 @@ final class FocusTracker {
             node = AX.element(AX.copy(n, kAXParentAttribute))
         }
         return ("", web)
+    }
+
+    /// Text after the caret holds a line break followed by more than spaces.
+    static func textBelow(_ after: String) -> Bool {
+        guard let br = after.firstIndex(where: \.isNewline) else { return false }
+        return after[br...].contains { !$0.isWhitespace }
     }
 
     /// Chromium contenteditables (chat composers in Chrome and Electron apps): `AXValue` and

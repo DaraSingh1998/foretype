@@ -39,6 +39,7 @@ impl Profile {
     }
 
     pub fn add_text(&mut self, text: &str) {
+        let text = crate::privacy::redact(text);
         for raw in text.split(|c: char| !(words::is_letter(c) || c == '\'' || c == '\u{2019}' || c == '-')) {
             let w = raw.trim_matches(|c: char| c == '\'' || c == '\u{2019}' || c == '-');
             if w.chars().count() < 4 || w.chars().any(|c| c.is_ascii_digit()) {
@@ -105,7 +106,9 @@ pub fn examples(records: &[Record], app: &str, text_before: &str, max: usize, ma
         .into_iter()
         .take(max)
         .map(|(_, _, r)| {
-            let t = r.text.trim();
+            // Records written before the privacy filters may hold a secret.
+            let t = crate::privacy::redact(r.text.trim());
+            let t = t.as_ref();
             if t.chars().count() <= max_chars {
                 t.to_string()
             } else {

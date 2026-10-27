@@ -64,10 +64,17 @@ away right after recognition and the text is only kept in memory.
 - Only the focused window is read, on whichever display it is, at that display's
   resolution. Other apps' windows (a document or a web page beside the email) are read
   only with **Use text from other apps**, a setting of its own (below).
-- It refreshes when a new field gets focus and after a 1.5 s typing pause at most every 15 s,
-  never per keystroke, because new screen text changes the prompt header and costs a full
-  prefill. The new header is prefilled in the background between keystrokes as soon as OCR
-  finishes, while suggestions keep coming from the previous one (see *Latency design*).
+- It refreshes when a new field gets focus, a second after you send a chat message (the
+  field empties) and after a 1.5 s typing pause at most every 15 s, never per keystroke,
+  because new screen text changes the prompt header and costs a full prefill. The new
+  header is prefilled in the background between keystrokes as soon as OCR finishes, while
+  suggestions keep coming from the previous one (see *Latency design*). When it arrives
+  while you pause, the suggestion is asked for again with it; the one showing stays until
+  the new one replaces it.
+- Only the field's column is read when it holds enough text: a sidebar's channel and
+  contact names stay out of the conversation. Timestamps ("10:42 AM", "Yesterday at 3:15
+  PM", "5 min ago") and "(edited)" are dropped: they say nothing about what comes next and
+  would change the prompt as time passes.
 - Warm OCR takes 145–360 ms (M3 Pro), off the typing path. The very first run on a Mac takes
   much longer while Vision compiles its models.
 
@@ -140,12 +147,34 @@ link to Settings ▸ Context; nothing but you turns it on.
   says how many windows are in memory, or, when it is on and nothing has been read yet,
   what to do (open a document beside the field, then click into the field).
 
+### Privacy filters
+
+Always on, with no setting (D52):
+
+- **Secrets are masked** in the screen text, other apps' text and the writing history
+  before the model sees them: a key shown in a terminal can't be suggested into a chat.
+  Masked (as `•••`): private key blocks, API keys and tokens with a known prefix (`sk-`,
+  `ghp_`, `AKIA`, `xoxb-`, `AIza`, JWTs…), long random-looking strings (32+ characters
+  mixing letters and digits, or 32+ hex digits, so a git hash goes too), the value after a
+  secret name (`API_KEY=…`, `"password": "…"`, `Bearer …`), card numbers (Luhn), IBANs,
+  US social security and Aadhaar numbers, and a 4–8 digit code next to a word like "OTP",
+  "code" or "PIN". What Foretype Sees shows passages as the model gets them, masked.
+- **Fields that ask for a secret get no suggestions**, even when the app doesn't mark them
+  secure: a label or placeholder saying one-time code, OTP, verification code, PIN, CVV,
+  card number, expiry, IBAN, account number, password, API key, token and the like
+  (Ctrl + the key above Tab still asks for one), and fields holding nothing but digits and number
+  punctuation (a phone number, an amount).
+- **No guesses inside an address**: while the word at the caret is a URL (`https://…`,
+  `www.…`) or an email address (`name@…`), nothing is suggested; a model only invents those.
+  Your own email from About You is still filled.
+
 ### Personalization (opt-in)
 
 **Learn From My Writing** (menu: Personalization) is off by default. When on:
 
 - **What is recorded:** only fields where you accepted a suggestion, only the text you typed
-  there (not text that was already in the field), only when it is at least 20 characters.
+  there (not text that was already in the field), only when it is at least 20 characters,
+  with secrets masked (*Privacy filters*).
   A field is recorded when focus leaves it or when its text is cleared (a sent chat
   message). Secure fields, and apps where suggestions are off, are never recorded.
 - **Where:** `~/Library/Application Support/Foretype/history.bin`, each record sealed with
@@ -165,6 +194,12 @@ link to Settings ▸ Context; nothing but you turns it on.
   completions towards your words once you have typed their first letters. Up to two short
   snippets of your earlier writing in the same app go into the prompt header, picked once
   per field so the cache stays warm. Strength: Gentle, Balanced (default), Strong.
+- **Your phrases** (D54): when the three words before the one you are typing are words you
+  wrote before, what you wrote next then is offered as it was, without the model: the
+  continuation you wrote most often (at least twice, or once after five matching words), up
+  to the suggestion length and the end of the sentence or line. On a set of messages that
+  reuse their writer's stock phrases ("Let me know if you see anything odd") it raised
+  keystrokes saved from 47.7% to 50.0% on top of the rest of personalization.
 
 Measured leave-one-out on the 12 self-written documents of the Phase 0 corpus (each one
 replayed with the other 11 as history; Qwen3-1.7B): keystrokes saved went from 41.0% to
@@ -243,6 +278,8 @@ as Japanese, is cut anywhere).
   for every word there. English typos inside a Hinglish message are then left alone too.
   Devanagari passes the spell checker as it is. A danda (। or ॥) ends a sentence for
   **Stop at end of sentence**, and words with a virama or nukta (क्या, दफ़्तर) stay whole.
+  The period of an abbreviation ("Mr.", "Dr.", "e.g.", "U.S."), an initial ("J.") or a list
+  number at the start of a line ("1.") doesn't end a sentence.
 - **Phrase beam search**: at full speed the engine weighs 3 candidate phrases instead of
   one (+1.1 points of keystrokes saved on the corpus); greedy while saving energy.
 - **Unlikely words left off**: a word after the first stays in the suggestion only while it
@@ -681,6 +718,14 @@ pause or an app switched off by Esc.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by
   replays against a local llama-server.
+- Ghost text wraps onto up to two more lines in multi-line fields with nothing written
+  below the caret's line; elsewhere (single-line fields, text below) it still stops at the
+  field's edge. The layout is checked by `--ghost-selftest`, not yet by eye in an app. The
+  wrapped rows start where the field's text starts, measured from a line that fits on one
+  row in the host font; a field where no such line was seen yet doesn't wrap.
+- The privacy filters recognise secrets by their shape (a prefix, a checksum, a cue word);
+  a password that looks like an ordinary word, or a key in an unknown format under 32
+  characters, isn't masked. Field labels are matched in English only.
 - Word alternatives use Option+1, 2, 3 and 0 on the number row, taken only while their card
   (or, for Option+0, a suggestion) shows; on layouts where those keys type something you
   need, that character can't be typed then: # on a British keyboard is Option+3, and

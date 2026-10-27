@@ -113,6 +113,12 @@ impl Session {
         self.searched = false;
     }
 
+    /// Drops the field's cached suggestions (made with context that has since changed); the
+    /// one showing stays until another replaces it.
+    pub fn forget_cached(&mut self, field_key: u64) {
+        self.cache.retain(|(k, _, _, _)| *k != field_key);
+    }
+
     pub fn dismiss(&mut self, field_key: u64, text_before: &str) {
         self.dismissed = Some((field_key, text_before.to_string()));
         self.clear();
@@ -159,7 +165,8 @@ impl Session {
 
     /// Reuses the visible suggestion if `text_before` is the suggestion's base with some of
     /// the suggestion typed (or a few characters backspaced). Returns what is still left to
-    /// show and re-bases the session on the new text.
+    /// show and re-bases the session on the new text. When the typed text leaves the
+    /// suggestion but follows one of its alternatives, that alternative becomes the suggestion.
     pub fn type_through(&mut self, field_key: u64, text_before: &str) -> Option<String> {
         if field_key != self.field_key || self.suggestion.is_empty() || !self.replace.is_empty() || self.whole {
             return None;
@@ -167,12 +174,10 @@ impl Session {
         // Alternatives follow along: those the typed text agrees with lose it from their start;
         // after a backspace all get the deleted text back.
         let (remaining, others) = if let Some(typed) = text_before.strip_prefix(self.base.as_str()) {
-            let rest = self.suggestion.strip_prefix(typed)?;
-            if rest.trim().is_empty() {
-                return None;
-            }
-            let others = self.alternatives.iter().filter_map(|a| a.strip_prefix(typed)).map(str::to_string).collect::<Vec<_>>();
-            (rest.to_string(), others)
+            let follows = |s: &'_ str| s.strip_prefix(typed).filter(|r| !r.trim().is_empty()).map(str::to_string);
+            let rest = follows(&self.suggestion).or_else(|| self.alternatives.iter().find_map(|a| follows(a)))?;
+            let others = self.alternatives.iter().filter_map(|a| a.strip_prefix(typed)).filter(|r| *r != rest).map(str::to_string).collect::<Vec<_>>();
+            (rest, others)
         } else if let Some(deleted) = self.base.strip_prefix(text_before) {
             if deleted.chars().count() > MAX_BACKSPACE_REUSE || deleted.contains('\n') || text_before.is_empty() {
                 return None;
@@ -356,6 +361,19 @@ mod tests {
         let a = s.accept(AcceptMode::NextWord).unwrap();
         assert_eq!((a.insert.as_str(), a.replace.as_str()), ("Priya Raman", "pri"));
         assert_eq!(s.cached(1, "Call me on "), None);
+    }
+
+    #[test]
+    fn typing_an_alternative_makes_it_the_suggestion() {
+        let mut s = Session::default();
+        s.set(1, "Let's meet on", " Monday morning", &[" Tuesday at noon".to_string(), " Friday".to_string()]);
+        assert_eq!(s.type_through(1, "Let's meet on Tu").as_deref(), Some("esday at noon"));
+        assert!(s.alternatives().is_empty(), "the others don't start with Tu");
+        // Typing on through it as usual.
+        assert_eq!(s.type_through(1, "Let's meet on Tuesday").as_deref(), Some(" at noon"));
+        // Nothing matches: no suggestion.
+        s.set(1, "Let's meet on", " Monday morning", &[" Friday".to_string()]);
+        assert_eq!(s.type_through(1, "Let's meet on We"), None);
     }
 
     #[test]
