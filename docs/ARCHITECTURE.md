@@ -106,7 +106,8 @@ In order; the first rule that applies decides:
 7. Dismissed for exactly this text (unless forced) → hide (`dismissed`).
 8. **Type-through**: the text extends the shown suggestion's base by a prefix of the
    suggestion, or backspaces up to 24 characters into it → emit the rest (`typeThrough`),
-   no inference. Its word alternatives (D50) follow: those that start with the typed text
+   no inference. When the typed text leaves the suggestion but an alternative starts with it,
+   that alternative becomes the suggestion. Its word alternatives (D50) follow: those that start with the typed text
    keep their rest, a backspace gives them the deleted text back, and any that now share a
    first word with the suggestion or each other go.
 9. **Typing aids** (no model): one of the user's details the text asks for, at the end of
@@ -487,7 +488,9 @@ dismissal marker.
 
 `caret` is read only by the shell: `pixel` always takes the caret from screen pixels (the
 app's AX geometry is wrong), `ax` never does; unset means AX with the pixel locator as the
-fallback when AX gives nothing.
+fallback when AX gives nothing. An app with no `prime` whose bundle holds
+`Contents/Frameworks/Electron Framework.framework` is primed as `electron` anyway
+(`AppKind.detected` in the shell, cached per bundle ID).
 
 The longest matching prefix applies when there is no exact entry. An agent prompt line is
 `[whitespace][border][whitespace]marker text`; shell prompts (`$`, `%`, `❯`) don't match.

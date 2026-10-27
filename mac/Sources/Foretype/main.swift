@@ -47,6 +47,9 @@ if let i = CommandLine.arguments.firstIndex(of: "--ghost-selftest") {
     let next = i + 1 < CommandLine.arguments.count ? CommandLine.arguments[i + 1] : nil
     exit(GhostPanel.selfTest(dir: next.flatMap { $0.hasPrefix("-") ? nil : $0 }) ? 0 : 1)
 }
+if CommandLine.arguments.contains("--electron-selftest") {
+    exit(AppKind.selfTest() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--pause-selftest") {
     exit(PauseState.selfTest() ? 0 : 1)
 }

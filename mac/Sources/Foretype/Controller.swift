@@ -94,7 +94,10 @@ final class Controller {
     /// resume (it would prime Chromium apps on its first read).
     func start(paused: Bool) -> Bool {
         engine.onEvent = { [weak self] ev in DispatchQueue.main.async { self?.handle(ev) } }
-        tracker.primeKind = { [weak self] bundle in self?.engine.compatRule(bundle)["prime"] as? String }
+        // Electron apps the compatibility database doesn't list are found from their bundle.
+        tracker.primeKind = { [weak self] bundle in
+            self?.engine.compatRule(bundle)["prime"] as? String ?? AppKind.detected(bundle)
+        }
         tracker.onlyAppsAllow = { [settings] pid, bundle in settings.onlyAppsAllow(pid: pid, bundleId: bundle) }
         tracker.onSnapshot = { [weak self] snap in self?.arrived(snap) }
         tracker.onFocusChange = { [weak self] snap in self?.engine.warm(snap) }

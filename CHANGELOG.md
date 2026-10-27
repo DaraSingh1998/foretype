@@ -5,6 +5,14 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Small fixes (2026-10-27)
+- "Mr.", "Dr.", "e.g.", "U.S.", initials and list numbers ("1.") no longer count as the end
+  of a sentence, for **Stop at end of sentence** and autocorrect's capital letters.
+- Electron apps not in the compatibility list (Postman, Termius, YouTube Music…) are
+  recognised from their bundle and get the same accessibility setup as Slack or VS Code.
+- With Show Alternatives on, typing the start of an alternative instead of the suggestion
+  makes that alternative the suggestion, instead of dropping both.
+
 ### Your phrases (2026-10-27)
 - With Learn From My Writing on, a phrase you keep writing is offered word for word: after
   the same three words as before, the ghost text is what you wrote next then. On messages

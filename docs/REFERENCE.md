@@ -278,6 +278,8 @@ as Japanese, is cut anywhere).
   for every word there. English typos inside a Hinglish message are then left alone too.
   Devanagari passes the spell checker as it is. A danda (। or ॥) ends a sentence for
   **Stop at end of sentence**, and words with a virama or nukta (क्या, दफ़्तर) stay whole.
+  The period of an abbreviation ("Mr.", "Dr.", "e.g.", "U.S."), an initial ("J.") or a list
+  number at the start of a line ("1.") doesn't end a sentence.
 - **Phrase beam search**: at full speed the engine weighs 3 candidate phrases instead of
   one (+1.1 points of keystrokes saved on the corpus); greedy while saving energy.
 - **Unlikely words left off**: a word after the first stays in the suggestion only while it
