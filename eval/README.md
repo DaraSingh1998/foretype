@@ -72,3 +72,17 @@ Run it through the engine with:
     core/target/release/ft-replay MODEL.gguf --corpus eval/corpus.jsonl
     core/target/release/ft-replay MODEL.gguf --corpus eval/corpus.jsonl --only sw- --personal-loo
     core/target/release/ft-replay MODEL.gguf --corpus eval/corpus.jsonl --details eval/details.json
+
+## Repeated phrases
+
+`corpus-repeat.jsonl` (written for this evaluation on 2026-10-27, self-written, may be used
+without restriction; fictional people and figures): 10 messages by one writer, 5 emails in
+Mail and 5 Slack messages, 461 words, 2,425 characters, that reuse the writer's stock
+phrases ("Quick update on", "Let me know if you see anything odd", "Thanks for the quick
+turnaround on", "I will keep you posted", "Happy to walk through it on a call") with the
+rest of each message new. It is the best case for the phrase lookup (D54), measured
+leave-one-out like the `sw-*` documents (each message replayed with the other nine as the
+writing history):
+
+    core/target/release/ft-replay MODEL.gguf --corpus eval/corpus-repeat.jsonl --personal-loo
+    core/target/release/ft-replay MODEL.gguf --corpus eval/corpus-repeat.jsonl --personal-loo --no-phrases

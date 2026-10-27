@@ -5,6 +5,11 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Your phrases (2026-10-27)
+- With Learn From My Writing on, a phrase you keep writing is offered word for word: after
+  the same three words as before, the ghost text is what you wrote next then. On messages
+  that reuse their writer's stock phrases, keystrokes saved rose from 47.7% to 50.0%.
+
 ### Cleaner screen context (2026-10-27)
 - Only the column of the field you type in is read, so a sidebar's channel and contact
   names no longer mix into the conversation.

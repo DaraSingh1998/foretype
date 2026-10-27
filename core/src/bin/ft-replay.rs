@@ -14,9 +14,10 @@
 //!   ft-replay MODEL --corpus CORPUS.jsonl --details eval/details.json [--details-in-prompt]
 //!       the user's own details per document id ("*" for the others; see eval/details.json):
 //!       fills ("Regards,\n" -> the name), and with --details-in-prompt the writer line too.
-//!   ft-replay MODEL --corpus CORPUS.jsonl --personal-loo [--only sw-] [--strength 0|1|2] [--no-examples]
+//!   ft-replay MODEL --corpus CORPUS.jsonl --personal-loo [--only sw-] [--strength 0|1|2] [--no-examples] [--no-phrases]
 //!       leave-one-out personalization: each document is replayed with the other selected
 //!       documents as the user's writing history, with and without personalization.
+//!       --no-phrases leaves out the phrase lookup (D54; source "phrase").
 //!   ft-replay MODEL --corpus CORPUS.jsonl --mid-line-eval [--typed N]
 //!       mid-line check: at word starts in the middle of lines, with the next word's first N
 //!       letters typed (default 1) and the rest of the line after the caret, counts how often
@@ -1275,6 +1276,7 @@ fn main() {
         gate_beam: has("--gate-beam"),
         beam_first_word: has("--beam-first"),
         beam_rank_by_sum: has("--rank-sum"),
+        phrases: !has("--no-phrases"),
         extend_min: flag("--extend").and_then(|s| s.parse().ok()).unwrap_or(d.extend_min),
         ..d
     };

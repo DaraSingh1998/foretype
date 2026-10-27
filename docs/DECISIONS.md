@@ -1047,3 +1047,30 @@ first word's own probability can't see. A gate on mains power needs a different 
 (`docs/ROADMAP.md`).
 
 **Cost.** None kept.
+
+## D54. Phrase lookup in the writing history, ahead of the model (2026-10-27)
+
+**Decision.** With personalization on, `submit` looks the text up in an index of the writing
+history (`phrases.rs`) after type-through and the cache and before the model: the three
+words before the word being typed, matched in lower case without surrounding punctuation
+and never across a line break; among the places they were written whose next word starts
+with what is typed, the continuation written most often (the longest matching context, then
+the most recent, on a tie), up to the length setting and stopping after a sentence's end or
+before a line break. It is offered (source `phrase`) when it was written at least twice, or
+once after five or more matching words. The index is rebuilt from the history (secrets
+masked) on the next lookup after it changes. `Settings::phrases` (default on; ft-replay
+`--no-phrases`) turns it off.
+
+**Why.** From TabType, which keeps a suffix index over the user's writing and measured +13%
+characters saved for users who repeat phrases. Our word-level bias (Phase 3) gained 0.6
+points because it can only nudge single words; a phrase the user always writes the same way
+is better offered whole than guessed. Leave-one-out with Gemma 4 E2B, `--beam 3`
+(`docs/MEASUREMENTS.md`, "Phrase lookup"): on `corpus-repeat.jsonl`, ten messages by one
+writer that reuse stock phrases, personalization went from 47.7% to 50.0% keystrokes saved
+with the lookup (whole suggestions right 15.8% → 18.5%, wrong ghosts 62.9 → 61.2 per 100
+keystrokes); on the twelve `sw-*` documents, which share no phrases, it offered nothing and
+changed nothing. Requiring a repeat (or a long match) keeps a phrase written once in passing
+from overriding the model.
+
+**Cost.** A hash lookup per keystroke; the index holds every three-word context of the
+history (rebuilt in milliseconds for a few hundred records).

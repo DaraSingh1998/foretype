@@ -194,6 +194,12 @@ Always on, with no setting (D52):
   completions towards your words once you have typed their first letters. Up to two short
   snippets of your earlier writing in the same app go into the prompt header, picked once
   per field so the cache stays warm. Strength: Gentle, Balanced (default), Strong.
+- **Your phrases** (D54): when the three words before the one you are typing are words you
+  wrote before, what you wrote next then is offered as it was, without the model: the
+  continuation you wrote most often (at least twice, or once after five matching words), up
+  to the suggestion length and the end of the sentence or line. On a set of messages that
+  reuse their writer's stock phrases ("Let me know if you see anything odd") it raised
+  keystrokes saved from 47.7% to 50.0% on top of the rest of personalization.
 
 Measured leave-one-out on the 12 self-written documents of the Phase 0 corpus (each one
 replayed with the other 11 as history; Qwen3-1.7B): keystrokes saved went from 41.0% to

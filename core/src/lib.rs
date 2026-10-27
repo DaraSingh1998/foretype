@@ -21,6 +21,7 @@ pub mod models;
 pub mod others;
 pub mod policy;
 pub mod privacy;
+pub mod phrases;
 pub mod profile;
 pub mod session;
 pub mod words;
@@ -156,6 +157,9 @@ pub struct Settings {
     /// Words after the first stay while each is at least this likely
     /// (`GenOptions::extend_min`; 0 keeps them all).
     pub extend_min: f32,
+    /// With `personalize`: what the user wrote after the same words before is offered without
+    /// the model (D54, `phrases`).
+    pub phrases: bool,
 }
 
 impl Settings {
@@ -216,6 +220,7 @@ impl Default for Settings {
             beam_first_word: false,
             beam_rank_by_sum: false,
             extend_min: 0.05,
+            phrases: true,
         }
     }
 }
@@ -371,6 +376,9 @@ struct Shared {
     /// Bumped whenever the profile changes; the engine re-derives its bias when it differs.
     profile_gen: AtomicU64,
     track: Mutex<Option<FieldTrack>>,
+    /// The writing history's phrase index and the `profile_gen` it was built at (rebuilt when
+    /// the history changes, on the next lookup).
+    phrases: Mutex<(u64, phrases::PhraseIndex)>,
     /// Personal examples chosen once per field, so the prompt header stays stable.
     examples: Mutex<HashMap<u64, Vec<String>>>,
     /// The built-in engine is loaded: it can trim mid-line suggestions (set by the worker).
@@ -478,6 +486,7 @@ impl Core {
             profile: Mutex::new(profile),
             profile_gen: AtomicU64::new(1),
             track: Mutex::new(None),
+            phrases: Mutex::new((0, phrases::PhraseIndex::default())),
             examples: Mutex::new(HashMap::new()),
             mid_line_ok: AtomicBool::new(false),
             completer: backend::CompleterSlot::default(),
@@ -839,6 +848,10 @@ impl Core {
             }
             session.clear();
         }
+        if let Some(text) = self.phrase_for(&snap, &settings) {
+            self.shared.session.lock().unwrap().set(snap.field_key, &snap.text_before, &text, &[]);
+            return self.emit_continuation(rev, text, "phrase", None, Vec::new());
+        }
         let examples = self.examples_for(&snap, &settings);
         let prompt = build_prompt(&self.shared, &snap, &settings, &examples, true);
         self.enqueue(Job {
@@ -935,6 +948,22 @@ impl Core {
             snapshot: snap,
             shown,
         });
+    }
+
+    /// What the user wrote after the same words before (D54), from the writing history.
+    fn phrase_for(&self, snap: &Snapshot, settings: &Settings) -> Option<String> {
+        if !settings.personalize || !settings.phrases || snap.field_key == 0 || !line_suffix(snap).is_empty() {
+            return None;
+        }
+        let gen = self.shared.profile_gen.load(Ordering::SeqCst);
+        let mut index = self.shared.phrases.lock().unwrap();
+        if index.0 != gen {
+            let history = self.shared.history.lock().unwrap();
+            // Records written before the privacy filters may hold a secret.
+            let texts: Vec<String> = history.records().iter().map(|r| privacy::redact(&r.text).into_owned()).collect();
+            *index = (gen, phrases::PhraseIndex::new(texts.iter().map(String::as_str)));
+        }
+        index.1.lookup(&snap.text_before, settings.length_words.max(1))
     }
 
     /// The user's details, emoji shortcodes, autocorrect and the typo gate, which answer

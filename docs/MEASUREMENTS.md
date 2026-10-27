@@ -1521,3 +1521,27 @@ reached by a second path, so there was nothing to add. Calibration from the unga
 `--confidence-log` (`tools/confidence-sweep.py`): right 21.4% mid-word and 2.4% after a word
 under 0.05, 24.9% / 7.8% at 0.05–0.1, 27.5% / 14.8% at 0.1–0.2, 99.3% above 0.9, the same
 shape as D51's.
+
+## Phrase lookup and small fixes (2026-10-27)
+
+Gemma 4 E2B Q4_K_M, built-in engine, Metal, 4 words, `--beam 3`, D51 defaults, M3 Pro on
+mains power. Leave-one-out (`--personal-loo`, Balanced): each document replayed with the
+others of its set as the writing history, personalization off, then on with or without the
+phrase lookup (D54, `--no-phrases`).
+
+| Set | Off | On, no phrases | On, phrases | Phrase suggestions | Whole right (no phrases → phrases) | Wrong per 100 keys |
+|---|---:|---:|---:|---:|---|---|
+| `corpus-repeat.jsonl` (10 messages reusing stock phrases) | 39.2% | 47.7% | **50.0%** | 48 | 15.8% → 18.5% | 62.9 → 61.2 |
+| `sw-*` (12 documents, no shared phrases) | 44.8% | 45.5% | 45.5% | 0 | 11.5% → 11.5% | 67.6 → 67.6 |
+
+- On the repeated set the lookup adds 2.3 points on top of personalization's 8.5 (most of
+  which is the earlier-writing examples in the prompt, which hold the same phrases), with
+  more whole suggestions right and fewer wrong ghosts. Per message it ranged from no gain
+  to +17 points. The set is written to repeat itself: a best case.
+- On documents that share no phrases nothing is offered, so nothing changes: the two
+  `sw-*` "on" runs are identical.
+
+Full corpus, `--beam 3`, with the sentence-end fix ("Mr.", "e.g.", "U.S.", initials and a
+list number at a line's start no longer end a sentence) and the alternative promotion
+(off by default): 43.4% saved, 2,005 accepts, 69.0 wrong per 100 keystrokes, 10.4% whole
+right, the same as before them (the corpus has few such abbreviations).

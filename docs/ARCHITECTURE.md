@@ -48,6 +48,7 @@ Foretype has two halves joined by a small C ABI:
 | `core/src/privacy.rs` | Privacy filters (D52): secrets masked, sensitive field labels, addresses being typed |
 | `core/src/history.rs` | Encrypted writing history (ChaCha20-Poly1305) |
 | `core/src/profile.rs` | Vocabulary profile and example selection |
+| `core/src/phrases.rs` | Phrase lookup in the writing history (D54) |
 | `core/src/details.rs` | The user's own details: fill cues and the prompt's writer line |
 | `core/src/models.rs` | Model catalog (`models/catalog.json`) and tier choice |
 | `core/src/ffi.rs`, `core/include/foretype_core.h` | C ABI |
@@ -121,6 +122,13 @@ In order; the first rule that applies decides:
 10. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
    prefetch → emit (`cache`), with the alternatives cached alongside. Skipped mid-line (the
    key doesn't hold the text after the caret).
+    **Phrase**: with `personalize` and `phrases`, not mid-line: the three words before the
+    word being typed, looked up in an index of the writing history (`phrases::PhraseIndex`,
+    rebuilt on the next lookup after the history changes, secrets masked): the continuation
+    written most often after them whose first word starts with what is typed, up to the
+    length setting and a sentence's end or line break, offered when written at least twice
+    or after five matching words → emit (`phrase`), set in the session like a model
+    suggestion (type-through and accepts work the same).
 11. Build the prompt (personal examples are chosen once per field and cached; the other-apps
     section is selected for this text, see *Other apps' text* below) and enqueue a
     `Complete` job; emit an empty `pending` event so the shell hides the stale ghost.
@@ -620,7 +628,7 @@ placeholder), `text_before`, `text_after` (rest of the caret line), `screen_cont
 resumed), `paused`, `error`.
 
 `source`: `model`, `typeThrough`, `cache`, `alternatives`, `pending`, `policy`, `dismissed`,
-`error`, `emoji`, `autocorrect`, `details`. An empty `text` means hide. `alternatives`
+`error`, `emoji`, `autocorrect`, `details`, `phrase`. An empty `text` means hide. `alternatives`
 (omitted when there are none; only with `settings.alternatives`): up to three other phrases
 for the same text, best first, each starting with its own word, on `model`, `cache` and
 `typeThrough` continuations; source `alternatives` is the answer to
