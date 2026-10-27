@@ -50,6 +50,9 @@ if let i = CommandLine.arguments.firstIndex(of: "--ghost-selftest") {
 if CommandLine.arguments.contains("--electron-selftest") {
     exit(AppKind.selfTest() ? 0 : 1)
 }
+if CommandLine.arguments.contains("--compat-scan") {
+    exit(CompatScan.run() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--pause-selftest") {
     exit(PauseState.selfTest() ? 0 : 1)
 }

@@ -19,6 +19,31 @@ from other apps, opt-in (D42, D44, D47, D48; the cross-app context plan below is
 custom instructions per website and a choice of what Esc does, the last two Cotypist-parity
 features of the feature plan (D49, `feat/site-instructions-esc`).
 
+Since the feature plan (from a comparison with KeyType and TabType, 2026-10-26/27): word
+alternatives (D50, 0.1.8); the confidence gate on battery and the 0.05 extension bar (D51,
+0.1.9); privacy filters (D52), ghost text that wraps, cleaner screen context, phrase lookup
+in the writing history (D54) and small fixes (0.1.10). A confidence gate on mains power was
+tried and dropped (D53). The Codex app fix (0.1.10) started the compatibility sweep below.
+
+## Compatibility sweep (planned 2026-10-27)
+
+Apps that should get suggestions and don't, found before users find them. The Codex app
+showed no ghost text because it runs on a Chromium that Foretype didn't recognise, so it
+was never asked for its accessibility tree.
+
+| Step | Status | What |
+|---|---|---|
+| Codex app | Done (`fix/codex-electron`, 0.1.10) | OpenAI's owl runtime primed like Chrome; renamed Electron frameworks (`app.asar`) detected |
+| Installed-app scan | Done (`feat/compat-sweep`) | `Foretype --compat-scan`: every installed app with what it is built on (Electron, owl, other Chromium, a browser's web app) and the setup it gets; fails on a Chromium-based app that isn't listed and gets no priming. On the developer's Mac: 99 apps, 10 Chromium-based, none unprimed (OBS listed: its CEF draws browser docks only) |
+| Browser web apps | Left | Installed web apps (`com.google.Chrome.app.*`, e.g. Hoppscotch) are app shims whose pages live in the browser's process; check whether they get suggestions, and if not, prime the browser when its web app is in front |
+| Cursor and Windsurf | Left: not installed here | Check the chat inputs' labels against `allow_fields` (VS Code's "Message input" is checked) |
+| LibreOffice Writer | Left: not installed here | It reported no `AXFocusedUIElement` for a document opened from outside; a fallback could take the paragraph `AXTextArea` whose selection is valid |
+| By-eye checks | Left | The overlay in Safari, Mail and Notes; the pixel caret locator in Teams and Obsidian/CodeMirror and with a non-blinking caret |
+| Insertion | Left | App-by-app insertion testing to fill `insertion` overrides |
+
+After the sweep: hands-on checks of 0.1.10's wrapped ghost text, screen refresh and privacy
+filters, and whether Apple's inline predictions silence Foretype in TextEdit.
+
 ## Cross-app context (planned 2026-10-23, done 2026-10-24)
 
 Suggestions that use what is open in other apps (a Word document, slides or a web page
@@ -135,15 +160,11 @@ are kept for if that changes; the core stays portable.
   first word's probability, or the phrase's). A model trained for fill-in-the-middle, so mid-line can use the rest of the
   line (Qwen3's FIM tokens don't work on prose). (Beam search, the typo gate, emoji,
   autocorrect and mid-line landed in `feat/quality`.)
-- **Compatibility**: app-by-app insertion testing to fill `insertion` overrides; the chat
-  labels of Cursor and Windsurf (VS Code's "Message input" is checked); text-marker reads in
-  a real WebKit editor (Chrome's textarea answers none); the overlay checked by eye in
-  Safari, Mail and Notes; the pixel caret locator checked in
-  Teams and Obsidian/CodeMirror (not tested: Teams is the developer's live chat, Obsidian
-  is not installed) and with a non-blinking caret; LibreOffice Writer end to end (it
-  reported no `AXFocusedUIElement` for a document opened from outside; a fallback could
-  take the paragraph `AXTextArea` whose selection is valid). (Chat inputs, Google Docs and
-  Arc/Dia hints, text markers and the pixel caret locator landed.)
+- **Compatibility**: the compatibility sweep above (web apps, Cursor and Windsurf labels,
+  LibreOffice, by-eye checks, insertion; Teams is the developer's live chat and Obsidian is
+  not installed); text-marker reads in a real WebKit editor (Chrome's textarea answers
+  none). (Chat inputs, Google Docs and Arc/Dia hints, text markers, the pixel caret locator,
+  the Codex app and `--compat-scan` landed.)
 - **Personalization**: per-app retrieval tuning (needs a larger personal corpus than the 12
   self-written documents: tuning on those would fit noise). Cotypist's history can't be
   imported (encrypted, D30); Import Writing… takes text files instead. (The llama-server
@@ -162,10 +183,10 @@ are kept for if that changes; the core stays portable.
   DRAM energy (`sudo powermetrics`; GPU energy is measured), the release-day corpus
   numbers.
 - **Release** (D36): live since 2026-10-22: the signing backup and update key are
-  repository secrets, the repository is public, and 0.1.0 to 0.1.7 were published by the
+  repository secrets, the repository is public, and 0.1.0 to 0.1.10 were published by the
   release workflow (GitHub started no run for the tag pushes, so `scripts/release.sh`
   starts it by hand on the tag). Left: a clean-account install test, and watching an
-  installed copy update itself from a GitHub release (so far only the local-feed test,
+  installed copy update itself from a GitHub release (0.1.9 to 0.1.10 is the first chance) (so far only the local-feed test,
   `scripts/sparkle-local-test.sh`, checks the update path). Later, optionally: a Developer
   ID with notarization (one re-grant for everyone), and a Homebrew tap.
 
