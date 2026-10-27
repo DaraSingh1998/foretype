@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.9 (2026-10-27)
+
 ### Fixed: half a word at the end of a suggestion (2026-10-26)
 - On mains power a suggestion could end in a word cut short ("thanks for get"). It now ends
   at the last whole word.
