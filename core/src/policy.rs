@@ -1,5 +1,6 @@
 //! The gate that runs before any inference: per-app rules from the shared compatibility
-//! database plus field-level checks (secure fields, selections, IME composition, mid-line).
+//! database plus field-level checks (secure fields, fields asking for a code or a card
+//! number, selections, IME composition, mid-line).
 
 use std::collections::{HashMap, HashSet};
 
@@ -125,6 +126,10 @@ pub fn evaluate(
     if !TEXT_ROLES.contains(&snap.role.as_str()) {
         return Some("notTextField");
     }
+    // A one-time code, PIN, card number or password field the app didn't mark secure.
+    if !snap.force && crate::privacy::sensitive_field(&snap.description) {
+        return Some("sensitiveField");
+    }
     if snap.subrole == "AXSearchField" && !snap.force {
         return Some("searchField");
     }
@@ -158,6 +163,11 @@ pub fn evaluate(
     }
     if snap.text_before.trim().chars().count() < 2 {
         return Some("tooShort");
+    }
+    // Only digits (a phone, amount or card number): nothing to suggest.
+    let all = format!("{}{}", snap.text_before, snap.text_after);
+    if !snap.force && all.chars().all(|c| c.is_ascii_digit() || " -+().,/".contains(c)) {
+        return Some("numbers");
     }
     let (_, fragment) = words::split_fragment(&snap.text_before);
     if words::fragment_word(fragment).chars().count() > 30 {
@@ -259,5 +269,13 @@ mod tests {
         s.role = "AXTextField".into();
         s.field_width = 180.0;
         assert_eq!(evaluate(&s, &db, &none, &none, false), Some("smallField"));
+        let mut s = snap("4829");
+        s.description = "One-time code".into();
+        assert_eq!(evaluate(&s, &db, &none, &none, false), Some("sensitiveField"));
+        s.force = true;
+        assert_eq!(evaluate(&s, &db, &none, &none, false), None, "the user asked");
+        assert_eq!(evaluate(&snap("4111 1111 11"), &db, &none, &none, false), Some("numbers"));
+        assert_eq!(evaluate(&snap("+91 (98765) 4"), &db, &none, &none, false), Some("numbers"));
+        assert_eq!(evaluate(&snap("Room 42"), &db, &none, &none, false), None);
     }
 }

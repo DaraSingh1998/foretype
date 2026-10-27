@@ -45,6 +45,7 @@ Foretype has two halves joined by a small C ABI:
 | `core/src/words.rs` | Fragment splitting, word counting and limiting |
 | `core/src/session.rs` | Suggestion reuse: type-through, backspace, accept, cache, dismiss |
 | `core/src/policy.rs` | The gate, compatibility DB types, agent-prompt detection |
+| `core/src/privacy.rs` | Privacy filters (D52): secrets masked, sensitive field labels, addresses being typed |
 | `core/src/history.rs` | Encrypted writing history (ChaCha20-Poly1305) |
 | `core/src/profile.rs` | Vocabulary profile and example selection |
 | `core/src/details.rs` | The user's own details: fill cues and the prompt's writer line |
@@ -88,13 +89,16 @@ In order; the first rule that applies decides:
 3. `settings.only_apps` non-empty and the app is not in it → hide (`notInOnlyApps`).
 4. `policy::evaluate` → hide with a reason. Checks, in order: secure input, secure field
    (`AXSecureTextField`, or "password"/"secure" in the role description), role not
-   `AXTextArea`/`AXTextField`/`AXComboBox`, `AXSearchField` (unless forced), a selection,
+   `AXTextArea`/`AXTextField`/`AXComboBox`, a label or placeholder asking for a secret
+   (`sensitiveField`: one-time code, PIN, card number, password…; `privacy::sensitive_field`,
+   unless forced), `AXSearchField` (unless forced), a selection,
    IME composition (`marked_len > 0`), app disabled by the user, app disabled by default in
    the compat DB (unless the user enabled it, forced, or the field's label matches the
    rule's `allow_fields`, e.g. a code editor's chat input), agent-prompt-only app whose
    caret line is not an agent prompt, single-line field narrower than 260 pt, more than 8
    non-space characters after the caret on the line (lifted when `mid_line` is on and the
-   built-in engine is loaded), fewer than 2 characters typed, a partial word longer than 30
+   built-in engine is loaded), fewer than 2 characters typed, nothing but digits and number
+   punctuation in the field (`numbers`, unless forced), a partial word longer than 30
    characters.
 5. Agent-prompt apps (terminals): `text_before` is replaced by the prompt's own text.
 6. Recorder (`observe`) when personalization is on.
@@ -112,6 +116,8 @@ In order; the first rule that applies decides:
    digits, or is one of the user's own words; a partial word the shell's spell checker says
    can't become a word (`spell_fragment: "typo"`) → hide (`typo`), unless capitalized, with
    digits, shorter than 3 letters or a prefix of the user's own words.
+   Then, unless forced, a URL or email address at the caret (`privacy::typing_address`)
+   → hide (`address`); after the details fill, so the user's own address is still filled.
 10. **Cache**: an exact `(field_key, text_before)` hit, from earlier suggestions or a
    prefetch → emit (`cache`), with the alternatives cached alongside. Skipped mid-line (the
    key doesn't hold the text after the caret).
@@ -306,7 +312,7 @@ Contractors: $68,900 (budget $52,000)               where text was left out
 ...
 
 [Text visible on screen]                         ← screen_context, last ≤1,500 chars, lines
-...                                                 starting with "[" dropped
+...                                                 starting with "[" dropped, secrets masked
 [End of screen text]
 
 [Earlier writing by the same person in Mail]     ← personalization examples (≤2 × 280 chars)
@@ -384,6 +390,8 @@ per passage for windows on screen. At most 600 passages.
   1.25 × the current one's + 1, a passage it holds left the pool, it no longer fits, or there
   is none yet. `OtherApps::changes` counts replacements (each costs a full prefill;
   `ft-replay` prints them).
+- **Privacy**: each window's text has its secrets masked (`privacy::redact`) before it is
+  cut into passages, so the ranking, the prompt and the report never hold them.
 - **Render**: `[Also open: App — Title (host)]` per window (brackets in names become
   parentheses), windows in the order they first came into the pool, passages in document
   order with a "…" line between ones that aren't adjacent, a blank line at the end.

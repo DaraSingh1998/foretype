@@ -20,6 +20,7 @@ pub mod instructions;
 pub mod models;
 pub mod others;
 pub mod policy;
+pub mod privacy;
 pub mod profile;
 pub mod session;
 pub mod words;
@@ -661,15 +662,15 @@ impl Core {
         }
         let common = t.start.char_indices().zip(t.last.chars()).take_while(|((_, a), b)| a == b).count();
         let typed: String = t.last.chars().skip(common).collect();
-        let typed = typed.trim();
+        let typed = privacy::redact(typed.trim());
         if typed.chars().count() < MIN_RECORD_CHARS {
             return;
         }
-        if let Err(e) = self.shared.history.lock().unwrap().append(Record::now(&t.app, typed)) {
+        if let Err(e) = self.shared.history.lock().unwrap().append(Record::now(&t.app, &typed)) {
             eprintln!("[foretype] history append failed: {e}");
             return;
         }
-        self.shared.profile.lock().unwrap().add_text(typed);
+        self.shared.profile.lock().unwrap().add_text(&typed);
         self.shared.profile_gen.fetch_add(1, Ordering::SeqCst);
         if debug() {
             eprintln!("[foretype] recorded {} chars from {}", typed.chars().count(), t.app);
@@ -818,6 +819,11 @@ impl Core {
             // must not carry the user past the typo gate and autocorrect.
             if let Some(handled) = self.typing_aids(&snap, &settings) {
                 return handled;
+            }
+            // After the details fill, which completes the user's own address.
+            if !snap.force && privacy::typing_address(&snap.text_before) {
+                self.shared.session.lock().unwrap().clear();
+                return self.emit_suggestion(rev, String::new(), "policy", Some("address".into()));
             }
             let mut session = self.shared.session.lock().unwrap();
             if let Some(rest) = session.type_through(snap.field_key, &snap.text_before) {
@@ -1821,6 +1827,32 @@ mod tests {
         c.submit(snap(7, "ok thanks"));
         c.submit(snap(8, ""));
         assert_eq!(c.history_stats().0, 1);
+    }
+
+    #[test]
+    fn secrets_never_reach_the_history_or_the_prompt() {
+        let c = core();
+        c.submit(snap(9, "Set it up:"));
+        accept_here(&c);
+        c.submit(snap(9, "Set it up: export OPENAI_API_KEY=sk-proj-AbCdEf0123456789XyZaBcDeF and restart"));
+        c.submit(snap(10, ""));
+        assert_eq!(c.shared.history.lock().unwrap().records()[0].text, "export OPENAI_API_KEY=\u{2022}\u{2022}\u{2022} and restart");
+        let s = Snapshot { screen_context: "Your OTP is 482913\nghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789".into(), ..snap(1, "The code is") };
+        let p = build_prompt(&c.shared, &s, &c.settings(), &[], true);
+        assert!(!p.prefix.contains("482913") && !p.prefix.contains("ghp_") && p.prefix.contains("Your OTP is"), "{}", p.prefix);
+    }
+
+    #[test]
+    fn no_guesses_while_typing_an_address() {
+        let (c, rx) = core_with_events();
+        c.submit(Snapshot { revision: 1, ..snap(1, "Write to sam.lee@exa") });
+        assert_eq!(suggestion_for(&rx, 1), (String::new(), "policy", None, Some("address".into())));
+        c.submit(Snapshot { revision: 2, ..snap(1, "The notes are at https://docs.exa") });
+        assert_eq!(suggestion_for(&rx, 2).3.as_deref(), Some("address"));
+        // The user's own address is still filled.
+        c.set_details(my_details());
+        c.submit(Snapshot { revision: 3, ..snap(1, "My email is priya.raman@exa") });
+        assert_eq!(suggestion_for(&rx, 3).0, "mple.com");
     }
 
     #[test]

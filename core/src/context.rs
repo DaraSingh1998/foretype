@@ -109,7 +109,8 @@ const WINDOW_STEP: usize = 512;
 const MAX_SCREEN_CHARS: usize = 1500;
 
 /// Cleans OCR text for the prompt: trims lines, drops empty ones and bracket lines that
-/// could be mistaken for the header's own markers, and keeps the last `MAX_SCREEN_CHARS`.
+/// could be mistaken for the header's own markers, keeps the last `MAX_SCREEN_CHARS` and
+/// masks secrets (`privacy::redact`).
 fn screen_section(raw: &str) -> String {
     let lines: Vec<&str> = raw
         .lines()
@@ -127,7 +128,7 @@ fn screen_section(raw: &str) -> String {
         kept.push(line);
     }
     kept.reverse();
-    kept.join("\n")
+    crate::privacy::redact(&kept.join("\n")).into_owned()
 }
 
 /// The header without the other-apps section.

@@ -422,6 +422,7 @@ impl Replayer {
                         let key = match reason.as_deref() {
                             Some("typo") => "policy:typo",
                             Some("lowConfidence") => "policy:lowConfidence",
+                            Some("address") => "policy:address",
                             _ => source,
                         };
                         if source == "model" {

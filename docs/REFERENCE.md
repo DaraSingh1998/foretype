@@ -140,12 +140,34 @@ link to Settings ▸ Context; nothing but you turns it on.
   says how many windows are in memory, or, when it is on and nothing has been read yet,
   what to do (open a document beside the field, then click into the field).
 
+### Privacy filters
+
+Always on, with no setting (D52):
+
+- **Secrets are masked** in the screen text, other apps' text and the writing history
+  before the model sees them: a key shown in a terminal can't be suggested into a chat.
+  Masked (as `•••`): private key blocks, API keys and tokens with a known prefix (`sk-`,
+  `ghp_`, `AKIA`, `xoxb-`, `AIza`, JWTs…), long random-looking strings (32+ characters
+  mixing letters and digits, or 32+ hex digits, so a git hash goes too), the value after a
+  secret name (`API_KEY=…`, `"password": "…"`, `Bearer …`), card numbers (Luhn), IBANs,
+  US social security and Aadhaar numbers, and a 4–8 digit code next to a word like "OTP",
+  "code" or "PIN". What Foretype Sees shows passages as the model gets them, masked.
+- **Fields that ask for a secret get no suggestions**, even when the app doesn't mark them
+  secure: a label or placeholder saying one-time code, OTP, verification code, PIN, CVV,
+  card number, expiry, IBAN, account number, password, API key, token and the like
+  (Ctrl + the key above Tab still asks for one), and fields holding nothing but digits and number
+  punctuation (a phone number, an amount).
+- **No guesses inside an address**: while the word at the caret is a URL (`https://…`,
+  `www.…`) or an email address (`name@…`), nothing is suggested; a model only invents those.
+  Your own email from About You is still filled.
+
 ### Personalization (opt-in)
 
 **Learn From My Writing** (menu: Personalization) is off by default. When on:
 
 - **What is recorded:** only fields where you accepted a suggestion, only the text you typed
-  there (not text that was already in the field), only when it is at least 20 characters.
+  there (not text that was already in the field), only when it is at least 20 characters,
+  with secrets masked (*Privacy filters*).
   A field is recorded when focus leaves it or when its text is cleared (a sent chat
   message). Secure fields, and apps where suggestions are off, are never recorded.
 - **Where:** `~/Library/Application Support/Foretype/history.bin`, each record sealed with
@@ -681,6 +703,9 @@ pause or an app switched off by Esc.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by
   replays against a local llama-server.
+- The privacy filters recognise secrets by their shape (a prefix, a checksum, a cue word);
+  a password that looks like an ordinary word, or a key in an unknown format under 32
+  characters, isn't masked. Field labels are matched in English only.
 - Word alternatives use Option+1, 2, 3 and 0 on the number row, taken only while their card
   (or, for Option+0, a suggestion) shows; on layouts where those keys type something you
   need, that character can't be typed then: # on a British keyboard is Option+3, and

@@ -990,3 +990,40 @@ probabilities of every split of the first word, as TabType does.
 **Cost.** One pass over the vocabulary per token of the first word (two while healing),
 and per word with the extension bar on greedy: no visible change in latency. Fewer
 suggestions shown with a gate, by design.
+
+## D52. Privacy filters: secrets masked by shape, sensitive fields and addresses skipped (2026-10-27)
+
+**Decision.** A core module, `privacy.rs`, always on and with no setting:
+- `redact` masks secrets (as `•••`) in every text that reaches the prompt from outside the
+  field being written in: the screen text (`context::screen_section`), other apps' windows
+  (`OtherApps::set_passages`, before passages are cut, so the report shows them masked too)
+  and the writing history (on recording, in the vocabulary profile, and in the examples,
+  for records written before this). It recognises secrets by shape, with hand-written
+  scanners: private key blocks, known key prefixes and JWTs, long random-looking strings
+  (32+ characters with upper and lower case and digits at 4+ bits of entropy per character,
+  or 32+ hex digits), values assigned to secret names (`*_API_KEY=`, `"password":`,
+  `Bearer`), and numbers with a checksum or a cue (cards by Luhn, IBANs by mod 97, Aadhaar by
+  Verhoeff, `123-45-6789`, and 4–8 digits next to "OTP", "code", "PIN" or "verification").
+- The gate (`policy::evaluate`) skips a field whose label or placeholder asks for a secret
+  (`sensitiveField`) and one that holds nothing but digits and number punctuation
+  (`numbers`); forcing a suggestion lifts both.
+- `submit` shows nothing while the word at the caret is a URL or an email address
+  (`address`), after the details fill (the user's own email is exact) and before
+  type-through.
+
+The field's own text is not masked: the model needs it as typed to continue it, and it is
+the user's own document.
+
+**Why.** From the comparison with KeyType and TabType (2026-10-26). With text from other
+apps and screen context, what one window shows can be suggested into another: an API key in
+a terminal, a one-time code in a message, a card number on a web page, typed into a chat
+with one Tab. Password managers were already never read and secure fields never touched,
+but most secrets live elsewhere, and not every code or card field is marked secure (web
+forms seldom are). A suggestion inside a URL or an email address is a guess of something
+exact. Shape-based masking misses what looks like an ordinary word, so the masks err
+towards hiding (a git hash, a postal PIN code next to "PIN"); a lost hash costs a suggestion
+little. Regex was not added as a dependency: the scanners are a few hundred lines and run
+on every keystroke's screen text in microseconds.
+
+**Cost.** Nothing measurable: the 53-document corpus has no secrets, addresses or
+digit-only texts, and replays the same (`docs/MEASUREMENTS.md`, "Privacy filters").

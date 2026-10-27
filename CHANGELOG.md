@@ -5,6 +5,16 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Privacy filters (2026-10-27)
+- Secrets are masked before the model sees them: API keys and tokens, private keys,
+  passwords after a name like `password:`, card numbers, IBANs, social security and Aadhaar
+  numbers and one-time codes, in the screen text, other apps' text and your writing
+  history. A key visible in a terminal can no longer be suggested into a chat.
+- No suggestions in fields that ask for a one-time code, PIN, card number, password or
+  similar, even when the app doesn't mark them secure, or in fields holding only digits.
+- No suggestions while you type a web address or an email address (your own email from
+  About You is still filled).
+
 ## 0.1.9 (2026-10-27)
 
 ### Fixed: half a word at the end of a suggestion (2026-10-26)
