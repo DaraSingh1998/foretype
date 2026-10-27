@@ -1503,3 +1503,21 @@ The corpus has no secrets, URLs, email addresses or digit-only texts, so the fil
 nothing in it: the same accepts and the same suggestions shown. Latency moved with the Mac's
 load (other builds ran alongside), not with the filters: masking the screen text is a
 single pass over at most 1,500 characters.
+
+## Merging token splits for the beam's confidence (2026-10-27)
+
+Gemma 4 E2B Q4_K_M, full corpus, `--beam 3`, D51 defaults, M3 Pro on mains power. A
+prototype (not kept, D53) summed the first word's probability over every beam path that
+spelled the same first word and could end it there.
+
+| Run | Saved | Accepts | Held back | Wrong per 100 keys | Next word right (mid / after) |
+|---|---:|---:|---:|---:|---|
+| beam 3, not gated (merged probability only logged) | 43.4% | 2,005 | – | 69.1 | 28.8% (36.2 / 5.7) |
+| beam 3, gate 0.15 / 0.08 on the merged probability | 41.3% | 1,895 | 1,548 | 50.9 | 33.3% (40.7 / 9.2) |
+| D51: beam 3, gate on the path's own probability | 41.3% | 1,895 | 1,548 | 50.9 | 33.3% (40.7 / 9.2) |
+
+Identical: on one document instrumented (`sw-email-1`, 175 searches) no first word was ever
+reached by a second path, so there was nothing to add. Calibration from the ungated run's
+`--confidence-log` (`tools/confidence-sweep.py`): right 21.4% mid-word and 2.4% after a word
+under 0.05, 24.9% / 7.8% at 0.05–0.1, 27.5% / 14.8% at 0.1–0.2, 99.3% above 0.9, the same
+shape as D51's.

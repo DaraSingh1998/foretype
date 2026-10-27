@@ -1027,3 +1027,23 @@ on every keystroke's screen text in microseconds.
 
 **Cost.** Nothing measurable: the 53-document corpus has no secrets, addresses or
 digit-only texts, and replays the same (`docs/MEASUREMENTS.md`, "Privacy filters").
+
+## D53. No confidence gate on the beam yet: merging token splits doesn't calibrate it (2026-10-27)
+
+**Decision.** The confidence gate stays on greedy decoding only (D51). Summing the first
+word's probability over the token paths that spell it, tried as the fix for the beam's
+calibration, is not kept.
+
+**Why.** D51 found the beam's first-word probability a poor guide (mid-word words under 0.05
+were right a fifth of the time) and guessed the cause was a rarer token split winning, as
+TabType describes. Prototyped (2026-10-27): during the search every path that could end its
+first word recorded that word's probability, summed per spelling, and the winner reported its
+spelling's sum. On the corpus (Gemma 4 E2B, `--beam 3`) not one first word was ever reached by
+two paths: the 3-wide beam keeps different words, not different splits of one. The gated
+run reproduced D51's numbers exactly (41.3%, 1,548 suggestions held back) and the
+calibration stayed the same (mid-word under 0.05: 21.4% right). The beam's unlikely first
+words are right more often because it picks them for the likely words after them, which the
+first word's own probability can't see. A gate on mains power needs a different signal
+(`docs/ROADMAP.md`).
+
+**Cost.** None kept.
