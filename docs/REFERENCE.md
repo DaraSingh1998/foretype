@@ -617,6 +617,10 @@ pause or an app switched off by Esc.
   composers in Chrome and Electron apps such as Claude or Slack) its caret position skips
   the line breaks between paragraphs that its text has; Foretype lines the two up, so the
   text before and after the caret is right on every line.
+- **Electron and Chromium apps** build their accessibility tree only when asked. Foretype
+  asks for apps in its list and for apps it recognises from their bundle: Electron apps
+  (including ones with a renamed framework) and apps on OpenAI's own Chromium runtime, such
+  as the ChatGPT/Codex app, which is set up like Chrome.
 - **Apps without usable caret geometry** (Microsoft Teams; LibreOffice, whose paragraph
   positions are off although its character positions are right): Foretype finds the caret
   from pixels, and where the app's character positions turn out to match the screen it uses

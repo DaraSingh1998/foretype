@@ -5,6 +5,12 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Codex app (2026-10-27)
+- The ChatGPT/Codex desktop app (installed as ChatGPT.app) gets suggestions: it runs on
+  OpenAI's own Chromium runtime, which ignores the Electron accessibility switch, so it is
+  now set up like Chrome. Other apps on that runtime, and Electron apps whose framework is
+  renamed, are recognised from their bundle too.
+
 ### Small fixes (2026-10-27)
 - "Mr.", "Dr.", "e.g.", "U.S.", initials and list numbers ("1.") no longer count as the end
   of a sentence, for **Stop at end of sentence** and autocorrect's capital letters.
