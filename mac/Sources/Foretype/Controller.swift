@@ -312,6 +312,15 @@ final class Controller {
                      edgeOutsideFrame: s.edgeOutsideFrame, lineEnd: !Controller.midLine(s))
     }
 
+    /// Where the ghost text may wrap onto the lines below the caret: a multi-line field with
+    /// no text below the caret's line, the caret inside it.
+    static func wrap(_ s: FieldSnapshot) -> GhostPanel.Wrap? {
+        guard s.role == "AXTextArea", !s.textBelow, let f = s.frame, let c = s.caret?.rect,
+              c.minX >= f.minX - 4, c.maxX <= f.maxX + 4, c.minY >= f.minY - 4, c.maxY <= f.maxY + 4 else { return nil }
+        let line = s.textBefore.split(separator: "\n", omittingEmptySubsequences: false).last.map(String.init) ?? ""
+        return .init(fieldKey: s.fieldKey, lineText: line, field: f, bottom: min(f.maxY, s.windowFrame?.maxY ?? f.maxY))
+    }
+
     /// Text other than spaces follows the caret on its line.
     private static func midLine(_ s: FieldSnapshot) -> Bool {
         !(s.textAfter.split(separator: "\n", omittingEmptySubsequences: false).first ?? "").trimmingCharacters(in: .whitespaces).isEmpty
@@ -334,7 +343,7 @@ final class Controller {
             guard let self, let shown = self.shown, shown.fieldKey == fieldKey,
                   self.latestSnapshot.revision == updated.revision else { return }
             self.panel.show(text: shown.text, caret: updated.caret, frame: self.panelFrame(updated), font: updated.font,
-                            midLine: shown.midLine, tag: shown.detail?.tag)
+                            midLine: shown.midLine, tag: shown.detail?.tag, wrap: Controller.wrap(updated))
             self.keys.setSuggestionVisible(self.panel.isVisible)
             if self.picker.visible { self.showPicker() } else { self.schedulePicker() }
             Log.debug("rev \(updated.revision) pixel caret moved the suggestion: show=\(self.panel.mode)")
@@ -410,7 +419,7 @@ final class Controller {
                     panel.hide()
                 } else {
                     panel.show(text: display, caret: snap.caret, frame: panelFrame(snap), font: snap.font, midLine: midLine,
-                               tag: detail?.tag)
+                               tag: detail?.tag, wrap: replace.isEmpty ? Controller.wrap(snap) : nil)
                 }
                 shown = (snap.fieldKey, display, detail, midLine)
                 keys.setSuggestionVisible(panel.isVisible)
@@ -430,7 +439,7 @@ final class Controller {
                 let font = snap.font.map { " font=\($0.fontName) \(String(format: "%g", $0.pointSize))" } ?? ""
                 let at = panel.globalFrame.map { " at \(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? ""
                 let alts = alternatives.isEmpty && source != "alternatives" ? "" : " alternatives=\(alternatives.count)"
-                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field)\(font) show=\(panel.mode)\(at)\(alts) -> \(what)")
+                Log.debug("rev \(revision) \(source)\(ms.map { String(format: " %.0fms", $0) } ?? "") \(snap.appName) caret=\(caret)\(after) line=\(snap.caretIndex - lineLength)\(field)\(font) show=\(panel.mode)\(panel.mode == "inline" && panel.rows > 1 ? " rows=\(panel.rows)" : "")\(at)\(alts) -> \(what)")
             }
         case let .status(state, detail):
             Log.debug("engine \(state): \(detail)")

@@ -755,11 +755,17 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   again with no captures.
 - **`GhostPanel.swift`**: borderless, non-activating, click-through `NSPanel` at
   `.statusBar` level, on all Spaces, excluded from Accessibility. Draws the words that fit
-  before the field's right edge in the host font, gray; when not even the first word fits
-  (the line is about to wrap), the first word runs past the edge. Without a caret rect (AX
+  before the field's right edge in the host font, gray. In a multi-line field (`AXTextArea`)
+  with no text below the caret's line (`FieldSnapshot.textBelow`), the rest wraps onto up to
+  two more rows (`GhostPanel.layout`, greedy by word; a new word that doesn't fit at the caret
+  starts on the next row, the rest of the word being typed never does), from the field's
+  left text edge: the caret's x minus the width of its line's text, when that lands inside
+  the field's first quarter (the line fits on one row), remembered per field for lines that
+  already wrap; rows stop at the field's or window's bottom. When not even the first word
+  fits and nothing wraps (the line is about to wrap), the first word runs past the edge. Without a caret rect (AX
   gave none and the pixel locator has no position yet) it shows a "mirror card"
   (⇥ suggestion) above the field, or below it when above would leave the field's display. `advance` shifts the ghost after an accept until the host reports the new
-  caret. Mid-line suggestions show as a card just under the caret (inline ghost text would
+  caret, to the row the inserted words ended on when they wrapped. Mid-line suggestions show as a card just under the caret (inline ghost text would
   overlap the rest of the line); `showHint` shows a tip card for 8 s without turning on the
   key tap. Word alternatives (D50) have a second panel, `showPicker`: a numbered card
   ("⌥1  word rest", the word the key takes first in full colour) under the ghost text's

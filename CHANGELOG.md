@@ -5,6 +5,12 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Ghost text wraps (2026-10-27)
+- In a multi-line field the suggestion no longer stops at the field's right edge: the words
+  that don't fit go on the next line, from where the text starts, up to three lines, as
+  long as nothing is written below. The 7- and 10-word lengths now show all their words at
+  the end of a line.
+
 ### Privacy filters (2026-10-27)
 - Secrets are masked before the model sees them: API keys and tokens, private keys,
   passwords after a name like `password:`, card numbers, IBANs, social security and Aadhaar

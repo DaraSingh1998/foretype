@@ -703,6 +703,11 @@ pause or an app switched off by Esc.
 - The setup window, Model menu and server dialog have not been exercised in the automated
   tests; the downloader is covered by `--download-selftest` and the server backends by
   replays against a local llama-server.
+- Ghost text wraps onto up to two more lines in multi-line fields with nothing written
+  below the caret's line; elsewhere (single-line fields, text below) it still stops at the
+  field's edge. The layout is checked by `--ghost-selftest`, not yet by eye in an app. The
+  wrapped rows start where the field's text starts, measured from a line that fits on one
+  row in the host font; a field where no such line was seen yet doesn't wrap.
 - The privacy filters recognise secrets by their shape (a prefix, a checksum, a cue word);
   a password that looks like an ordinary word, or a key in an unknown format under 32
   characters, isn't masked. Field labels are matched in English only.
