@@ -620,7 +620,8 @@ pause or an app switched off by Esc.
 - **Electron and Chromium apps** build their accessibility tree only when asked. Foretype
   asks for apps in its list and for apps it recognises from their bundle: Electron apps
   (including ones with a renamed framework) and apps on OpenAI's own Chromium runtime, such
-  as the ChatGPT/Codex app, which is set up like Chrome.
+  as the ChatGPT/Codex app, which is set up like Chrome. Web apps installed from Chrome, Edge
+  or Brave (Hoppscotch, say) get their browser set up when they come to the front.
 - **Apps without usable caret geometry** (Microsoft Teams; LibreOffice, whose paragraph
   positions are off although its character positions are right): Foretype finds the caret
   from pixels, and where the app's character positions turn out to match the screen it uses

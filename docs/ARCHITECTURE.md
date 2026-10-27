@@ -493,7 +493,10 @@ fallback when AX gives nothing. An app with no `prime` whose bundle holds
 renamed framework) is primed as `electron` anyway; one with
 `Contents/Resources/owl-electron-app.json` (OpenAI's "owl" runtime, the ChatGPT/Codex app) as
 `chromium`, since it doesn't support `AXManualAccessibility` and builds its tree on
-`AXEnhancedUserInterface` (`AppKind.detected` in the shell, cached per bundle ID).
+`AXEnhancedUserInterface` (`AppKind.detected` in the shell, cached per bundle ID). A browser's
+installed web app (`com.google.Chrome.app.<id>` and the like) is an app shim whose fields
+the browser's process serves, so the browser is primed when its web app is in front
+(`AppKind.browser(ofWebApp:)`).
 
 The longest matching prefix applies when there is no exact entry. An agent prompt line is
 `[whitespace][border][whitespace]marker text`; shell prompts (`$`, `%`, `❯`) don't match.
