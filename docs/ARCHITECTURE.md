@@ -489,8 +489,11 @@ dismissal marker.
 `caret` is read only by the shell: `pixel` always takes the caret from screen pixels (the
 app's AX geometry is wrong), `ax` never does; unset means AX with the pixel locator as the
 fallback when AX gives nothing. An app with no `prime` whose bundle holds
-`Contents/Frameworks/Electron Framework.framework` is primed as `electron` anyway
-(`AppKind.detected` in the shell, cached per bundle ID).
+`Contents/Frameworks/Electron Framework.framework` or `Contents/Resources/app.asar` (a
+renamed framework) is primed as `electron` anyway; one with
+`Contents/Resources/owl-electron-app.json` (OpenAI's "owl" runtime, the ChatGPT/Codex app) as
+`chromium`, since it doesn't support `AXManualAccessibility` and builds its tree on
+`AXEnhancedUserInterface` (`AppKind.detected` in the shell, cached per bundle ID).
 
 The longest matching prefix applies when there is no exact entry. An agent prompt line is
 `[whitespace][border][whitespace]marker text`; shell prompts (`$`, `%`, `❯`) don't match.

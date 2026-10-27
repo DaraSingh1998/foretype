@@ -48,13 +48,25 @@ SCRATCH="$ROOT/mac/.build"
 [ "$SPARKLE" = 1 ] && SCRATCH="$ROOT/mac/.build-sparkle"
 
 (cd "$ROOT/core" && cargo build --release --lib)
+# Without Sparkle the package has no dependencies and SwiftPM deletes Package.resolved, the
+# Sparkle pin release builds use; put it back afterwards.
+RESOLVED="$ROOT/mac/Package.resolved"
+RESOLVED_COPY=""
+if [ "$SPARKLE" != 1 ] && [ -f "$RESOLVED" ]; then
+  RESOLVED_COPY="$(mktemp)"
+  cp "$RESOLVED" "$RESOLVED_COPY"
+fi
 # swift build's own exit status decides (pipefail): after compile errors the binary from an
 # earlier build is still there, and packaging it would ship stale code. grep only drops the
 # link warnings and exits 1 when it drops every line, which is not a failure.
-if ! (cd "$ROOT/mac" && FORETYPE_SPARKLE="$SPARKLE" swift build -c release --scratch-path "$SCRATCH" 2>&1) \
-  | { grep -v "was built for newer 'macOS' version" || true; }; then
-  echo "swift build failed"; exit 1
+BUILD_OK=1
+(cd "$ROOT/mac" && FORETYPE_SPARKLE="$SPARKLE" swift build -c release --scratch-path "$SCRATCH" 2>&1) \
+  | { grep -v "was built for newer 'macOS' version" || true; } || BUILD_OK=0
+if [ -n "$RESOLVED_COPY" ]; then
+  [ -f "$RESOLVED" ] || cp "$RESOLVED_COPY" "$RESOLVED"
+  rm -f "$RESOLVED_COPY"
 fi
+[ "$BUILD_OK" = 1 ] || { echo "swift build failed"; exit 1; }
 [ -x "$SCRATCH/release/Foretype" ] || { echo "swift build failed: no $SCRATCH/release/Foretype"; exit 1; }
 
 APP="${FORETYPE_OUT:-$ROOT/build}/Foretype.app"
