@@ -1487,3 +1487,19 @@ $R "$M/gemma-4-E2B.Q4_K_M.gguf" --corpus eval/corpus.jsonl --beam 3 [--beam-firs
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with
 the default model and record the summary line here.
+
+## Privacy filters (2026-10-27)
+
+Gemma 4 E2B Q4_K_M, full corpus, built-in engine, Metal, 4 words, `--beam 3` with the
+D51 defaults (bar 0.05, gate on greedy only), M3 Pro on mains power. Branch
+`feat/privacy-filters` (D52) against the "beam 3, bar 0.05" row of the previous section.
+
+| Run | Saved | Accepts | Shown at | Next word right (mid / after a word) | Wrong per 100 keys | Whole right | Words | Model p50 / p90 |
+|---|---:|---:|---:|---|---:|---:|---:|---:|
+| before (D51 section) | 43.4% | 2,005 | 97.0% | 28.8% (36.2 / 5.7) | 69.1 | 10.4% | 2.39 | 138 / 178 ms |
+| privacy filters | 43.4% | 2,005 | 97.0% | 28.8% (36.2 / 5.7) | 69.1 | 10.5% | 2.38 | 160 / 267 ms |
+
+The corpus has no secrets, URLs, email addresses or digit-only texts, so the filters change
+nothing in it: the same accepts and the same suggestions shown. Latency moved with the Mac's
+load (other builds ran alongside), not with the filters: masking the screen text is a
+single pass over at most 1,500 characters.
