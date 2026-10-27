@@ -127,7 +127,10 @@ are kept for if that changes; the core stays portable.
 - **Models**: a purpose-tuned small completion model (deferred by the user on 2026-10-20: it
   needs a better training set than oasst1 to be worth GPU hours). (KV snapshots for Gemma 4
   and Qwen3.5 landed in `phase3/kv-snapshots`; MLX was measured and isn't faster, D32.)
-- **Quality**: a model trained for fill-in-the-middle, so mid-line can use the rest of the
+- **Quality**: a confidence gate on mains power (D51): the 3-wide beam's first word can come
+  through a rarer split into tokens, so its probability understates the word's and gating it
+  cost 2 points; adding up every split of the first word (as TabType does) before gating
+  should fix that. A model trained for fill-in-the-middle, so mid-line can use the rest of the
   line (Qwen3's FIM tokens don't work on prose). (Beam search, the typo gate, emoji,
   autocorrect and mid-line landed in `feat/quality`.)
 - **Compatibility**: app-by-app insertion testing to fill `insertion` overrides; the chat

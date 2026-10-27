@@ -141,7 +141,12 @@ never while paused.
 - **Debounce**: if `debounce_ms > 0` (the shell sets 80 ms on battery) and the job is
   mid-word, wait that long; a newer keystroke cancels the job.
 - **Complete** → session `set` → emit `suggestion` (`source: model`, `ms`, `prefilled`,
-  `stop`). A prompt that leaves under 64 tokens of the context free (`GenError::TooLong`)
+  `stop`, `confidence`). With the confidence gate (`min_confidence`, `min_confidence_mid_word`
+  above 0, D51) a greedily decoded completion (`Completion::beam` false; beam results only
+  with `gate_beam`) whose first word is less likely than the bar for its position
+  (mid-word when the fragment has letters) is not shown: the session is cleared and a
+  `policy` hide with reason `lowConfidence` goes out instead; a prefetched one below the bar
+  is not cached. A prompt that leaves under 64 tokens of the context free (`GenError::TooLong`)
   is run again without its other-apps section (`Prompt::others` bytes at the front), and a
   warm-up likewise.
 - **Old header while the new one prefills** (D47, built-in engine): `plan` tokenizes the
@@ -231,7 +236,11 @@ never while paused.
   prompt, so nothing is rolled back), one batched decode per step, the `beam_width` best
   children by summed log-probability survive, the same healing, bias and stops as greedy
   (`stop_before`), and the finished phrase with the best mean log-probability wins (its
-  first word may differ from greedy's). Recurrent models stay greedy. With
+  first word may differ from greedy's), or the best total with `rank_by_sum`. A phrase the
+  search left unfinished can win too; its last word, which may be cut short, is dropped.
+  With `beam_first_word` (D51) a phrase whose first word goes on keeps only its best child,
+  and the others that start the second word when that child does too: the first word is
+  greedy's and the search only weighs the words after it. Recurrent models stay greedy. With
   `GenOptions::alternatives` it also returns the other phrases, best mean first: every
   finished or unfinished phrase but the winner, plus every beam it let go (none of its
   children kept) at a word end, where its own best next token starts a new word
@@ -245,6 +254,17 @@ never while paused.
   for the GPU to finish the prompt's last batch, which llama.cpp runs asynchronously);
   token budget `max_words * 3 + 8 + fragment length`. A word cut off by the budget or the
   deadline is dropped.
+- **Word probabilities** (`WordTrack`, D51, greedy and beam alike): a word starts with a
+  token that begins with whitespace once something other than whitespace was generated past
+  the fragment (so "Hi," is one word, as Tab takes it). `Completion::confidence` is the first
+  word's probability: the product of its tokens' probabilities, each normalized over the
+  tokens `allowed` at that step (the ones that fit what was typed while healing), from the
+  raw logits (no personal bias). With `extend_min` above 0, a word after the first that is
+  less likely than that (its tokens' summed log-probability, given the words before it) ends
+  the suggestion where it starts (stop `unlikely`): greedy stops decoding there, the beam
+  search cuts its winner. In a beam the first word can win through a rarer tokenization of
+  the same word, whose path probability understates the word's; with `beam_first_word` the
+  first word is greedy's path, which is the most probable token at each step.
 - **Personal bias** (`set_vocabulary`, `personal_strength` logits at full weight):
   at a word start, boosts the single token of `" word"` for the user's whole-word tokens;
   while a word is in progress (typed or generated), boosts the next token of the user's
@@ -543,7 +563,10 @@ text}, `disabled_apps`, `enabled_apps`,
 `only_apps`, `deadline_ms` (300), `max_body_chars` (1600), `unload_after_s` (300),
 `debounce_ms` (0), `prefetch` (true), `personalize` (false), `personalize_strength` (1),
 `personal_examples` (true), `emoji` (true), `autocorrect` (true), `typo_gate` (true),
-`mid_line` (false), `beam_width` (1), `alternatives` (false), `other_apps_tokens` (512).
+`mid_line` (false), `beam_width` (1), `alternatives` (false), `other_apps_tokens` (512),
+`min_confidence` (0.15) and `min_confidence_mid_word` (0.08: the confidence gate's bars,
+D51), `gate_beam` (false: beam results pass the gate), `beam_first_word` (false),
+`beam_rank_by_sum` (false), `extend_min` (0.05).
 
 **UserDetails** (`ft_engine_set_details`): `name`, `email`, `phone`, `company`, `job_title`,
 `address`, `website` (strings, empty = unset or switched off), `in_prompt` (false).
@@ -572,8 +595,9 @@ placeholder), `text_before`, `text_after` (rest of the caret line), `screen_cont
 **Events** (callback):
 
 ```json
-{"type":"suggestion","revision":42,"text":" going next week","source":"model","ms":71.2,"prefilled":1,"stop":"words"}
+{"type":"suggestion","revision":42,"text":" going next week","source":"model","ms":71.2,"prefilled":1,"stop":"words","confidence":0.62}
 {"type":"suggestion","revision":43,"text":"","source":"policy","reason":"secureField"}
+{"type":"suggestion","revision":48,"text":"","source":"policy","reason":"lowConfidence","ms":80.3,"prefilled":1,"stop":"words","confidence":0.04}
 {"type":"suggestion","revision":44,"text":"🎉","source":"emoji","replace":":ta","label":":tada:"}
 {"type":"suggestion","revision":45,"text":"ya.raman@example.com","source":"details","label":"email"}
 {"type":"suggestion","revision":46,"text":" the draft","source":"model","ms":88.4,"prefilled":1,"stop":"words","alternatives":[" your notes"," a quick look"]}
@@ -590,7 +614,10 @@ resumed), `paused`, `error`.
 (omitted when there are none; only with `settings.alternatives`): up to three other phrases
 for the same text, best first, each starting with its own word, on `model`, `cache` and
 `typeThrough` continuations; source `alternatives` is the answer to
-`ft_engine_alternatives`, with the same `text` and possibly no `alternatives`. `replace` (with `label`) marks a
+`ft_engine_alternatives`, with the same `text` and possibly no `alternatives`. `confidence`
+(built-in engine only) is how likely the model's first word is (D51), on `model`
+suggestions and on the `policy` hide with reason `lowConfidence`, which is a suggestion the
+confidence gate held back; the shell needs neither. `replace` (with `label`) marks a
 replacement: the shell shows `🎉 :tada:` or `→ receive` and deletes `replace` on accept. For
 `details`, `label` names the detail (`name`, `email`, `phone`, `company`, `job_title`,
 `address`, `website`); the shell draws a small tag ("your email") after the ghost text and

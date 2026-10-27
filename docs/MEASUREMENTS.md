@@ -1366,6 +1366,123 @@ next word is right and the suggestion's isn't; `--on-demand` asks for alternativ
   was computed later (1,984 accepts against 1,985) and model latency fell (62 ms: the GPU
   was free when the next key came).
 
+## Confidence gate, extension bar and a best-first-word beam (2026-10-26)
+
+Gemma 4 E2B Q4_K_M (the catalog model; the Phase 0 spike's Qwen3 copies were deleted
+between the first two runs, and Qwen3-1.7B's greedy run before that reproduced 41.9% and
+1,985 accepts exactly), full corpus (53 documents, 12,704 characters), built-in engine,
+Metal, 4 words, prefetch on, instant simulated user, M3 Pro on mains power, one run after
+another with only the installed Foretype (idle) besides. `main` is a4f982d, the branch
+`feat/confidence-gate` (D51). The ideas come from TabType (github.com/nilava/TabType),
+which measured them on its own set with Qwen3-4B.
+Since D51 `ft-replay` replays with the gate (greedy only) and the bar on by default; the
+"all off" rows here and every older number are `--gate 0 --extend 0`.
+
+New in `ft-replay`: every keystroke looks at the screen once, so a suggestion counts once
+per keystroke it is on screen (typing through a wrong one counts each key). **Next word
+right** is the share of those whose next word is what comes next (what Tab would take),
+split by whether the text ends in a letter (mid-word) or not. **Wrong per 100 keystrokes**
+is how often a wrong ghost was on screen, the noise the gate is for. **Whole right**: the
+whole suggestion is what comes next. **Words**: words per suggestion shown.
+
+| Run | Saved | Accepts | Shown at | Next word right (mid / after a word) | Wrong per 100 keys | Whole right | Words | Model p50 / p90 |
+|---|---:|---:|---:|---|---:|---:|---:|---:|
+| `main`, greedy (`--beam 1`, battery) | 42.8% | 1,954 | 96.9% | 27.7% (33.4 / 9.2) | 70.0 | 6.8% | 2.80 | 152 / 263 ms |
+| branch, greedy, all off | 42.7% | 1,954 | 96.9% | 27.7% (33.4 / 9.2) | 70.0 | 6.8% | 2.80 | 128 / 201 ms |
+| greedy, gate 0.15 / 0.08 | 42.5% | 1,948 | 85.1% | 31.3% (37.7 / 10.1) | 58.4 | 7.8% | 2.79 | 115 / 157 ms |
+| greedy, gate 0.2 / 0.15 | 41.9% | 1,929 | 78.3% | 33.4% (40.3 / 10.5) | 52.1 | 8.3% | 2.77 | 103 / 137 ms |
+| greedy, bar 0.05 | 42.7% | 1,954 | 96.9% | 27.7% (33.4 / 9.2) | 70.0 | 8.2% | 2.60 | 118 / 177 ms |
+| greedy, bar 0.05, gate 0.15 / 0.08 | 42.5% | 1,948 | 83.4% | 32.0% (38.2 / 10.5) | 56.7 | 9.5% | 2.62 | 104 / 139 ms |
+| `main`, `--beam 3` (mains) | 43.3% | 2,004 | 97.0% | 28.7% (36.1 / 5.7) | 69.1 | 6.8% | 2.78 | 174 / 276 ms |
+| branch, `--beam 3`, all off (the cut fix only) | 43.4% | 2,003 | 97.0% | 28.7% (36.1 / 5.7) | 69.1 | 9.1% | 2.46 | 149 / 251 ms |
+| beam 3, bar 0.05 | 43.4% | 2,005 | 97.0% | 28.8% (36.2 / 5.7) | 69.1 | 10.4% | 2.39 | 138 / 178 ms |
+| beam 3, bar 0.05, gate 0.15 / 0.08 | 41.3% | 1,895 | 76.3% | 33.3% (40.7 / 9.2) | 50.9 | 11.7% | 2.42 | 137 / 163 ms |
+| beam 3, best first word | 41.7% | 1,928 | 96.9% | 26.9% (32.5 / 9.1) | 70.9 | 7.9% | 2.56 | 151 / 221 ms |
+| beam 3, best first word, bar 0.05 | 42.0% | 1,937 | 96.9% | 27.1% (32.8 / 9.1) | 70.6 | 9.5% | 2.44 | 159 / 247 ms |
+| … ranked by total probability | 41.9% | 1,943 | 96.9% | 27.2% (32.8 / 8.9) | 70.6 | 8.9% | 2.58 | 148 / 233 ms |
+| beam 8, best first word, bar 0.05 | 42.1% | 1,940 | 96.9% | 27.2% (33.0 / 9.0) | 70.5 | 11.3% | 2.22 | 149 / 198 ms |
+
+Gate bars are after a word / mid-word. Latency moved by tens of milliseconds between
+identical runs (the two "all off" rows against `main`): Gemma's p90 is near the 300 ms
+deadline and the Mac was in use, so read latency only as "no large change". The same
+deadline makes keystrokes saved vary by about 0.1 point between identical runs.
+
+- **Most of what is shown is wrong.** With no gate, a ghost is on screen at 97% of
+  keystrokes and its next word is right at 28% of them: a wrong ghost at 70 of every 100
+  keystrokes. Keystrokes saved can't see that, since a wrong suggestion costs nothing in it.
+- **The first word's probability predicts whether it is right** (greedy, positions with a
+  fresh model suggestion, `--confidence-log` swept with `tools/confidence-sweep.py`): right 3% of the time
+  below 0.05, 8% at 0.05–0.1, 21% (mid-word) and 15% (after a word) at 0.1–0.2, 29% / 23% at
+  0.2–0.3, 52% / 47% at 0.3–0.5, 66–76% at 0.5–0.7, 84–95% at 0.7–0.9, 99.6% above 0.9.
+  Mid-word guesses are right more often (44% against 28% of fresh suggestions), as TabType
+  found, so mid-word gets the lower bar.
+- **The gate takes wrong ghosts away for little typing.** At 0.15 after a word and 0.08
+  mid-word (TabType's values), wrong ghosts fall from 70.0 to 58.4 per 100 keystrokes (−17%)
+  for 0.2 points of keystrokes saved; at 0.2 / 0.15, to 52.1 (−26%) for 0.8 points. On the
+  sweep, 0.15 / 0.08 keeps 93% / 98% of the right fresh suggestions and drops 47% / 35% of
+  the wrong ones. Fewer suggestions also means fewer type-throughs of a wrong one.
+- **The extension bar costs nothing.** Cutting words after the first that are under 5%
+  likely saves exactly as much (greedy 1,954 accepts, beam 2,003 → 2,005) and shows fewer
+  wrong trailing words: whole suggestions right 6.8% → 8.2% (greedy) and 9.1% → 10.4%
+  (beam), 2.80 → 2.60 and 2.46 → 2.39 words. The simulated user only ever takes a
+  word at a time, so trailing words that were wrong never cost it anything either way.
+- **On today's beam the gate costs more**: 0.15 / 0.08 with the bar takes wrong ghosts from
+  69.1 to 50.9 per 100 keystrokes (−26%) but keystrokes saved from 43.4% to 41.3%, where
+  greedy gives up 0.2 points for −19% (70.0 → 56.7). The beam's first-word probability is a
+  poor guide (below), so the gate holds back right words too (1,548 held back against 989).
+- **The beam's partial last word (a bug, fixed).** A phrase the 3-wide beam left unfinished
+  could win on its mean score and was shown with its last word cut short ("for get"). Fixed:
+  the same 2,003 accepts, whole suggestions right 6.8% → 9.1%, 2.78 → 2.46 words.
+- **Keeping greedy's first word makes the beam worse here**, unlike for TabType: 41.7%
+  against 43.4% for today's beam and 42.7% for greedy, the next word right 26.9% against
+  28.7%. Ranking by total probability (41.9%) or a wider beam (8: 42.1%) doesn't change
+  that. Today's beam is better than greedy mid-word (36.1% against 33.4% right) because it
+  can change the first word, and what it changes is mostly how the word being typed is split
+  into tokens: greedy takes the likeliest token at each step, the beam weighs other splits
+  of the same text. TabType adds up the probabilities of every split of a word before its
+  beam starts, so its "best first word" already has that gain; with the best first word
+  taken from greedy, ours has not. The same splitting makes the beam's first-word
+  probability a poor gate: fresh mid-word suggestions under 0.05 were right 24% of the time
+  under today's beam, against 3% with greedy's first word (`--beam-first`), where the bands
+  match greedy's within a point or two.
+
+### The default model: Qwen3-1.7B
+
+Qwen3-1.7B-Base Q4_K_M downloaded again from the catalog source (SHA-256 checked), the same
+corpus and settings, the branch only (its "all off" runs match `main`'s recorded numbers:
+41.9% and 1,985 accepts greedy, 43.0% and 2,030 against 2,032 with the beam):
+
+| Run | Saved | Accepts | Shown at | Next word right (mid / after a word) | Wrong per 100 keys | Whole right | Words | Model p50 / p90 |
+|---|---:|---:|---:|---|---:|---:|---:|---:|
+| greedy, all off | 41.9% | 1,985 | 98.3% | 27.4% (33.8 / 7.3) | 71.4 | 6.1% | 2.91 | 97 / 154 ms |
+| greedy, bar 0.05 | 41.9% | 1,985 | 98.3% | 27.4% (33.8 / 7.3) | 71.4 | 7.7% | 2.72 | 89 / 138 ms |
+| greedy, gate 0.15 / 0.08 | 41.5% | 1,975 | 86.6% | 30.7% (37.6 / 8.1) | 60.0 | 6.9% | 2.87 | 83 / 120 ms |
+| greedy, bar and gate | 41.5% | 1,974 | 84.4% | 31.5% (38.2 / 8.5) | 57.8 | 8.8% | 2.70 | 81 / 106 ms |
+| beam 3, all off (the cut fix) | 43.0% | 2,030 | 98.3% | 28.5% (36.1 / 5.5) | 70.2 | 8.3% | 2.67 | 99 / 127 ms |
+| beam 3, bar 0.05 | 43.1% | 2,031 | 98.3% | 28.6% (36.2 / 5.5) | 70.2 | 9.7% | 2.61 | 102 / 131 ms |
+| beam 3, gate 0.15 / 0.08 | 41.1% | 1,942 | 80.3% | 32.3% (40.2 / 7.0) | 54.3 | 9.6% | 2.67 | 101 / 133 ms |
+| beam 3, bar and gate | 41.0% | 1,942 | 78.4% | 33.1% (40.7 / 7.4) | 52.5 | 11.4% | 2.61 | 102 / 151 ms |
+
+- The same picture as Gemma's. The bar is free in both modes (the same accepts; whole
+  suggestions right 6.1% → 7.7% greedy, 8.3% → 9.7% with the beam). The gate on greedy takes
+  wrong ghosts from 71.4 to 57.8 per 100 keystrokes (−19%, with the bar) for 0.4 points; on
+  the beam from 70.2 to 52.5 (−25%) for 2.1 points.
+- Greedy's first-word probability is calibrated here too: right 3.9% (mid-word) and 0% (after
+  a word) below 0.05, 19% at 0.1–0.2, 48% / 37% at 0.3–0.5, 97–100% above 0.9. Under the
+  beam, mid-word first words below 0.05 were right 19.9% of the time: the same token-split
+  effect as Gemma's 24%.
+- With the defaults D51 chose (bar everywhere, gate on greedy only), `ft-replay` with no
+  D51 flags reproduces the rows exactly: `--beam 1` 41.5%, 1,974 accepts, 57.8 wrong per 100
+  keystrokes; `--beam 3` 43.1%, 2,031 accepts, 70.2.
+
+```bash
+R=core/target/release/ft-replay; M="$HOME/Library/Application Support/Foretype/Models"
+$R "$M/gemma-4-E2B.Q4_K_M.gguf" --corpus eval/corpus.jsonl --beam 1 --confidence-log /tmp/conf.jsonl
+$R "$M/gemma-4-E2B.Q4_K_M.gguf" --corpus eval/corpus.jsonl --beam 1 --gate 0.15,0.08 [--extend 0.05]
+$R "$M/gemma-4-E2B.Q4_K_M.gguf" --corpus eval/corpus.jsonl --beam 3 [--beam-first] [--rank-sum] [--extend 0.05] [--gate 0.15,0.08]
+# the same with $M/Qwen3-1.7B-Base.Q4_K_M.gguf
+```
+
 ## How to reproduce
 
 See `docs/DEVELOPMENT.md` (ft-replay section). For release notes, run the full corpus with

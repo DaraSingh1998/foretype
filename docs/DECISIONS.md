@@ -943,3 +943,50 @@ shows. Alternatives exist only with the built-in engine and models whose cache h
 several phrases (every catalog model; recurrent and hybrid ones decode greedily). The
 picker's state lives in the shell and the core's API grows by two functions
 (`ft_engine_accept_alternative`, `ft_engine_alternatives`) and an event field.
+
+## D51. Extension bar everywhere, confidence gate on greedy decoding only; the beam keeps choosing its first word (2026-10-26)
+
+**Decision.** The engine now reports how likely a suggestion's first word is
+(`Completion::confidence`: the product of its tokens' probabilities, each among the tokens
+that fit what was typed) and the core acts on it (defaults chosen with the user on
+2026-10-27):
+- **Extension bar** (`extend_min`, 0.05, always): words after the first stay only while each
+  is at least this likely given the words before it.
+- **Confidence gate** (`min_confidence` 0.15 after a space or punctuation,
+  `min_confidence_mid_word` 0.08 mid-word): a greedily decoded suggestion below its bar is not
+  shown (a `policy` hide, reason `lowConfidence`), nor cached from a prefetch. That is on
+  battery or while saving energy (the shell sends `beam_width` 1), and for recurrent models,
+  which always decode greedily. Beam search results pass (`gate_beam` gates them for
+  measurement).
+- **Best-first-word beam** (`beam_first_word`) and **ranking by total probability**
+  (`beam_rank_by_sum`): kept as options for measurement only.
+- `ft-replay` reports what the user sees, not only what they save: next word right (mid-word
+  and after a word), wrong ghosts per 100 keystrokes, whole suggestions right, words per
+  suggestion; `--confidence-log` with `tools/confidence-sweep.py` sweeps the gate's bars.
+- Fixed with it: a phrase the beam search left unfinished could win and show a word cut
+  short; its last word is now dropped like any unfinished phrase's.
+
+**Why.** From TabType (github.com/nilava/TabType), which gates on the first word's
+probability, starts its beam from the best first word and cuts trailing words under 0.05,
+measured with Qwen3-4B on its own sets. On our corpus with Gemma 4 E2B
+(`docs/MEASUREMENTS.md`, "Confidence gate…"): a wrong ghost is on screen at 70 of every 100
+keystrokes today, and the first word's probability predicts rightness well under greedy
+decoding (3% right below 0.05, 99.6% above 0.9). Greedy with gate and bar saves 42.5%
+against 42.7% with 19% fewer wrong ghosts; the bar alone saves exactly as much and shows
+fewer wrong trailing words in both modes. On the 3-wide beam the gate costs 2.1 points
+(43.4% → 41.3%) for −26% wrong ghosts, because the beam's first word can come through a
+rarer split of the word into tokens whose path probability understates the word's (mid-word
+words under 0.05 were right 24% of the time). Keeping greedy's first word fixes that
+calibration but loses 1.7 points (41.7%), worse than greedy itself: our beam's gain over
+greedy (36.1% against 33.4% of mid-word next words right) is exactly that freedom to re-split
+the word being typed. TabType sums every split of a word before its beam, so its best first
+word keeps the gain; ours would need the same before a gate on mains power is worth it.
+Qwen3-1.7B, the default model, measured the same (greedy: bar free, bar and gate 41.9% →
+41.5% for −19% wrong ghosts; beam: bar free, bar and gate 43.0% → 41.0% for −25%). So the bar
+goes on everywhere, and the gate only where its probability is a good guide and it costs
+little: greedy decoding. A gate on mains power waits for the beam to add up the
+probabilities of every split of the first word, as TabType does.
+
+**Cost.** One pass over the vocabulary per token of the first word (two while healing),
+and per word with the extension bar on greedy: no visible change in latency. Fewer
+suggestions shown with a gate, by design.
