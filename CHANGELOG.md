@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.10 (2026-10-27)
+
 ### Codex app (2026-10-27)
 - The ChatGPT/Codex desktop app (installed as ChatGPT.app) gets suggestions: it runs on
   OpenAI's own Chromium runtime, which ignores the Electron accessibility switch, so it is
