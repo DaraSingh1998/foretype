@@ -321,6 +321,8 @@ impl HttpBackend {
             total_ms: t0.elapsed().as_secs_f64() * 1000.0,
             stop,
             alternatives: Vec::new(),
+            confidence: None,
+            beam: false,
         }
     }
 }

@@ -17,3 +17,12 @@ app does not depend on it.
 - `RESULTS.md`: the write-up. `README.md`: how to re-run.
 
 Models are not included; see `../models/catalog.json`.
+
+## confidence-sweep.py
+
+Sweeps the confidence gate's bars (D51) over an `ft-replay --confidence-log FILE` (one JSON
+line per keystroke showing a fresh model suggestion): per position kind (mid-word, after a
+word) and bar, the suggestions kept, the right ones kept, precision and the wrong ones
+removed, then how often the first word was right per probability band.
+`python3 tools/confidence-sweep.py FILE`. An estimate: a held-back suggestion changes what
+is typed next, so confirm a choice with a full replay (`--gate B,M`).

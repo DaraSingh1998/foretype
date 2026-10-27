@@ -140,6 +140,21 @@ pub struct Settings {
     /// Macs under 16 GB, 2,048 provisionally from 16 GB). The section also leaves room for the
     /// rest of the prompt within `n_ctx` − 64; 0 turns it off.
     pub other_apps_tokens: usize,
+    /// Confidence gate (D51): a greedily decoded model suggestion shows only when its first
+    /// word is at least this likely after a space or punctuation (0 shows every one)...
+    pub min_confidence: f32,
+    /// ...and at least this likely when it finishes a word being typed.
+    pub min_confidence_mid_word: f32,
+    /// The gate applies to beam search results too (measurement only: their first-word
+    /// probability is a poor guide, and gating them cost 2 points of keystrokes saved).
+    pub gate_beam: bool,
+    /// The beam search keeps greedy decoding's first word (`GenOptions::beam_first_word`).
+    pub beam_first_word: bool,
+    /// Phrases compete by total log-probability (`GenOptions::rank_by_sum`).
+    pub beam_rank_by_sum: bool,
+    /// Words after the first stay while each is at least this likely
+    /// (`GenOptions::extend_min`; 0 keeps them all).
+    pub extend_min: f32,
 }
 
 impl Settings {
@@ -194,6 +209,12 @@ impl Default for Settings {
             beam_width: 1,
             alternatives: false,
             other_apps_tokens: 512,
+            min_confidence: 0.15,
+            min_confidence_mid_word: 0.08,
+            gate_beam: false,
+            beam_first_word: false,
+            beam_rank_by_sum: false,
+            extend_min: 0.05,
         }
     }
 }
@@ -285,6 +306,10 @@ pub enum Event {
         /// (`source` `alternatives`, possibly none).
         #[serde(skip_serializing_if = "Vec::is_empty")]
         alternatives: Vec<String>,
+        /// How likely the model's first word is (D51), with `model` suggestions and with the
+        /// `policy` hide (reason `lowConfidence`) for one the confidence gate held back.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        confidence: Option<f32>,
     },
     /// Engine lifecycle: loading | ready | idle (model unloaded) | paused | error.
     Status { state: &'static str, detail: String },
@@ -713,6 +738,7 @@ impl Core {
             replace: None,
             label: None,
             alternatives,
+            confidence: None,
         });
     }
 
@@ -730,6 +756,7 @@ impl Core {
             replace: Some(replace.to_string()),
             label: Some(label),
             alternatives: Vec::new(),
+            confidence: None,
         });
     }
 
@@ -747,6 +774,7 @@ impl Core {
             replace: (!fill.replace.is_empty()).then_some(fill.replace),
             label: Some(fill.field.key().to_string()),
             alternatives: Vec::new(),
+            confidence: None,
         });
     }
 
@@ -1230,7 +1258,22 @@ fn gen_options(settings: &Settings, mid_line: bool) -> GenOptions {
         personal_strength: settings.personal_strength(),
         beam_width: settings.beam_width,
         alternatives: settings.alternatives,
+        beam_first_word: settings.beam_first_word,
+        rank_by_sum: settings.beam_rank_by_sum,
+        extend_min: settings.extend_min,
     }
+}
+
+/// Whether a model suggestion is likely enough to show (D51): its first word against the
+/// bar for finishing a word being typed, or the one for a word after a space or punctuation.
+/// Backends that report no probability always pass, and so do beam search results unless
+/// `gate_beam`.
+fn confident(settings: &Settings, prompt: &Prompt, c: &engine::Completion) -> bool {
+    if c.beam && !settings.gate_beam {
+        return true;
+    }
+    let bar = if words::fragment_word(&prompt.fragment).is_empty() { settings.min_confidence } else { settings.min_confidence_mid_word };
+    c.confidence.is_none_or(|p| p >= bar)
 }
 
 /// The alternatives a completion offers with its text (D50): none unless they were asked for.
@@ -1537,6 +1580,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                     replace: None,
                     label: None,
                     alternatives: alts,
+                    confidence: None,
                 });
             }
             JobKind::Complete => {
@@ -1565,17 +1609,40 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                         let queue_ms = job.queued.elapsed().as_secs_f64() * 1000.0;
                         if debug() {
                             eprintln!(
-                                "[foretype] rev={rev} prefill={} tok/{:.1}ms gen={} total={:.1}ms queue+total={queue_ms:.1}ms stop={} alternatives={} {:?}",
+                                "[foretype] rev={rev} prefill={} tok/{:.1}ms gen={} total={:.1}ms queue+total={queue_ms:.1}ms stop={} confidence={:.3} alternatives={} {:?}",
                                 c.prefilled_tokens,
                                 c.prefill_ms,
                                 c.generated_tokens,
                                 c.total_ms,
                                 c.stop,
+                                c.confidence.unwrap_or(1.0),
                                 alts.len(),
                                 shared.details.read().unwrap().redact(&c.text)
                             );
                         }
                         if cancel() {
+                            continue;
+                        }
+                        // Held back by the confidence gate (D51): nothing shows, and nothing is
+                        // left to type through or to prefetch after.
+                        if !c.text.is_empty() && !confident(&settings, &job.prompt, &c) {
+                            if debug() {
+                                eprintln!("[foretype] rev={rev} held back: first word {:.3} likely", c.confidence.unwrap_or(1.0));
+                            }
+                            shared.session.lock().unwrap().clear();
+                            (shared.sink)(&Event::Suggestion {
+                                revision: rev,
+                                text: String::new(),
+                                source: "policy",
+                                reason: Some("lowConfidence".into()),
+                                ms: Some(queue_ms),
+                                prefilled: Some(c.prefilled_tokens),
+                                stop: Some(c.stop),
+                                replace: None,
+                                label: None,
+                                alternatives: Vec::new(),
+                                confidence: c.confidence,
+                            });
                             continue;
                         }
                         if mid_line {
@@ -1595,6 +1662,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             replace: None,
                             label: None,
                             alternatives: alts,
+                            confidence: c.confidence,
                         });
                         // Prefetch what follows the suggestion while the user reads it; any new
                         // request cancels this between decode steps. It keeps the header the
@@ -1616,7 +1684,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             if !busy() {
                                 if let Ok(mut p) = engine.complete(&prompt, &opts, &busy) {
                                     p.text = context::strip_marker_echo(&p.text).to_string();
-                                    if !p.text.trim().is_empty() {
+                                    if !p.text.trim().is_empty() && confident(&settings, &prompt, &p) {
                                         let alts = offered(&p);
                                         shared.session.lock().unwrap().remember(job.field_key, &next.text_before, &p.text, &alts);
                                         if debug() {
@@ -1646,6 +1714,7 @@ fn worker_loop(shared: Arc<Shared>, cfg: EngineConfig, remote: Option<RemoteConf
                             replace: None,
                             label: None,
                             alternatives: Vec::new(),
+                            confidence: None,
                         });
                     }
                 }
@@ -2242,5 +2311,23 @@ mod tests {
         c.configure(Settings { personalize: false, ..Settings::default() });
         c.submit(snap(1, "Hello"));
         assert!(c.shared.track.lock().unwrap().is_none());
+    }
+
+    /// The gate (D51) holds back an unlikely greedy suggestion with the bar for its position,
+    /// and leaves beam results and backends without probabilities alone.
+    #[test]
+    fn the_confidence_gate_judges_greedy_suggestions_only() {
+        let s = Settings::default();
+        let c = |p: Option<f32>, beam: bool| engine::Completion { text: " word".into(), confidence: p, beam, ..Default::default() };
+        let after = Prompt::plain("Thanks for", " ");
+        let mid = Prompt::plain("Thanks for", " th");
+        assert!(!confident(&s, &after, &c(Some(0.12), false)));
+        assert!(confident(&s, &after, &c(Some(0.15), false)));
+        assert!(confident(&s, &mid, &c(Some(0.12), false)));
+        assert!(!confident(&s, &mid, &c(Some(0.05), false)));
+        assert!(confident(&s, &after, &c(Some(0.01), true)));
+        assert!(!confident(&Settings { gate_beam: true, ..s.clone() }, &after, &c(Some(0.01), true)));
+        assert!(confident(&s, &after, &c(None, false)));
+        assert!(confident(&Settings { min_confidence: 0.0, ..s }, &after, &c(Some(0.0), false)));
     }
 }
