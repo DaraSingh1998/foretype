@@ -5,6 +5,12 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Microsoft Teams (2026-10-28)
+- Suggestions in Teams again. Teams draws its messages with Microsoft's WebView2 and shows
+  its text fields only when asked the way Chrome is; Foretype never asked, so Teams worked
+  only while something else had switched its accessibility on. Other apps built on WebView2
+  are recognised from their bundle too.
+
 ### Web apps (2026-10-27)
 - Web apps installed from Chrome, Edge or Brave get suggestions (checked with Hoppscotch).
   Foretype now sets up the browser behind a web app when the web app comes to the front, so

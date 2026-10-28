@@ -140,7 +140,8 @@
       "prime": "electron"
     },
     "com.microsoft.teams2": {
-      "note": "Teams returns empty caret rects; the pixel caret locator is the fallback (untested in Teams)."
+      "prime": "chromium",
+      "note": "Teams (WebView2): builds its tree only on AXEnhancedUserInterface, AXManualAccessibility is unsupported (checked 2026-10-28). Returns empty caret rects; the pixel caret locator is the fallback."
     },
     "org.libreoffice.script": {
       "note": "LibreOffice: one AX element per paragraph; the zero-length caret rect is a sentinel and paragraph frames are about 100 pt above the text, while character rects are right. The pixel caret confirms the character rects, then they are used; reports the unzoomed font size."

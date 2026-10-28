@@ -23,11 +23,13 @@ enum AppKind {
     }
 
     /// "electron" when the app bundle at `url` holds the Electron framework, or an app archive
-    /// beside a renamed one; "chromium" for an owl app.
+    /// beside a renamed one; "chromium" for an owl app or one that embeds Microsoft's WebView2
+    /// (Teams: its tree appears only on `AXEnhancedUserInterface`).
     static func kind(of url: URL) -> String? {
         let fm = FileManager.default
         let resources = url.appendingPathComponent("Contents/Resources")
         if fm.fileExists(atPath: resources.appendingPathComponent("owl-electron-app.json").path) { return "chromium" }
+        if fm.fileExists(atPath: url.appendingPathComponent("Contents/Frameworks/MSWebView2.framework").path) { return "chromium" }
         let framework = url.appendingPathComponent("Contents/Frameworks/Electron Framework.framework")
         let archive = resources.appendingPathComponent("app.asar")
         return fm.fileExists(atPath: framework.path) || fm.fileExists(atPath: archive.path) ? "electron" : nil
@@ -54,11 +56,14 @@ enum AppKind {
         let electron = dir.appendingPathComponent("Chat.app")
         let renamed = dir.appendingPathComponent("Agent.app")
         let owl = dir.appendingPathComponent("Owl.app")
+        let webView2 = dir.appendingPathComponent("Chat2.app")
         let native = dir.appendingPathComponent("Notes.app")
         do {
             try FileManager.default.createDirectory(at: owl.appendingPathComponent("Contents/Resources"), withIntermediateDirectories: true)
             try Data().write(to: owl.appendingPathComponent("Contents/Resources/app.asar"))
             try Data("{}".utf8).write(to: owl.appendingPathComponent("Contents/Resources/owl-electron-app.json"))
+            try FileManager.default.createDirectory(at: webView2.appendingPathComponent("Contents/Frameworks/MSWebView2.framework"),
+                                                    withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: electron.appendingPathComponent("Contents/Frameworks/Electron Framework.framework"),
                                                     withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: renamed.appendingPathComponent("Contents/Frameworks/Agent Framework.framework"),
@@ -70,7 +75,7 @@ enum AppKind {
             print("electron self-test: \(error)")
             return false
         }
-        let ok = kind(of: electron) == "electron" && kind(of: renamed) == "electron" && kind(of: owl) == "chromium" && kind(of: native) == nil
+        let ok = kind(of: electron) == "electron" && kind(of: renamed) == "electron" && kind(of: owl) == "chromium" && kind(of: webView2) == "chromium" && kind(of: native) == nil
             && detected("invalid.foretype.nothing") == nil
             && browser(ofWebApp: "com.google.Chrome.app.olccnbcocbmcbhlmeppkgaojoampamab") == "com.google.Chrome"
             && browser(ofWebApp: "com.microsoft.edgemac.app.abc") == "com.microsoft.edgemac"
