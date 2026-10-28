@@ -491,8 +491,8 @@ app's AX geometry is wrong), `ax` never does; unset means AX with the pixel loca
 fallback when AX gives nothing. An app with no `prime` whose bundle holds
 `Contents/Frameworks/Electron Framework.framework` or `Contents/Resources/app.asar` (a
 renamed framework) is primed as `electron` anyway; one with
-`Contents/Resources/owl-electron-app.json` (OpenAI's "owl" runtime, the ChatGPT/Codex app) as
-`chromium`, since it doesn't support `AXManualAccessibility` and builds its tree on
+`Contents/Resources/owl-electron-app.json` (OpenAI's "owl" runtime, the ChatGPT/Codex app) or
+`Contents/Frameworks/MSWebView2.framework` (Microsoft's WebView2, Teams) as `chromium`, since it doesn't support `AXManualAccessibility` and builds its tree on
 `AXEnhancedUserInterface` (`AppKind.detected` in the shell, cached per bundle ID). A browser's
 installed web app (`com.google.Chrome.app.<id>` and the like) is an app shim whose fields
 the browser's process serves, so the browser is primed when its web app is in front
