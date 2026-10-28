@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.11 (2026-10-28)
+
 ### Microsoft Teams (2026-10-28)
 - Suggestions in Teams again. Teams draws its messages with Microsoft's WebView2 and shows
   its text fields only when asked the way Chrome is; Foretype never asked, so Teams worked

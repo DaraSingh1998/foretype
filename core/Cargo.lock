@@ -235,7 +235,7 @@ dependencies = [
 
 [[package]]
 name = "foretype-core"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "chacha20poly1305",
  "llama-cpp-2",
