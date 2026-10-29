@@ -690,10 +690,12 @@ pause or an app switched off by Esc.
   hints, LibreOffice, Mail and Notes.
 - The pixel caret (apps without caret geometry) is measured in TextEdit against its
   Accessibility caret, in LibreOffice Writer, in a Chrome chat-composer fixture (also on
-  a display above the main one), in the Claude app and in WhatsApp Web in full-screen
-  Chrome; it is untested in Microsoft Teams, Obsidian and Slack. A
-  caret that never blinks (the "prefer non-blinking cursor" Accessibility setting) is never
-  found, and an app's first field shows the card above the field for about 0.7 s first. LibreOffice Writer reported no focused text element for a document opened
+  a display above the main one), in the Claude app, in WhatsApp Web in full-screen
+  Chrome and in Microsoft Teams (2026-10-29); it is untested in Obsidian and Slack. A caret
+  that never blinks (the "prefer non-blinking cursor" Accessibility setting) is found only
+  while it is the one thin bar in the field at least a font size tall (the seed detector,
+  D55), and a new line's first keystroke can show the card above the field until the caret
+  is found there. LibreOffice Writer reported no focused text element for a document opened
   from outside (no clicks or typing were possible in the test), so suggestions there are
   unverified.
 - The setup window, the menu and the Custom Instructions window have been checked by

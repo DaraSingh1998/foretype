@@ -1545,3 +1545,34 @@ Full corpus, `--beam 3`, with the sentence-end fix ("Mr.", "e.g.", "U.S.", initi
 list number at a line's start no longer end a sentence) and the alternative promotion
 (off by default): 43.4% saved, 2,005 accepts, 69.0 wrong per 100 keystrokes, 10.4% whole
 right, the same as before them (the corpus has few such abbreviations).
+
+## WhatsApp Web and Teams, pixel caret (2026-10-29)
+
+Report: "sometimes" no suggestions in WhatsApp and Teams, and ghost text above or below the
+message box. Setup: dev build limited to Teams and the user's Chrome (WhatsApp Web, Chrome in
+native full screen on the built-in 1512×982 display, content window at 0,121 1512×861 with
+its toolbar in separate windows), Gemma 4 E2B Q4_K_M, installed Foretype quit; the user typed
+unsent drafts and deleted them.
+
+| Run (branch `fix/messaging-caret`) | WhatsApp Web | Teams |
+|---|---|---|
+| 1. main | 0 inline, all mirror | all inline (blink 386 ms) |
+| 2. stale searches cancelled, look forgotten after 3 misses | 0 / 48 inline | not typed |
+| 3. same, more logging | 2 / 47 inline | 165 inline, 26 mirror, 37 card |
+| 4. plus seed detector | 0 / 18 inline | 4 / 4 inline |
+| 5. plus display capture (D55) | **55 / 55 inline** | 57 / 58 inline |
+
+- Teams gives no AX caret rects at all (`AXBoundsForRange` returns zero rects); its caret is
+  found by blink, and 0.08 s AX reads were fast (16 ms for the focused element).
+- Run 1: a blink scheduled for Chrome's address bar ran after the page field took focus and
+  committed a caret 121 pt below the AX one; Chrome then searched whole windows with that
+  look and never found the composer's caret.
+- Runs 2–4: in the composer every blink saw 0 px change. `--capture-probe` (empty box, user
+  idle): window filter 0 px changed in 9 frames and its image showed a message bubble ~125 pt
+  higher; display filter 68 px changed every third frame (the caret), image of the box.
+- Run 5: seed found the caret in the empty box at 622,935 h18 in 137 ms; later blinks and
+  verifies kept it on the composer line (y 935, h16–18, field 933+23). The one Teams card was
+  the first key on a new line, before the locator had a position there.
+- Self-tests: `--caret-selftest` (30 cases, worst error 0.00 pt; seed 90 cases) and the other
+  self-tests pass.
+

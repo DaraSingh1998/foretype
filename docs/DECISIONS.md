@@ -1074,3 +1074,30 @@ from overriding the model.
 
 **Cost.** A hash lookup per keystroke; the index holds every three-word context of the
 history (rebuilt in milliseconds for a few hundred records).
+
+## D55. Windows on one display are captured through the display (2026-10-29)
+
+**Decision.** `WindowCapture` captures a window that lies within one display with
+`SCContentFilter(display:including: [window])` straight away; only a window across displays
+is captured as a desktop-independent window first (D43's fallback stays for it). The pixel
+caret also (a) drops pending searches when a snapshot no longer needs it, (b) forgets an
+app's learned caret look and window search after three solid misses in a row in a field, and
+(c) looks for a solid caret in a field it has never seen blink (`PixelCaret.seedBar`: the
+only thin, isolated bar at least one font size tall) before falling back to a blink search.
+
+**Why.** WhatsApp Web in the user's full-screen Chrome showed every suggestion in the mirror
+card (0 of 48 inline). A probe (`Foretype --capture-probe`) of the empty message box showed
+why: through the window filter the image was of the window about 125 pt above the box, with
+no caret, and no pixel changed in 9 frames; through the display filter it was the box, with
+the caret blinking (68 px every third frame). Chrome in immersive full screen keeps its
+toolbar in separate windows, and macOS 27 hands back the content window shifted instead of
+failing as in D43. The same offset produced the hits ~120 pt off the AX caret seen in the
+log, and one of them, from a blink scheduled for the address bar and still running after
+the page's field took focus, taught Chrome a look no field matched and put it into window
+search for good. With the display path: 55 of 55 suggestions inline in WhatsApp Web; the
+seed found the caret in 137 ms before the first blink (`docs/MEASUREMENTS.md`).
+
+**Cost.** The display path sees only the part of the window on that display, which is the
+whole window by construction. Glyph strokes never reach one em, but a `|` or a tall bracket
+in a large size could; the seed then sees two bars and gives up (blink search as before).
+

@@ -209,7 +209,16 @@ TITLE` (presses that window's close button; an unmodified document closes silent
   Menlo, the system font and Times; 1 and 2 pt carets; accent, black and dark-mode white;
   1× and 2×), runs the blink and verify detectors and checks that the caret is found within
   0.5 pt, that glyph stems (`l`, `|`, `1`) next to it are never taken for a caret when it is
-  off, that text changing between captures is rejected, and the width advance.
+  off, that text changing between captures is rejected, and the width advance. It also
+  checks the seed detector (a solid caret in one frame, never seen blinking): found in typed,
+  empty and placeholder lines, and nothing reported without a caret.
+- `Foretype --capture-probe PID X Y W H` waits for that app to come to the front, then
+  captures the region (global points) ten times 120 ms apart through the window filter and
+  through the display filter and prints the pixels changed per frame: a blinking caret
+  changes a few dozen, a frozen or misplaced capture none (D55). With `FORETYPE_PROBE_DIR`
+  it saves the first frame of each as `window.png` and `display.png`. Run it from the bundle
+  (`open -n --stdout FILE build/Foretype.app --args --capture-probe ...`) so it has the
+  app's Screen Recording grant.
 - `scripts/caret-measure.sh` opens a copy of `scripts/fixtures/caret-lines.txt` (or the
   `.rtf`, Helvetica Light 15) in an app, then `Foretype --caret-measure PID TITLE` moves the
   caret to the middle and the end of each line with `AXSelectedTextRange` and compares the
