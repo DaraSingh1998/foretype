@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.12 (2026-10-29)
+
 ### Ghost text at the caret in WhatsApp Web and other full-screen windows (2026-10-29)
 - In a full-screen window (WhatsApp Web in full-screen Chrome, checked) the ghost text now
   shows right after the caret instead of in a card above the message box. Foretype captured
