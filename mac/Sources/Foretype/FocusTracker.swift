@@ -396,6 +396,12 @@ final class FocusTracker {
         // through the frontmost pid.
         let app = observedApp ?? AXUIElementCreateApplication(pid)
         guard let el = AX.element(AX.copy(app, kAXFocusedUIElementAttribute)) else {
+            if Log.enabled {
+                var v: CFTypeRef?
+                let t0 = CFAbsoluteTimeGetCurrent()
+                let err = AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &v)
+                Log.debug("no focused element in \(snap.bundleId) (\(reason)): AXError \(err.rawValue), \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)) ms")
+            }
             let now = CFAbsoluteTimeGetCurrent()
             if now - lastPrimeCheck > 1 {
                 lastPrimeCheck = now

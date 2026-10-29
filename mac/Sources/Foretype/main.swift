@@ -67,6 +67,16 @@ if let i = CommandLine.arguments.firstIndex(of: "--caret-measure"), i + 2 < Comm
     NSApplication.shared.setActivationPolicy(.prohibited)
     exit(CaretBench.run(pid: pid, title: CommandLine.arguments[i + 2], positions: n) ? 0 : 1)
 }
+// --capture-probe PID X Y W H: window vs display capture of a region, pixels changed per frame.
+if let i = CommandLine.arguments.firstIndex(of: "--capture-probe"), i + 5 < CommandLine.arguments.count,
+   let pid = pid_t(CommandLine.arguments[i + 1]) {
+    let v = CommandLine.arguments[(i + 2)...(i + 5)].compactMap { Double($0) }
+    NSApplication.shared.setActivationPolicy(.prohibited)
+    // Waits (up to 3 minutes) for the app to come to the front, then for its caret to settle.
+    for _ in 0..<1800 where NSWorkspace.shared.frontmostApplication?.processIdentifier != pid { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1)) }
+    sleep(2)
+    exit(WindowCapture.probe(pid: pid, region: CGRect(x: v[0], y: v[1], width: v[2], height: v[3])) ? 0 : 1)
+}
 if let i = CommandLine.arguments.firstIndex(of: "--resume-selftest"), i + 1 < CommandLine.arguments.count {
     exit(ModelManager.resumeSelfTest(id: CommandLine.arguments[i + 1]) ? 0 : 1)
 }

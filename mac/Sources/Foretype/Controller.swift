@@ -306,7 +306,10 @@ final class Controller {
         hintIfNeeded(s)
         // Before submitting, so a suggestion arriving for this snapshot sees a solid search
         // that is under way.
-        if let pixel { pixelCaret.note(pixel) }
+        // A snapshot that doesn't need the locator (Accessibility gave the caret, or focus left
+        // the field) drops its pending searches: a blink scheduled for Chrome's address bar
+        // once found a caret in the page below and taught Chrome a look no field matched.
+        if let pixel { pixelCaret.note(pixel) } else { pixelCaret.cancel() }
         engine.submit(s)
         let target = ScreenContextProvider.Target(fieldKey: s.fieldKey, pid: s.pid, windowFrame: s.windowFrame, fieldFrame: s.frame)
         if sent {

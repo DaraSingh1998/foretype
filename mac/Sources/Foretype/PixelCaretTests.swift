@@ -182,6 +182,27 @@ enum PixelCaretSelfTest {
             let t2 = CFAbsoluteTimeGetCurrent()
             print(String(format: "cost, %@: add a frame %.1f ms, search %.1f ms", name, (t1 - t0) * 1000, (t2 - t1) * 1000))
         }
+        // Seed: a solid caret found in one frame, never seen blinking; glyph stems never pass.
+        var seeds = 0
+        for scheme in schemes {
+            for case let (font?, scale) in fonts {
+                for text in ["Hill file l1", "", "Type a message"] {
+                    for caretOn in [true, false] {
+                        let scene = Scene(font: font, scale: scale, scheme: scheme, caretWidth: 1, line: text, caretOn: caretOn)
+                        let (frame, gx, _) = render(scene)
+                        let got = PixelCaret.seedBar(frame, fontSize: font.pointSize)
+                        let x = got.map { frame.global(x0: $0.0.centerX, x1: $0.0.centerX, y0: $0.0.y0, y1: $0.0.y1).minX }
+                        let pass = caretOn ? x.map { abs($0 - gx) <= 0.75 } ?? false : got == nil
+                        seeds += 1
+                        if !pass {
+                            ok = false
+                            print("seed, \(scheme.name) \(font.fontName) \(scale)x \"\(text)\" caret \(caretOn): got \(x.map { String(format: "%.2f", $0) } ?? "none"), expected \(caretOn ? String(format: "%.2f", gx) : "none") FAILED")
+                        }
+                    }
+                }
+            }
+        }
+        print("seed: \(seeds) cases")
         print(String(format: "%d cases, worst error %.2f pt", cases, worst))
         print(ok ? "caret self-test passed" : "caret self-test FAILED")
         return ok

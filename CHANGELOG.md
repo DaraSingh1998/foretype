@@ -5,6 +5,17 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Ghost text at the caret in WhatsApp Web and other full-screen windows (2026-10-29)
+- In a full-screen window (WhatsApp Web in full-screen Chrome, checked) the ghost text now
+  shows right after the caret instead of in a card above the message box. Foretype captured
+  such a window in a way that macOS returns shifted by about 125 points and without its
+  caret, so the caret was never found. Text from the screen in those windows was read from
+  the wrong place for the same reason.
+- A caret that is drawn solid instead of blinking is found from a single capture, so the
+  first suggestion in a new field shows at the caret sooner.
+- A caret search left over from another field (Chrome's address bar, say) can no longer
+  teach Foretype a wrong caret for every field of that app.
+
 ## 0.1.11 (2026-10-28)
 
 ### Microsoft Teams (2026-10-28)

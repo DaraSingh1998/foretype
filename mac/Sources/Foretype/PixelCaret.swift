@@ -326,6 +326,53 @@ enum PixelCaret {
         }
     }
 
+    // MARK: - Seed detector
+
+    /// A solid caret found without having seen it blink: the only thin bar in the frame that
+    /// stands out from the background and is at least `fontSize` tall. No glyph has a single
+    /// stroke that tall (stems and ascenders stay under 0.8 em; a caret spans the line, 1.1 to
+    /// 1.3 em). For hosts whose caret doesn't blink where it can be captured (WhatsApp Web in
+    /// full-screen Chrome on macOS 27). Nil when there is none or more than one.
+    static func seedBar(_ f: PixelFrame, fontSize: CGFloat) -> (CaretBar, CaretLook)? {
+        let n = f.width * f.height
+        guard n > 0, fontSize >= 6 else { return nil }
+        // Background: the commonest colour (coarsely binned).
+        var counts: [Int: Int] = [:]
+        for p in stride(from: 0, to: n, by: 7) {
+            let c = f.rgb(p % f.width, p / f.width)
+            counts[(c.r >> 3) << 10 | (c.g >> 3) << 5 | (c.b >> 3), default: 0] += 1
+        }
+        guard let key = counts.max(by: { $0.value < $1.value })?.key else { return nil }
+        let bg = RGB(r: (key >> 10 & 31) << 3 | 4, g: (key >> 5 & 31) << 3 | 4, b: (key & 31) << 3 | 4)
+        var mask = [UInt8](repeating: 0, count: n)
+        var strength = [UInt8](repeating: 0, count: n)
+        for y in 0..<f.height {
+            for x in 0..<f.width {
+                let d = f.rgb(x, y).distance(bg)
+                strength[y * f.width + x] = UInt8(min(255, d * 2))
+                if d >= 60 { mask[y * f.width + x] = 1 }
+            }
+        }
+        let candidates = bars(mask: mask, width: f.width, height: f.height, minH: Int((fontSize * f.scale).rounded(.up)),
+                              maxH: Int(fontSize * 2 * f.scale), maxW: Int((3 * f.scale).rounded()))
+            .filter { b in
+                // Clear on one side at least: the glyph before a caret can touch it at 1×.
+                fill(b, mask: mask, width: f.width) >= 0.75
+                    && min(sideFill(b, mask: mask, width: f.width, gap: 1, cols: 2, left: true),
+                           sideFill(b, mask: mask, width: f.width, gap: 1, cols: 2, left: false)) <= 0.3
+            }
+        guard candidates.count == 1, var bar = candidates.first else { return nil }
+        bar.centerX = centroid(bar, strength: strength, width: f.width)
+        var colors: [RGB] = []
+        for y in bar.y0...bar.y1 { for x in bar.x0...bar.x1 { colors.append(f.rgb(x, y)) } }
+        let far = colors.map { $0.distance(bg) }.max() ?? 0
+        let core = colors.filter { $0.distance(bg) * 10 >= far * 9 }
+        func median(_ v: [Int]) -> Int { v.sorted()[v.count / 2] }
+        let look = CaretLook(color: RGB(r: median(core.map(\.r)), g: median(core.map(\.g)), b: median(core.map(\.b))),
+                             background: bg, width: CGFloat(bar.width) / f.scale, height: CGFloat(bar.height) / f.scale)
+        return (bar, look)
+    }
+
     // MARK: - Static detector
 
     /// A bar that looks like `look` within `radius` points of `near` (global), on one frame.
@@ -428,7 +475,10 @@ enum PixelCaret {
         let t0 = CFAbsoluteTimeGetCurrent()
         var acc: BlinkAccumulator?
         while CFAbsoluteTimeGetCurrent() - t0 < timeout {
-            if cancelled() { return nil }
+            if cancelled() {
+                if let acc { failed("cancelled after \(Int((CFAbsoluteTimeGetCurrent() - t0) * 1000)) ms: \(acc.diagnosis())") }
+                return nil
+            }
             let shot = CFAbsoluteTimeGetCurrent()
             guard let f = capture(pid: pid, windowFrame: windowFrame, region: region) else {
                 failed("no capture of \(Int(region.width))x\(Int(region.height)) pt")
@@ -511,11 +561,13 @@ enum PixelCaret {
 // MARK: - Window capture
 
 /// One screenshot of `rect` (global points) of one window alone: no other window, Foretype's
-/// overlay or the pointer is in it. A window in full screen (its own Space) can't be captured
-/// as a desktop-independent window (ScreenCaptureKit error -3811, "audio/video capture
-/// failure"); such a window is captured through its display with only that window included,
-/// and remembered so the failing attempt isn't repeated. Blocks up to 1.5 s per attempt; call
-/// off the main thread.
+/// overlay or the pointer is in it. A window that lies on one display is captured through that
+/// display with only the window included: as a desktop-independent window, a full-screen one
+/// either fails (ScreenCaptureKit error -3811, "audio/video capture failure") or, Chrome's in
+/// immersive full screen on macOS 27, comes back about 125 pt off from its frame and without
+/// its caret (D55). A window across displays is captured on its own, and through the display
+/// under `rect` when that fails (remembered, so the failing attempt isn't repeated). Blocks up
+/// to 1.5 s per attempt; call off the main thread.
 enum WindowCapture {
     private static let lock = NSLock()
     private static var viaDisplay: Set<CGWindowID> = []
@@ -524,6 +576,7 @@ enum WindowCapture {
         guard !rect.isNull, rect.width >= 2, rect.height >= 2 else { return nil }
         lock.lock()
         let known = viaDisplay.contains(window.windowID)
+            || displays.contains { $0.frame.insetBy(dx: -1, dy: -1).contains(window.frame) }
         lock.unlock()
         if !known, let shot = shot(SCContentFilter(desktopIndependentWindow: window), rect: rect, origin: window.frame.origin) {
             return shot
@@ -556,11 +609,17 @@ enum WindowCapture {
         config.ignoreShadowsSingleWindow = true
         let done = DispatchSemaphore(value: 0)
         var image: CGImage?
-        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { img, _ in
+        var error: Error?
+        SCScreenshotManager.captureImage(contentFilter: filter, configuration: config) { img, err in
             image = img
+            error = err
             done.signal()
         }
-        guard done.wait(timeout: .now() + 1.5) == .success, let image else { return nil }
+        let waited = done.wait(timeout: .now() + 1.5)
+        guard waited == .success, let image else {
+            Log.debug("capture failed: \(waited == .success ? error.map { "\($0)" } ?? "no image" : "timed out")")
+            return nil
+        }
         return (image, CGPoint(x: origin.x + local.minX, y: origin.y + local.minY), CGFloat(image.width) / local.width)
     }
 }
@@ -616,6 +675,11 @@ final class PixelCaretProvider {
     private var looks: [String: CaretLook] = [:]
     /// When a solid search last found nothing, per field (not retried for `solidRetry`).
     private var solidMiss: [UInt64: CFAbsoluteTime] = [:]
+    /// Solid searches in a row that found nothing, per field. At `missLimit` the look and
+    /// the window search the app learned elsewhere are dropped, so the field's own caret is
+    /// found by a blink in the field.
+    private var missStreak: [UInt64: Int] = [:]
+    private let missLimit = 3
     /// The field and generation of a solid search that is scheduled or running.
     private var locating: (field: UInt64, gen: Int)?
 
@@ -692,6 +756,7 @@ final class PixelCaretProvider {
         let missed = solidMiss[t.fieldKey].map { CFAbsoluteTimeGetCurrent() - $0 < solidRetry } ?? false
         lock.unlock()
         var solid: CaretLook?
+        var seeding = false
         if let est, est.lineStart == t.lineStart, let c = caret(for: t) {
             let p = project(t, est)
             // Within about a word of the right edge the host may wrap the word being typed.
@@ -702,13 +767,16 @@ final class PixelCaretProvider {
             }
         } else if let look, !missed {
             solid = look
+        } else if t.font != nil, !missed, t.fieldFrame != nil {
+            seeding = true
         } else {
             after(newField ? focusDelay : blinkPause, gen) { self.blink(t, gen) }
         }
         lock.lock()
-        locating = solid == nil ? nil : (t.fieldKey, gen)
+        locating = solid == nil && !seeding ? nil : (t.fieldKey, gen)
         lock.unlock()
         if let solid { after(solidDelay, gen) { self.locate(t, est, solid, gen) } }
+        if seeding { after(solidDelay, gen) { self.seed(t, gen) } }
     }
 
     /// Drops every check and search not yet run (paused).
@@ -764,7 +832,11 @@ final class PixelCaretProvider {
         lastBlink[t.fieldKey] = CFAbsoluteTimeGetCurrent()
         lock.unlock()
         guard let hit, current(gen) else {
-            if current(gen) { Log.debug("pixel caret: no blinking caret found in \(t.bundleId) (\(why.joined(separator: "; ")))") }
+            if current(gen) {
+                Log.debug("pixel caret: no blinking caret found in \(t.bundleId) (\(why.joined(separator: "; ")))")
+            } else if !why.isEmpty {
+                Log.debug("pixel caret: blink in \(t.bundleId) stopped by a newer snapshot (\(why.joined(separator: "; ")))")
+            }
             return
         }
         if usedWindow, !wide, let f = t.fieldFrame, !f.insetBy(dx: -6, dy: -6).contains(CGPoint(x: hit.rect.minX, y: hit.rect.midY)) {
@@ -807,13 +879,44 @@ final class PixelCaretProvider {
             lock.lock()
             solidMiss[t.fieldKey] = CFAbsoluteTimeGetCurrent()
             if locating?.gen == gen { locating = nil }
+            let streak = (missStreak[t.fieldKey] ?? 0) + 1
+            missStreak[t.fieldKey] = streak
+            let forget = streak >= missLimit
+            if forget {
+                missStreak[t.fieldKey] = nil
+                estimates[t.fieldKey] = nil
+                looks[t.bundleId] = nil
+                searchWindow.remove(t.bundleId)
+            }
             lock.unlock()
-            Log.debug("pixel caret: no solid caret found in \(t.bundleId) (\(found?.rects.count ?? -1) bars, direction \(direction), from y \(from.map { Int($0.minY) } ?? -1))")
+            Log.debug("pixel caret: no solid caret found in \(t.bundleId) (\(found?.rects.count ?? -1) bars, direction \(direction), from y \(from.map { Int($0.minY) } ?? -1))\(forget ? "; forgot its look" : "")")
             // The controller held the suggestion back for this search: show it anyway.
             onUpdate?(t.fieldKey)
             return after(blinkPause - solidDelay, gen) { self.blink(t, gen) }
         }
         commit(t, PixelCaretHit(rect: rect, look: look, frames: 1, ms: found.ms), gen, how: "solid")
+    }
+
+    /// One capture of the field for a caret never seen blinking (`PixelCaret.seedBar`); a blink
+    /// search at the next pause when there is none.
+    private func seed(_ t: Target, _ gen: Int) {
+        let found = region(t, wholeWindow: false).flatMap { region -> (CGRect, CaretLook, Double)? in
+            let t0 = CFAbsoluteTimeGetCurrent()
+            guard let f = PixelCaret.capture(pid: t.pid, windowFrame: t.windowFrame, region: region),
+                  let (bar, look) = PixelCaret.seedBar(f, fontSize: t.font?.pointSize ?? 0) else { return nil }
+            return (f.global(x0: bar.centerX, x1: bar.centerX, y0: bar.y0, y1: bar.y1), look, (CFAbsoluteTimeGetCurrent() - t0) * 1000)
+        }
+        guard current(gen) else { return }
+        guard let (rect, look, ms) = found else {
+            lock.lock()
+            solidMiss[t.fieldKey] = CFAbsoluteTimeGetCurrent()
+            if locating?.gen == gen { locating = nil }
+            lock.unlock()
+            Log.debug("pixel caret: no solid caret seen in \(t.bundleId)'s field")
+            onUpdate?(t.fieldKey)
+            return after(blinkPause - solidDelay, gen) { self.blink(t, gen) }
+        }
+        commit(t, PixelCaretHit(rect: rect, look: look, frames: 1, ms: ms), gen, how: "seed")
     }
 
     private func verify(_ t: Target, _ est: Estimate, _ gen: Int) {
@@ -849,6 +952,7 @@ final class PixelCaretProvider {
                                          lineText: t.lineText, look: hit.look, widthScale: scale, anchor: t.fieldFrame?.origin)
         looks[t.bundleId] = hit.look
         solidMiss[t.fieldKey] = nil
+        missStreak[t.fieldKey] = nil
         if locating?.gen == gen { locating = nil }
         order.removeAll { $0 == t.fieldKey }
         order.append(t.fieldKey)
@@ -865,5 +969,48 @@ final class PixelCaretProvider {
             }
         }
         onUpdate?(t.fieldKey)
+    }
+}
+
+extension WindowCapture {
+    /// `--capture-probe PID X Y W H`: captures that region (global points) of the app's window
+    /// ten times, 120 ms apart, through the window filter and through the display filter, and
+    /// prints how many pixels changed between frames (a blinking caret changes a few dozen).
+    static func probe(pid: pid_t, region: CGRect) -> Bool {
+        let done = DispatchSemaphore(value: 0)
+        var content: SCShareableContent?
+        SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: true) { c, _ in content = c; done.signal() }
+        done.wait()
+        guard let content else { print("no shareable content (Screen Recording?)"); return false }
+        let centre = CGPoint(x: region.midX, y: region.midY)
+        let mine = content.windows.filter { $0.owningApplication?.processID == pid && $0.windowLayer == 0 }
+        for w in mine { print("window \(w.windowID) \(w.frame) onScreen=\(w.isOnScreen)") }
+        guard let window = mine.first(where: { $0.frame.contains(centre) }),
+              let display = content.displays.first(where: { $0.frame.contains(centre) }) else { print("no window or display at the region"); return false }
+        let filters: [(String, SCContentFilter, CGPoint)] = [
+            ("window", SCContentFilter(desktopIndependentWindow: window), window.frame.origin),
+            ("display", SCContentFilter(display: display, including: [window]), display.frame.origin),
+        ]
+        for (name, filter, origin) in filters {
+            var last: [UInt8]?
+            var changes: [Int] = []
+            for _ in 0..<10 {
+                guard let s = shot(filter, rect: region, origin: origin),
+                      let f = PixelFrame(image: s.image, origin: s.origin, scale: s.scale) else { changes.append(-1); continue }
+                if last == nil, let dir = ProcessInfo.processInfo.environment["FORETYPE_PROBE_DIR"],
+                   let png = NSBitmapImageRep(cgImage: s.image).representation(using: .png, properties: [:]) {
+                    try? png.write(to: URL(fileURLWithPath: dir).appendingPathComponent("\(name).png"))
+                }
+                if let l = last, l.count == f.bytes.count {
+                    var n = 0
+                    for i in stride(from: 0, to: l.count, by: 4) where abs(Int(l[i]) - Int(f.bytes[i])) > 24 { n += 1 }
+                    changes.append(n)
+                }
+                last = f.bytes
+                usleep(120_000)
+            }
+            print("\(name): changed px per frame \(changes)")
+        }
+        return true
     }
 }
