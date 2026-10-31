@@ -5,6 +5,8 @@ the release notes are taken from it.
 
 ## Unreleased
 
+## 0.1.13 (2026-10-31)
+
 ### Ghost text after a long time running (2026-10-31)
 - Suggestions could stop appearing in every app but one until Foretype was restarted. The
   window that draws the ghost text could end up on a single Space (a full-screen Chrome's,
