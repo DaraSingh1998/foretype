@@ -1,0 +1,4 @@
+module CForetypeSpell {
+    header "CForetypeSpell.h"
+    export *
+}

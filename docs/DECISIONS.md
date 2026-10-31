@@ -1121,3 +1121,30 @@ after `orderFrontRegardless` too.
 repairs the state at the next suggestion and does not prevent it. A panel is replaced at most
 once per show, and a Space change in progress could cost a needless new window.
 
+## D57. Spell checker calls are made in Objective-C, inside `@try` (2026-10-31)
+
+**Decision.** Every `NSSpellChecker` call goes through `FTSpellGuard` in a new Objective-C
+target, `CForetypeSpell`, which catches anything thrown and returns an `NSError` (`throws` in
+Swift). `Speller` treats an error as "not checked": the snapshot's spell fields stay empty,
+which the core already reads as no verdict, and nothing is cached. It then leaves the checker
+alone for 30 s, doubling up to 10 minutes while failures repeat, and starts over on the next
+success. Cached verdicts stay usable meanwhile.
+
+**Why.** At 21:15:17 on 2026-10-30 the unified log of the running 0.1.12 app showed
+`FAULT: NSXPCSpellServerTimeoutException` on the `foretype.ax` thread. Swift can't catch an
+Objective-C exception. That one happened inside an AXObserver callback, where HIServices
+swallowed it (a suspended thread named SOME_OTHER_THREAD_SWALLOWED_AT_LEAST_ONE_EXCEPTION
+stayed behind). The poll timer reaches the same call with nothing to catch it, so the app
+would have crashed over a spelling hint. The calls themselves sit in Objective-C, and not a
+Swift closure run from a generic `@try` helper, because such a closure would put a Swift frame
+between the throw and the catch, which is what this avoids. `-fobjc-arc-exceptions` is on for
+the target so ARC releases what the exception skips. The back-off exists because a timeout
+holds up the AX thread for as long as the spell server takes to give up; retrying on every
+keystroke would turn one stalled server into stuttering in every field.
+
+**Cost.** A second target, and `tools/spell-map` now has to compile the `.m` as well. While
+the checker is left alone there is no typo gate or autocorrect, so a suggestion can follow a
+typo for up to 10 minutes after the server recovers. The self-test raises from a stand-in
+with the exception's name; a real spell server timeout has not been reproduced, and how long
+one blocks the AX thread hasn't been measured. A failure in the setup at launch leaves no
+checker until the next launch: every call then counts as a failure.

@@ -702,7 +702,10 @@ never logs the text. The shell must ignore events whose `revision` is not its la
   checker, so it follows the user's languages and learned words) whether the partial word
   is a word, can still become one (`completions`), or is a typo, and for a word just
   finished with a space whether it is misspelled and its correction. Verdicts are cached;
-  secure fields are never checked. The core applies the policy.
+  secure fields are never checked. The core applies the policy. Every checker call is made
+  by `FTSpellGuard` (`Sources/CForetypeSpell`, Objective-C), inside `@try`, because the
+  checker can raise; a failure means no verdict for that snapshot and no asking for 30 s,
+  doubling up to 10 minutes while failures repeat (D57).
 - **`AppleModel.swift`**: Foundation Models as the `shell` backend's completer (offered
   in "Use a Server Instead…" when Apple Intelligence is available).
 - **`Caret.swift`**: `CaretResolver` reads both the zero-length `AXBoundsForRange` and the

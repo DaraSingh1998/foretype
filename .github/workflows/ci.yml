@@ -33,6 +33,7 @@ jobs:
           mac/.build/release/Foretype --stats-selftest
           mac/.build/release/Foretype --keychain-selftest
           mac/.build/release/Foretype --geometry-selftest
+          mac/.build/release/Foretype --speller-selftest
           mac/.build/release/Foretype --settings-selftest
 
       - name: Cache eval model
