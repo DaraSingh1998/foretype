@@ -2,7 +2,10 @@
 // corpus and writes the verdicts as JSON, so ft-replay can replay the typo gate and
 // autocorrect exactly as the app would decide them (ft-replay --spell FILE).
 //
-//   swiftc -O tools/spell-map/main.swift mac/Sources/Foretype/Speller.swift -o build/spell-map
+//   clang -c -fobjc-arc -fobjc-arc-exceptions -Imac/Sources/CForetypeSpell/include \
+//     mac/Sources/CForetypeSpell/CForetypeSpell.m -o build/spell-guard.o
+//   swiftc -O -Imac/Sources/CForetypeSpell/include tools/spell-map/main.swift \
+//     mac/Sources/Foretype/Speller.swift build/spell-guard.o -o build/spell-map
 //   build/spell-map eval/corpus.jsonl > build/spell-map.json
 import AppKit
 

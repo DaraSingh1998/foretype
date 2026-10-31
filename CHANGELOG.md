@@ -5,6 +5,11 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Spell checker hiccups (2026-10-31)
+- When the macOS spell server stalls, Foretype keeps suggesting instead of risking a crash. It
+  goes without spelling hints (the typo check and autocorrect) for a while, 30 seconds at
+  first and up to 10 minutes if the stall continues, and then asks again.
+
 ## 0.1.12 (2026-10-29)
 
 ### Ghost text at the caret in WhatsApp Web and other full-screen windows (2026-10-29)

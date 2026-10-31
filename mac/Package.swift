@@ -11,7 +11,7 @@ let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let coreLibDir = packageDir.appendingPathComponent("../core/target/release").standardized.path
 let useSparkle = ProcessInfo.processInfo.environment["FORETYPE_SPARKLE"] == "1"
 
-var appDependencies: [Target.Dependency] = ["CForetypeCore"]
+var appDependencies: [Target.Dependency] = ["CForetypeCore", "CForetypeSpell"]
 var extraLinker: [String] = []
 if useSparkle {
     appDependencies.append(.product(name: "Sparkle", package: "Sparkle"))
@@ -24,6 +24,12 @@ let package = Package(
     dependencies: useSparkle ? [.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0")] : [],
     targets: [
         .systemLibrary(name: "CForetypeCore", path: "Sources/CForetypeCore"),
+        .target(
+            name: "CForetypeSpell",
+            path: "Sources/CForetypeSpell",
+            // ARC releases what an exception skips only with this flag.
+            cSettings: [.unsafeFlags(["-fobjc-arc-exceptions"])]
+        ),
         .executableTarget(
             name: "Foretype",
             dependencies: appDependencies,

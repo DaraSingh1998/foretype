@@ -15,6 +15,9 @@ if CommandLine.arguments.contains("--keychain-selftest") {
 if CommandLine.arguments.contains("--stats-selftest") {
     exit(UsageStats.selfTest() ? 0 : 1)
 }
+if CommandLine.arguments.contains("--speller-selftest") {
+    exit(SpellerSelfTest.run() ? 0 : 1)
+}
 if CommandLine.arguments.contains("--geometry-selftest") {
     exit(ScreenGeometry.selfTest() ? 0 : 1)
 }
