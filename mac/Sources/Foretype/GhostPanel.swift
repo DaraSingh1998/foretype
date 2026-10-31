@@ -37,9 +37,9 @@ private final class GhostView: NSView {
 /// the caret, so inline ghost text would overlap it) use a card just below the caret. Word
 /// alternatives (D50) get a numbered card of their own under the suggestion (`showPicker`).
 final class GhostPanel {
-    private let panel: NSPanel
+    private var panel: NSPanel
     private let view = GhostView()
-    private let pickerPanel: NSPanel
+    private var pickerPanel: NSPanel
     private let pickerView = GhostView()
     /// What the inline text was laid out with, so an accept can move it (`advance`).
     private var anchor: (caret: CGRect, font: NSFont, limit: CGFloat, left: CGFloat?, bottom: CGFloat)?
@@ -69,6 +69,25 @@ final class GhostPanel {
         panel = GhostPanel.makePanel(view)
         pickerPanel = GhostPanel.makePanel(pickerView)
         pickerView.card = true
+    }
+
+    /// Orders `panel` in and returns the panel now showing `view`: `panel`, or a new one when
+    /// `panel` isn't on the active Space. After about a day of sleeps and full-screen Spaces
+    /// a panel was left on one Space alone though its behaviour still said all of them, and
+    /// setting the behaviour again changed nothing, so suggestions drew unseen everywhere else
+    /// until Foretype was restarted (D56). A new window joins every Space.
+    private static func front(_ panel: NSPanel, showing view: NSView) -> NSPanel {
+        if !panel.isVisible { panel.orderFrontRegardless() }
+        guard !panel.isOnActiveSpace else { return panel }
+        let frame = panel.frame
+        panel.orderOut(nil)
+        panel.contentView = nil
+        panel.close()
+        let fresh = makePanel(view)
+        fresh.setFrame(frame, display: false)
+        fresh.orderFrontRegardless()
+        Log.debug("ghost panel: not on the active Space; replaced")
+        return fresh
     }
 
     private static func makePanel(_ view: NSView) -> NSPanel {
@@ -323,7 +342,7 @@ final class GhostPanel {
         panel.setFrame(rect, display: false)
         view.frame = NSRect(origin: .zero, size: rect.size)
         view.needsDisplay = true
-        if !panel.isVisible { panel.orderFrontRegardless() }
+        panel = GhostPanel.front(panel, showing: view)
     }
 
     func hide() {
@@ -363,7 +382,7 @@ final class GhostPanel {
         pickerPanel.setFrame(rect, display: false)
         pickerView.frame = NSRect(origin: .zero, size: rect.size)
         pickerView.needsDisplay = true
-        if !pickerPanel.isVisible { pickerPanel.orderFrontRegardless() }
+        pickerPanel = GhostPanel.front(pickerPanel, showing: pickerView)
     }
 
     func hidePicker() {
@@ -420,6 +439,48 @@ final class GhostPanel {
 
     /// The wrapping layout on made-up fields; with `dir`, PNGs of a field with the ghost text
     /// drawn as `showInline` draws it.
+    /// Part of `--ghost-selftest`: strands the panel as a long-running one was found (visible,
+    /// behaviour intact, on every Space but the active one) through SkyLight's private calls,
+    /// used here only, and checks the next suggestion gets a panel on the active Space. It
+    /// draws in the screen's corner for a moment. Skipped where the window server can't do it.
+    static func spacesSelfTest() -> Bool {
+        typealias Connection = @convention(c) () -> Int32
+        typealias ActiveSpace = @convention(c) (Int32) -> UInt64
+        typealias RemoveFromSpaces = @convention(c) (Int32, CFArray, CFArray) -> Void
+        let skyLight = dlopen("/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight", RTLD_NOW)
+        guard !NSScreen.screens.isEmpty, let connection = dlsym(skyLight, "SLSMainConnectionID"),
+              let activeSpace = dlsym(skyLight, "SLSGetActiveSpace"), let remove = dlsym(skyLight, "SLSRemoveWindowsFromSpaces") else {
+            print("spaces: skipped")
+            return true
+        }
+        let cid = unsafeBitCast(connection, to: Connection.self)()
+        let space = unsafeBitCast(activeSpace, to: ActiveSpace.self)(cid)
+        NSApplication.shared.setActivationPolicy(.accessory)
+        func settle() { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2)) }
+        let ghost = GhostPanel()
+        let caret = CaretInfo(rect: CGRect(x: 4, y: 4, width: 0, height: 16), strategy: "test")
+        ghost.show(text: "test", caret: caret, frame: nil, font: nil)
+        settle()
+        let first = ghost.panel.windowNumber
+        guard ghost.panel.isOnActiveSpace else {
+            ghost.hide()
+            print("spaces: skipped (a new panel isn't on the active Space)")
+            return true
+        }
+        ghost.show(text: "test two", caret: caret, frame: nil, font: nil)
+        let kept = ghost.panel.windowNumber == first
+        ghost.hide()
+        unsafeBitCast(remove, to: RemoveFromSpaces.self)(cid, [NSNumber(value: first)] as CFArray, [NSNumber(value: space)] as CFArray)
+        settle()
+        let stranded = !ghost.panel.isOnActiveSpace
+        ghost.show(text: "test", caret: caret, frame: nil, font: nil)
+        settle()
+        let replaced = ghost.panel.windowNumber != first && ghost.panel.isVisible && ghost.panel.isOnActiveSpace
+        ghost.hide()
+        print("spaces: healthy panel kept \(kept), stranded \(stranded), replaced \(replaced)")
+        return kept && stranded && replaced
+    }
+
     static func selfTest(dir: String?) -> Bool {
         var failures = 0
         func check(_ ok: Bool, _ what: String) {

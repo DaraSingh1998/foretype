@@ -1576,3 +1576,24 @@ unsent drafts and deleted them.
 - Self-tests: `--caret-selftest` (30 cases, worst error 0.00 pt; seed 90 cases) and the other
   self-tests pass.
 
+## Ghost panel stranded on one Space (2026-10-31)
+
+Report: no suggestions in any app on 0.1.12 until a restart, later narrowed by the user to
+"not in Teams or Claude, but in Chrome's search bar". Process up about a day, untouched.
+
+- Not paused, no pause reason, main thread idle, listen tap on, model mapped.
+- `lldb` breakpoint on `GhostPanel.show`: 155 calls in about 2 minutes, with ordinary words.
+- Spaces (`SLSCopySpacesForWindows`): live panel `[19]`; fresh panel with the same settings
+  `[198, 27, 120, 1, 19]`, hidden or shown. Teams on Space 1, Chrome on 19.
+- On the live panel, `collectionBehavior` was 337 (join all, stationary, ignores cycle, full
+  screen auxiliary), `isOnActiveSpace` NO on Space 1. Setting behaviour to 0 and back, hidden
+  and ordered in, left it on `[19]`.
+- Reproduced by removing a healthy panel from the active Space with
+  `SLSRemoveWindowsFromSpaces`: `isVisible` true, behaviour unchanged, not on the active
+  Space, and `orderFrontRegardless` doesn't bring it back. `--ghost-selftest` now does this
+  to the real `GhostPanel`: a healthy panel is kept, a stranded one replaced. With the
+  replacement switched off the test fails.
+- Not checked: the original cause, and the fix through a real stranding in daily use.
+- Also in that process's log: `NSXPCSpellServerTimeoutException` on `foretype.ax`, at
+  21:15:17, swallowed by HIServices. A separate defect; suggestions were not stopped by it.
+
