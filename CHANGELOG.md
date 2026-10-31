@@ -5,6 +5,12 @@ the release notes are taken from it.
 
 ## Unreleased
 
+### Ghost text after a long time running (2026-10-31)
+- Suggestions could stop appearing in every app but one until Foretype was restarted. The
+  window that draws the ghost text could end up on a single Space (a full-screen Chrome's,
+  say), so it was drawn out of sight everywhere else. Foretype now notices and replaces that
+  window, so no restart is needed.
+
 ## 0.1.12 (2026-10-29)
 
 ### Ghost text at the caret in WhatsApp Web and other full-screen windows (2026-10-29)

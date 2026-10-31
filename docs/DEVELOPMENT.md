@@ -203,6 +203,13 @@ one. For test documents: `ftdrive title PID` (focused window title), `ftdrive fr
 TITLE` (presses that window's close button; an unmodified document closes silently) and
 `ftdrive quit PID`.
 
+### Ghost text not visible
+
+Suggestions that are produced but not seen: check which Spaces the panel's window is on.
+`CGWindowListCopyWindowInfo` gives the window's frame and on-screen flag (level 25, owner
+Foretype); `SLSCopySpacesForWindows` gives its Spaces, and a healthy panel is on all of them
+(D56). `--ghost-selftest` covers the replacement of a stranded panel.
+
 ### Pixel caret
 
 - `Foretype --caret-selftest` renders a line of text with a caret (Helvetica, Georgia,

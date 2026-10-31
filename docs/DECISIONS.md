@@ -1101,3 +1101,23 @@ seed found the caret in 137 ms before the first blink (`docs/MEASUREMENTS.md`).
 whole window by construction. Glyph strokes never reach one em, but a `|` or a tall bracket
 in a large size could; the seed then sees two bars and gives up (blink search as before).
 
+## D56. A ghost panel off the active Space is replaced (2026-10-31)
+
+**Decision.** `GhostPanel.front` shows a panel, then checks `isOnActiveSpace`; when that is
+false it replaces the panel with a new window holding the same view and frame. The ghost
+panel and the alternatives card both go through it.
+
+**Why.** After about a day running (login item, several sleeps, four full-screen Spaces) the
+0.1.12 app showed no suggestions in Teams or Claude, while Chrome's search bar still did;
+quitting cured it. The whole pipeline ran: 155 `GhostPanel.show` calls with ordinary text in
+about 2 minutes, the Tab tap on. `SLSCopySpacesForWindows` gave the panel's window Space 19
+alone (Chrome's full-screen Space), a fresh panel with the same settings all five Spaces, and
+Teams and Claude were on Space 1. The panel's `collectionBehavior` still said
+`canJoinAllSpaces`. Setting it again, hidden or shown, changed nothing, so re-asserting it is
+no fix and a new window is. A healthy panel always reported `isOnActiveSpace` true, right
+after `orderFrontRegardless` too.
+
+**Cost.** One check per show. What takes a window off the other Spaces is not known; this
+repairs the state at the next suggestion and does not prevent it. A panel is replaced at most
+once per show, and a Space change in progress could cost a needless new window.
+
